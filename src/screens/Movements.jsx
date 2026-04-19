@@ -148,13 +148,12 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
                       <CatIcon cat={m.cat} size={18} color={m.type === 'income' ? T.ok : T.copper[600]}/>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, color: T.neutral[800] }}>
-                        {allCatLabel(m.cat, incomeCats, expenseCats)}
+                      <div style={{ fontSize: 14, fontWeight: 600, color: m.note ? T.neutral[800] : T.neutral[500] }}>
+                        {m.note || allCatLabel(m.cat, incomeCats, expenseCats)}
                       </div>
                       <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <BranchChip branch={m.branch} size="sm"/>
                         {m.group && <span>{groupLabel(m.group)}</span>}
-                        {m.note && <span style={{ color: T.neutral[400] }}>· {m.note}</span>}
                       </div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>

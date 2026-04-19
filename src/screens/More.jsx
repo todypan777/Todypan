@@ -7,6 +7,15 @@ import { TodyMark } from '../components/Atoms'
 export default function More({ onOpen }) {
   const items = [
     {
+      id: 'movements', label: 'Movimientos', desc: 'Historial de ingresos y gastos',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 6 H13 M3 6 L6 3 M3 6 L6 9" stroke={T.copper[600]} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M17 14 H7 M17 14 L14 11 M17 14 L14 17" stroke={T.copper[600]} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'reports', label: 'Reportes', desc: 'Análisis del mes',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={T.copper[600]} strokeWidth="2" strokeLinecap="round"/><path d="M3 18 H17" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/></svg>

@@ -8,10 +8,10 @@ export function TabBar({ active, onChange }) {
         <path d="M3 11 L11 4 L19 11 V18 Q19 19 18 19 H14 V14 H8 V19 H4 Q3 19 3 18 Z" stroke={c} strokeWidth="1.7" fill="none" strokeLinejoin="round"/>
       </svg>
     )},
-    { id: 'movements', label: 'Movimientos', icon: (c) => (
+    { id: 'registro', label: 'Registro', icon: (c) => (
       <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-        <path d="M4 7 H15 M4 7 L7 4 M4 7 L7 10" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-        <path d="M18 15 H7 M18 15 L15 12 M18 15 L15 18" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+        <rect x="4" y="3" width="14" height="16" rx="2.5" stroke={c} strokeWidth="1.7" fill="none"/>
+        <path d="M8 8 H14 M8 11.5 H14 M8 15 H11" stroke={c} strokeWidth="1.5" strokeLinecap="round"/>
       </svg>
     )},
     { id: 'add', label: '', icon: () => (

@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, fmtMonthLabel, currentMonth } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, IconButton, BackButton, Modal, InputField, PrimaryButton, EmptyState } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { addEmployee, updateEmployee, deleteEmployee, toggleWorked, togglePaid, payAllPending, setExtras } from '../db'
+import { addEmployee, updateEmployee, deleteEmployee, togglePaid, payAllPending } from '../db'
 import { generatePayrollPDF } from '../utils/pdf'
 
 export default function Team({ filter, setFilter, employees, attendance, onRefresh, initialEmpId, onClearEmpId }) {
@@ -110,16 +110,21 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
   )
 }
 
+const REST_DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+
 function AddEmployeeModal({ onClose, onSave }) {
   const [name, setName] = useState('')
   const [role, setRole] = useState('')
   const [branch, setBranch] = useState(1)
   const [rate, setRate] = useState('')
   const [phone, setPhone] = useState('')
+  const [restDay, setRestDay] = useState(0)
+
+  const canSave = name.trim() && rate && phone.trim()
 
   function handleSave() {
-    if (!name || !rate) return
-    addEmployee({ name, role, branch, rate: Number(rate), phone })
+    if (!canSave) return
+    addEmployee({ name: name.trim(), role, branch, rate: Number(rate), phone: phone.trim(), restDay })
     onSave()
   }
 
@@ -140,19 +145,34 @@ function AddEmployeeModal({ onClose, onSave }) {
           ))}
         </div>
       </div>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Día de descanso</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+          {REST_DAY_LABELS.map((label, idx) => (
+            <button key={idx} onClick={() => setRestDay(idx)} style={{
+              padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              background: restDay === idx ? T.neutral[800] : T.neutral[100],
+              color: restDay === idx ? '#fff' : T.neutral[600],
+              fontSize: 11, fontWeight: 600,
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
       <InputField label="Valor día ($)" value={rate} onChange={setRate} type="number" placeholder="Ej: 65000"/>
-      <InputField label="Teléfono (opcional)" value={phone} onChange={setPhone} placeholder="Ej: 301 234 5678"/>
-      <PrimaryButton label="Agregar empleado" onClick={handleSave} disabled={!name || !rate}/>
+      <InputField label="WhatsApp *" value={phone} onChange={setPhone} type="tel" placeholder="Ej: 301 234 5678"/>
+      <PrimaryButton label="Agregar empleado" onClick={handleSave} disabled={!canSave}/>
     </Modal>
   )
 }
 
 function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
   const [month, setMonth] = useState(currentMonth())
-  const [showExtras, setShowExtras] = useState(null)
-  const [extrasVal, setExtrasVal] = useState('')
   const [showDelete, setShowDelete] = useState(false)
+  const [showEdit, setShowEdit] = useState(false)
+  const [showConfirmPay, setShowConfirmPay] = useState(false)
   const att = attendance[emp.id] || {}
+
+  const [y, m] = month.split('-').map(Number)
 
   const entries = Object.entries(att).filter(([d]) => d.startsWith(month))
   const worked = entries.filter(([, a]) => a.worked).length
@@ -160,24 +180,9 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
   const owed = unpaid.reduce((s, [, a]) => s + emp.rate + (a.extras || 0), 0)
   const paid = entries.filter(([, a]) => a.worked && a.paid).reduce((s, [, a]) => s + emp.rate + (a.extras || 0), 0)
 
-  const [y, m] = month.split('-').map(Number)
-  const firstDay = new Date(y, m - 1, 1)
-  const daysInMonth = new Date(y, m, 0).getDate()
-  const startOffset = (firstDay.getDay() + 6) % 7
-  const today = new Date().toISOString().slice(0, 10)
-
-  const cells = []
-  for (let i = 0; i < startOffset; i++) cells.push(null)
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-
   function changeMonth(delta) {
     const d = new Date(y, m - 1 + delta, 1)
     setMonth(d.toISOString().slice(0, 7))
-  }
-
-  function handleToggleWorked(dateStr) {
-    toggleWorked(emp.id, dateStr)
-    onRefresh()
   }
 
   function handleTogglePaid(dateStr) {
@@ -185,28 +190,27 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
     onRefresh()
   }
 
-  function handlePayAll() {
-    payAllPending(emp.id, month)
-    onRefresh()
-  }
-
-  function handleSetExtras() {
-    setExtras(emp.id, showExtras, Number(extrasVal) || 0)
-    setShowExtras(null)
-    setExtrasVal('')
-    onRefresh()
+  async function handlePayWithPDF() {
+    if (unpaid.length === 0) return
+    const doc = generatePayrollPDF(emp, unpaid, month)
+    const blob = doc.output('blob')
+    const file = new File([blob], `nomina-${emp.name.split(' ')[0]}-${month}.pdf`, { type: 'application/pdf' })
+    try {
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: `Nómina ${emp.name.split(' ')[0]}` })
+      } else {
+        doc.save(`nomina-${emp.name.split(' ')[0]}-${month}.pdf`)
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') doc.save(`nomina-${emp.name.split(' ')[0]}-${month}.pdf`)
+    }
+    setShowConfirmPay(true)
   }
 
   function handleDeleteEmp() {
     deleteEmployee(emp.id)
     onRefresh()
     onBack()
-  }
-
-  function handleExportPDF() {
-    const allEntries = Object.entries(att).filter(([d]) => d.startsWith(month) && att[d].worked)
-    const doc = generatePayrollPDF(emp, allEntries, month)
-    doc.save(`comprobante-${emp.name.split(' ')[0]}-${month}.pdf`)
   }
 
   return (
@@ -230,8 +234,24 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 18, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.3 }}>{emp.name}</div>
-              <div style={{ fontSize: 13, color: T.neutral[500], marginTop: 2 }}>{emp.role}{emp.phone ? ` · ${emp.phone}` : ''}</div>
-              <div style={{ marginTop: 6 }}><BranchChip branch={emp.branch}/></div>
+              <div style={{ fontSize: 13, color: T.neutral[500], marginTop: 2 }}>
+                {emp.role}
+                {emp.phone && (
+                  <a href={`https://wa.me/57${emp.phone.replace(/\D/g,'')}`} target="_blank" rel="noopener noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    style={{ color: '#25D366', marginLeft: 8, fontWeight: 600, textDecoration: 'none', fontSize: 12 }}>
+                    WhatsApp
+                  </a>
+                )}
+              </div>
+              <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <BranchChip branch={emp.branch}/>
+                {emp.restDay != null && (
+                  <span style={{ fontSize: 11, color: T.neutral[400], fontWeight: 500 }}>
+                    Descansa {REST_DAY_LABELS[emp.restDay]}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: `0.5px solid ${T.neutral[100]}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -269,76 +289,34 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
         </Card>
       </div>
 
-      {/* Month nav */}
-      <SectionHeader title={`Calendario · ${fmtMonthLabel(month)}`}/>
-      <div style={{ padding: '0 16px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={() => changeMonth(-1)} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: 'pointer', color: T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>‹ Anterior</button>
-        <button onClick={() => changeMonth(1)} disabled={month >= currentMonth()} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: month >= currentMonth() ? 'default' : 'pointer', color: month >= currentMonth() ? T.neutral[300] : T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>Siguiente ›</button>
+      {/* Pay button */}
+      {unpaid.length > 0 && (
+        <div style={{ padding: '12px 16px 0' }}>
+          <button onClick={handlePayWithPDF} style={{
+            width: '100%', padding: '15px', borderRadius: 14, border: 'none',
+            background: T.neutral[900], color: '#fff',
+            fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+          }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M2 9 L7 14 L16 4" stroke="#25D366" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Enviar comprobante y pagar · {fmtCOP(owed)}
+          </button>
+        </div>
+      )}
+
+      {/* Month nav + day list */}
+      <div style={{ padding: '16px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[700] }}>{fmtMonthLabel(month)}</div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => changeMonth(-1)} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: 'pointer', color: T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>‹</button>
+          <button onClick={() => changeMonth(1)} disabled={month >= currentMonth()} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: month >= currentMonth() ? 'default' : 'pointer', color: month >= currentMonth() ? T.neutral[300] : T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>›</button>
+        </div>
       </div>
 
-      {/* Calendar */}
-      <div style={{ padding: '0 16px' }}>
-        <Card padding={14}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, marginBottom: 8 }}>
-            {['L','M','X','J','V','S','D'].map((d, i) => (
-              <div key={i} style={{ textAlign: 'center', fontSize: 10.5, fontWeight: 600, color: T.neutral[400], letterSpacing: 0.4 }}>{d}</div>
-            ))}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-            {cells.map((d, i) => {
-              if (!d) return <div key={i}/>
-              const dateStr = `${month}-${String(d).padStart(2, '0')}`
-              const a = att[dateStr]
-              const isToday = dateStr === today
-              const isFuture = dateStr > today
-              let bg = 'transparent', border = `1px dashed ${T.neutral[200]}`, color = T.neutral[400]
-              if (a?.worked) {
-                if (a.paid) { bg = T.ok; border = 'none'; color = '#fff' }
-                else { bg = T.copper[400]; border = 'none'; color = '#fff' }
-              } else if (!isFuture && !a) {
-                bg = T.neutral[50]; border = `1px solid ${T.neutral[100]}`; color = T.neutral[400]
-              }
-              return (
-                <div key={i} style={{ position: 'relative' }}>
-                  <div
-                    onClick={() => !isFuture && handleToggleWorked(dateStr)}
-                    onContextMenu={e => { e.preventDefault(); if (a?.worked) { setShowExtras(dateStr); setExtrasVal(String(a.extras || '')) } }}
-                    style={{
-                      aspectRatio: '1/1', borderRadius: 8, background: bg, border,
-                      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                      cursor: !isFuture ? 'pointer' : 'default',
-                      outline: isToday ? `2px solid ${T.copper[500]}` : 'none',
-                      outlineOffset: 1,
-                    }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color, lineHeight: 1 }}>{d}</div>
-                    {a?.extras > 0 && (
-                      <div style={{ position: 'absolute', top: 3, right: 3, width: 5, height: 5, borderRadius: 999, background: '#fff' }}/>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ marginTop: 14, paddingTop: 12, borderTop: `0.5px solid ${T.neutral[100]}`, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11 }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: T.neutral[600] }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: T.copper[400] }}/>Pendiente
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: T.neutral[600] }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: T.ok }}/>Pagado
-            </span>
-            <span style={{ fontSize: 10, color: T.neutral[400] }}>Mantén presionado para agregar extras</span>
-          </div>
-        </Card>
-      </div>
-
-      {/* Day list */}
-      <SectionHeader
-        title={`${unpaid.length} días por pagar`}
-        action={unpaid.length > 0 ? 'Pagar todo' : null}
-        onAction={handlePayAll}
-      />
       {entries.filter(([, a]) => a.worked).length > 0 ? (
-        <div style={{ padding: '0 16px' }}>
+        <div style={{ padding: '8px 16px 0' }}>
           <Card padding={0}>
             {entries.sort((a, b) => b[0].localeCompare(a[0])).filter(([, a]) => a.worked).map(([d, a], i, arr) => (
               <div key={d} style={{
@@ -348,7 +326,7 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: T.neutral[800], textTransform: 'capitalize' }}>{fmtDate(d, { weekday: true })}</div>
                   <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
-                    Día · {fmtCOP(emp.rate)}{a.extras > 0 && ` + ${fmtCOP(a.extras)} extras`}
+                    {fmtCOP(emp.rate)}{a.extras > 0 && ` + ${fmtCOP(a.extras)} extras`}
                   </div>
                 </div>
                 <Amount value={emp.rate + (a.extras || 0)} size={14} weight={700}/>
@@ -365,26 +343,26 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
           </Card>
         </div>
       ) : (
-        <div style={{ padding: '0 16px' }}>
+        <div style={{ padding: '8px 16px 0' }}>
           <Card padding={20}>
-            <div style={{ textAlign: 'center', color: T.neutral[400], fontSize: 13 }}>Toca un día en el calendario para marcar asistencia</div>
+            <div style={{ textAlign: 'center', color: T.neutral[400], fontSize: 13 }}>Sin días registrados en {fmtMonthLabel(month)}</div>
           </Card>
         </div>
       )}
 
-      {/* PDF + Delete */}
+      {/* Edit + Delete */}
       <div style={{ padding: '20px 16px 0', display: 'flex', gap: 10 }}>
-        <button onClick={handleExportPDF} style={{
-          flex: 1, padding: '13px', borderRadius: 14, border: `1px solid ${T.copper[200]}`,
-          background: T.copper[50], color: T.copper[700],
+        <button onClick={() => setShowEdit(true)} style={{
+          flex: 1, padding: '13px', borderRadius: 14, border: `1px solid ${T.neutral[200]}`,
+          background: '#fff', color: T.neutral[700],
           fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
         }}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 13 H13 M8 3 V10 M4 7 L8 10 L12 7" stroke={T.copper[600]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          PDF comprobante
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 3 L13 6 L6 13 H3 V10 Z" stroke={T.neutral[600]} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          Editar empleado
         </button>
         <button onClick={() => setShowDelete(true)} style={{
-          padding: '13px 18px', borderRadius: 14, border: `1px solid #E8C4BC`,
+          padding: '13px 16px', borderRadius: 14, border: `1px solid #E8C4BC`,
           background: '#FBF0EE', color: T.bad,
           fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
         }}>
@@ -392,18 +370,40 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
         </button>
       </div>
 
-      {/* Extras modal */}
-      {showExtras && (
-        <Modal onClose={() => setShowExtras(null)} title={`Extras · ${fmtDate(showExtras, { weekday: true })}`}>
-          <InputField label="Valor extras ($)" value={extrasVal} onChange={setExtrasVal} type="number" placeholder="Ej: 15000"/>
-          <PrimaryButton label="Guardar" onClick={handleSetExtras}/>
+      {/* Confirm pay modal */}
+      {showConfirmPay && (
+        <Modal onClose={() => setShowConfirmPay(false)} title="¿Confirmar pago?">
+          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8 }}>
+            ¿Ya enviaste el comprobante por WhatsApp?
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: T.neutral[900], marginBottom: 20, fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(owed)}
+            <span style={{ fontSize: 13, fontWeight: 500, color: T.neutral[500], marginLeft: 8 }}>· {unpaid.length} días</span>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setShowConfirmPay(false)} style={{
+              flex: 1, padding: 13, borderRadius: 12, border: 'none',
+              background: T.neutral[100], color: T.neutral[700],
+              fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Cancelar</button>
+            <button onClick={() => { payAllPending(emp.id, month); setShowConfirmPay(false); onRefresh() }} style={{
+              flex: 1, padding: 13, borderRadius: 12, border: 'none',
+              background: T.ok, color: '#fff',
+              fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Confirmar pago</button>
+          </div>
         </Modal>
+      )}
+
+      {/* Edit modal */}
+      {showEdit && (
+        <EditEmployeeModal emp={emp} onClose={() => setShowEdit(false)} onSave={() => { setShowEdit(false); onRefresh() }}/>
       )}
 
       {/* Delete confirm */}
       {showDelete && (
         <Modal onClose={() => setShowDelete(false)} title="¿Eliminar empleado?">
-          <div style={{ fontSize: 14, color: T.neutral[500], marginBottom: 24 }}>Se eliminará {emp.name} y todos sus registros de asistencia. Esta acción no se puede deshacer.</div>
+          <div style={{ fontSize: 14, color: T.neutral[500], marginBottom: 24 }}>Se eliminará {emp.name} y todos sus registros. Esta acción no se puede deshacer.</div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={() => setShowDelete(false)} style={{
               flex: 1, padding: 13, borderRadius: 12, border: 'none',
@@ -419,5 +419,60 @@ function EmployeeDetail({ emp, attendance, onBack, onRefresh }) {
         </Modal>
       )}
     </div>
+  )
+}
+
+function EditEmployeeModal({ emp, onClose, onSave }) {
+  const [name, setName] = useState(emp.name)
+  const [role, setRole] = useState(emp.role || '')
+  const [branch, setBranch] = useState(emp.branch)
+  const [rate, setRate] = useState(String(emp.rate))
+  const [phone, setPhone] = useState(emp.phone || '')
+  const [restDay, setRestDay] = useState(emp.restDay ?? 0)
+  const [workHours, setWorkHours] = useState(String(emp.workHours || 9))
+
+  const canSave = name.trim() && rate && phone.trim()
+
+  function handleSave() {
+    if (!canSave) return
+    updateEmployee(emp.id, { name: name.trim(), role, branch, rate: Number(rate), phone: phone.trim(), restDay, workHours: Number(workHours) || 9 })
+    onSave()
+  }
+
+  return (
+    <Modal onClose={onClose} title="Editar empleado">
+      <InputField label="Nombre completo" value={name} onChange={setName} placeholder="Ej: María López"/>
+      <InputField label="Cargo" value={role} onChange={setRole} placeholder="Ej: Panadera"/>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[{ v: 1, l: 'Iglesia' }, { v: 2, l: 'Esquina' }].map(b => (
+            <button key={b.v} onClick={() => setBranch(b.v)} style={{
+              flex: 1, padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              background: branch === b.v ? T.copper[500] : T.neutral[100],
+              color: branch === b.v ? '#fff' : T.neutral[700],
+              fontSize: 14, fontWeight: 600,
+            }}>{b.l}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Día de descanso</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
+          {REST_DAY_LABELS.map((label, idx) => (
+            <button key={idx} onClick={() => setRestDay(idx)} style={{
+              padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              background: restDay === idx ? T.neutral[800] : T.neutral[100],
+              color: restDay === idx ? '#fff' : T.neutral[600],
+              fontSize: 11, fontWeight: 600,
+            }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      <InputField label="Valor día ($)" value={rate} onChange={setRate} type="number" placeholder="Ej: 65000"/>
+      <InputField label="Horas de jornada" value={workHours} onChange={setWorkHours} type="number" placeholder="Ej: 9"/>
+      <InputField label="WhatsApp *" value={phone} onChange={setPhone} type="tel" placeholder="Ej: 301 234 5678"/>
+      <PrimaryButton label="Guardar cambios" onClick={handleSave} disabled={!canSave}/>
+    </Modal>
   )
 }

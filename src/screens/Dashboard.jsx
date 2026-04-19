@@ -3,8 +3,9 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
+import { getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
 
-export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, version }) {
+export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
   const month = currentMonth()
 
@@ -66,9 +67,40 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
   const greetings = ['Buen domingo', 'Buen lunes', 'Buen martes', 'Buen miércoles', 'Buen jueves', 'Buen viernes', 'Buen sábado']
   const greeting = greetings[now.getDay()]
 
+  const showConfirmBanner = getBogotaHour() >= 20 && !isDayConfirmed(getBogotaDateStr()) && employees.some(e => e.type !== 'occasional')
+
   return (
     <div style={{ paddingBottom: 110 }}>
       {/* Alert banner */}
+      {showConfirmBanner && (
+        <div onClick={onConfirmDay} style={{
+          margin: '12px 16px 0',
+          padding: '12px 16px', borderRadius: 14,
+          background: T.neutral[900],
+          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+        }}>
+          <div style={{
+            width: 36, height: 36, borderRadius: 999, flexShrink: 0,
+            background: T.copper[500],
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M9 3 V9 L12.5 11.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="9" cy="9" r="7" stroke="#fff" strokeWidth="1.5"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Confirmar asistencia de hoy</div>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 1 }}>
+              Pendiente · toca para registrar
+            </div>
+          </div>
+          <svg width="7" height="12" viewBox="0 0 7 12">
+            <path d="M1 1 L6 6 L1 11" stroke={T.copper[400]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+      )}
+
       {(alerts.length > 0 || todayReminders.length > 0) && (
         <div onClick={() => onNav('reminders')} style={{
           margin: '12px 16px 0',

@@ -1,21 +1,11 @@
-// localStorage persistence layer — all data lives here
+import { firestoreDb } from './firebase'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
 
-const KEY = 'todypan_v1'
+// ─── Refs ─────────────────────────────────────────────────────
+const LOCAL_KEY = 'todypan_v1'
+const FS_REF = doc(firestoreDb, 'todypan', 'data')
 
-function load() {
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return null
-}
-
-function save(data) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(data))
-  } catch {}
-}
-
+// ─── Defaults ─────────────────────────────────────────────────
 const defaultIncomeCats = [
   { id: 'ventas_mostrador', label: 'Ventas mostrador' },
   { id: 'pedidos',          label: 'Pedidos especiales' },
@@ -61,16 +51,86 @@ function defaultData() {
       { id: 1, name: 'Panadería Iglesia' },
       { id: 2, name: 'Panadería Esquina' },
     ],
+    dailyConfirmations: {},
   }
 }
 
-let _data = load() || defaultData()
+// ─── In-memory store ──────────────────────────────────────────
+let _data = null
 
-export function getData() { return _data }
+function migrate(d) {
+  if (!d.dailyConfirmations) d.dailyConfirmations = {}
+  if (!d.branches) d.branches = defaultData().branches
+  if (!d.incomeCats) d.incomeCats = defaultIncomeCats
+  if (!d.expenseCats) d.expenseCats = defaultExpenseCats
+  if (!d.attendance) d.attendance = {}
+  if (!d.reminders) d.reminders = []
+  return d
+}
 
-function persist() { save(_data) }
+// ─── Init (async) ─────────────────────────────────────────────
+export async function initDB() {
+  // 1. Try Firestore
+  try {
+    const snap = await getDoc(FS_REF)
+    if (snap.exists()) {
+      _data = migrate(snap.data())
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+      return
+    }
+  } catch (e) {
+    console.warn('[TodyPan] Firestore no disponible, usando caché local:', e.message)
+  }
 
-// ─── Movements ───────────────────────────────────────────────
+  // 2. Fallback: localStorage
+  try {
+    const raw = localStorage.getItem(LOCAL_KEY)
+    if (raw) {
+      _data = migrate(JSON.parse(raw))
+      // Subir datos locales a Firestore
+      const clean = JSON.parse(JSON.stringify(_data))
+      setDoc(FS_REF, clean).catch(() => {})
+      return
+    }
+  } catch {}
+
+  // 3. Datos vacíos
+  _data = defaultData()
+  const clean = JSON.parse(JSON.stringify(_data))
+  setDoc(FS_REF, clean).catch(() => {})
+}
+
+export function getData() { return _data || defaultData() }
+
+function persist() {
+  if (!_data) return
+  // Guarda local inmediatamente
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+  // Guarda en Firestore sin esperar (elimina undefined)
+  const clean = JSON.parse(JSON.stringify(_data))
+  setDoc(FS_REF, clean).catch(e => console.warn('[TodyPan] Error Firestore:', e.message))
+}
+
+// ─── Tiempo Bogotá (UTC-5) ────────────────────────────────────
+export function getBogotaDate() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }))
+}
+export function getBogotaDateStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+}
+export function getBogotaHour() {
+  return getBogotaDate().getHours()
+}
+
+// ─── Cálculo de horas ─────────────────────────────────────────
+export function calcHourRate(empRate, workHours = 9) {
+  return Math.round((empRate / workHours) / 50) * 50
+}
+export function calcExtraPay(hourRate, extraHours) {
+  return Math.round((hourRate * extraHours) / 50) * 50
+}
+
+// ─── Movimientos ─────────────────────────────────────────────
 export function getMovements() { return _data.movements }
 
 export function addMovement(mov) {
@@ -85,12 +145,12 @@ export function deleteMovement(id) {
   persist()
 }
 
-// ─── Employees ───────────────────────────────────────────────
+// ─── Empleados ────────────────────────────────────────────────
 export function getEmployees() { return _data.employees }
 
 export function addEmployee(emp) {
   const id = 'e' + Date.now()
-  _data.employees = [..._data.employees, { id, ...emp }]
+  _data.employees = [..._data.employees, { workHours: 9, type: 'regular', ...emp, id }]
   _data.attendance[id] = {}
   persist()
   return id
@@ -107,7 +167,7 @@ export function deleteEmployee(id) {
   persist()
 }
 
-// ─── Attendance ──────────────────────────────────────────────
+// ─── Asistencia ───────────────────────────────────────────────
 export function getAttendance() { return _data.attendance }
 
 export function toggleWorked(empId, date) {
@@ -116,7 +176,17 @@ export function toggleWorked(empId, date) {
   if (att[date]) {
     delete att[date]
   } else {
-    att[date] = { worked: true, extras: 0, paid: false }
+    att[date] = { worked: true, extras: 0, extraHours: 0, paid: false }
+  }
+  persist()
+}
+
+export function setAttendanceEntry(empId, date, data) {
+  if (!_data.attendance[empId]) _data.attendance[empId] = {}
+  if (data === null) {
+    delete _data.attendance[empId][date]
+  } else {
+    _data.attendance[empId][date] = { ..._data.attendance[empId][date], ...data }
   }
   persist()
 }
@@ -139,7 +209,65 @@ export function setExtras(empId, date, amount) {
   if (a) { a.extras = amount; persist() }
 }
 
-// ─── Reminders ───────────────────────────────────────────────
+// ─── Confirmación diaria ──────────────────────────────────────
+export function isDayConfirmed(date) {
+  return !!_data.dailyConfirmations[date]
+}
+
+export function confirmDay(date, entries) {
+  entries.forEach(entry => {
+    if (!_data.attendance[entry.empId]) _data.attendance[entry.empId] = {}
+    const emp = _data.employees.find(e => e.id === entry.empId)
+    if (!emp) return
+
+    if (entry.worked) {
+      const hourRate = calcHourRate(emp.rate, emp.workHours || 9)
+      const extras = entry.extraHours !== 0 ? calcExtraPay(hourRate, entry.extraHours) : 0
+      _data.attendance[entry.empId][date] = {
+        worked: true,
+        extras,
+        extraHours: entry.extraHours || 0,
+        paid: false,
+        confirmedAt: Date.now(),
+      }
+    } else {
+      delete _data.attendance[entry.empId][date]
+    }
+  })
+
+  entries.forEach(entry => {
+    if (!entry.worked && entry.replacedBy) {
+      const replacerEmp = _data.employees.find(e => e.id === entry.replacedBy)
+      if (replacerEmp) {
+        if (!_data.attendance[entry.replacedBy]) _data.attendance[entry.replacedBy] = {}
+        const hourRate = calcHourRate(replacerEmp.rate, replacerEmp.workHours || 9)
+        const extras = entry.replacerExtraHours ? calcExtraPay(hourRate, entry.replacerExtraHours) : 0
+        _data.attendance[entry.replacedBy][date] = {
+          worked: true,
+          extras,
+          extraHours: entry.replacerExtraHours || 0,
+          paid: false,
+          replacedFor: entry.empId,
+          confirmedAt: Date.now(),
+        }
+      }
+    }
+  })
+
+  _data.dailyConfirmations[date] = true
+  persist()
+}
+
+export function getScheduledEmployees(date) {
+  const d = new Date(date + 'T00:00:00')
+  const dayOfWeek = d.getDay()
+  return _data.employees.filter(e => {
+    if (e.type === 'occasional') return false
+    return e.restDay !== dayOfWeek
+  })
+}
+
+// ─── Recordatorios ────────────────────────────────────────────
 export function getReminders() { return _data.reminders }
 
 export function addReminder(rem) {
@@ -164,14 +292,13 @@ export function toggleReminderPaid(id) {
   if (r) { r.paid = !r.paid; persist() }
 }
 
-// ─── Categories ──────────────────────────────────────────────
+// ─── Categorías ───────────────────────────────────────────────
 export function getIncomeCats() { return _data.incomeCats }
 export function getExpenseCats() { return _data.expenseCats }
-
 export function setIncomeCats(cats) { _data.incomeCats = cats; persist() }
 export function setExpenseCats(cats) { _data.expenseCats = cats; persist() }
 
-// ─── Branches ────────────────────────────────────────────────
+// ─── Panaderías ───────────────────────────────────────────────
 export function getBranches() { return _data.branches }
 
 export function updateBranch(id, name) {

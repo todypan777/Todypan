@@ -1,20 +1,24 @@
 import { useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { CatIcon } from '../components/Atoms'
 import { addMovement } from '../db'
 
 export default function AddMovement({ initialKind = 'income', onBack, onSave, incomeCats, expenseCats }) {
   const [kind, setKind] = useState(initialKind)
   const [amount, setAmount] = useState('')
   const [group, setGroup] = useState('proveedores')
-  const [cat, setCat] = useState('')
   const [branch, setBranch] = useState(1)
   const [note, setNote] = useState('')
-  const [date, setDate] = useState(todayStr())
+  const date = todayStr()
 
-  const cats = kind === 'income' ? incomeCats : (expenseCats[group] || [])
-  const canSave = amount && cat && Number(amount) > 0
+  const canSave = amount && Number(amount) > 0
+
+  // Auto-assign generic category per group
+  const autoCat = kind === 'income'
+    ? 'ventas_mostrador'
+    : group === 'proveedores' ? 'otros_prov'
+    : group === 'operacion' ? 'aseo'
+    : 'mejora'
 
   function handleKeypad(k) {
     if (k === 'back') setAmount(a => a.slice(0, -1))
@@ -28,7 +32,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
       date,
       type: kind,
       amount: Number(amount),
-      cat,
+      cat: autoCat,
       group: kind === 'expense' ? group : undefined,
       branch,
       note: note.trim() || undefined,
@@ -60,7 +64,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
             { id: 'income', label: 'Ingreso', color: T.ok },
             { id: 'expense', label: 'Gasto', color: T.copper[500] },
           ].map(o => (
-            <button key={o.id} onClick={() => { setKind(o.id); setCat('') }} style={{
+            <button key={o.id} onClick={() => setKind(o.id)} style={{
               flex: 1, padding: '9px', borderRadius: 10, border: 'none',
               background: kind === o.id ? '#fff' : 'transparent',
               color: kind === o.id ? o.color : T.neutral[500],
@@ -73,10 +77,10 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
       </div>
 
       {/* Amount display */}
-      <div style={{ padding: '20px 20px 12px', textAlign: 'center' }}>
+      <div style={{ padding: '24px 20px 16px', textAlign: 'center' }}>
         <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0.8, color: T.neutral[400], textTransform: 'uppercase', marginBottom: 4 }}>Monto</div>
         <div style={{
-          fontSize: 48, fontWeight: 700, letterSpacing: -1.5,
+          fontSize: 52, fontWeight: 700, letterSpacing: -1.5,
           color: amount ? (kind === 'income' ? T.ok : T.neutral[900]) : T.neutral[300],
           fontVariantNumeric: 'tabular-nums', lineHeight: 1,
         }}>
@@ -84,17 +88,8 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
         </div>
       </div>
 
-      {/* Date picker */}
-      <div style={{ padding: '0 20px 10px', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontSize: 12, color: T.neutral[500], fontWeight: 600 }}>Fecha:</div>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={{
-          border: `1px solid ${T.neutral[200]}`, borderRadius: 8, padding: '4px 10px',
-          fontSize: 13, color: T.neutral[700], fontFamily: 'inherit', background: '#fff', outline: 'none',
-        }}/>
-      </div>
-
-      {/* Branch + group */}
-      <div style={{ padding: '0 16px 8px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {/* Branch */}
+      <div style={{ padding: '0 16px 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {[
           { v: 1, l: 'Iglesia' },
           { v: 2, l: 'Esquina' },
@@ -104,14 +99,15 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
         ))}
       </div>
 
+      {/* Group (only for expenses) */}
       {kind === 'expense' && (
-        <div style={{ padding: '0 16px 8px', display: 'flex', gap: 8 }}>
+        <div style={{ padding: '0 16px 10px', display: 'flex', gap: 8 }}>
           {[
             { id: 'proveedores', label: 'Proveedores' },
             { id: 'operacion', label: 'Operación' },
             { id: 'empresa', label: 'Empresa' },
           ].map(g => (
-            <button key={g.id} onClick={() => { setGroup(g.id); setCat('') }} style={{
+            <button key={g.id} onClick={() => setGroup(g.id)} style={{
               padding: '7px 13px', borderRadius: 999, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
               background: group === g.id ? T.neutral[800] : T.neutral[100],
               color: group === g.id ? '#fff' : T.neutral[600],
@@ -121,36 +117,16 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
         </div>
       )}
 
-      {/* Categories */}
-      <div style={{ padding: '0 16px 6px', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <div style={{ display: 'flex', gap: 8, paddingBottom: 4 }}>
-          {cats.map(c => (
-            <button key={c.id} onClick={() => setCat(c.id)} style={{
-              padding: '9px 14px', borderRadius: 12, border: 'none',
-              background: cat === c.id ? T.copper[500] : '#fff',
-              color: cat === c.id ? '#fff' : T.neutral[700],
-              fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6,
-              boxShadow: cat === c.id ? `0 2px 8px rgba(200,143,106,0.3)` : `0 0 0 1px rgba(45,35,25,0.06)`,
-              flexShrink: 0,
-            }}>
-              <CatIcon cat={c.id} size={15} color={cat === c.id ? '#fff' : T.neutral[600]}/>
-              {c.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Note */}
-      <div style={{ padding: '0 16px 6px' }}>
+      <div style={{ padding: '0 16px 10px' }}>
         <input
           value={note}
           onChange={e => setNote(e.target.value)}
-          placeholder="Nota (opcional)"
+          placeholder="Nota (ej: Caja del sábado, Harina Haz de Oros...)"
           style={{
-            width: '100%', padding: '10px 14px', borderRadius: 10,
+            width: '100%', padding: '12px 14px', borderRadius: 10,
             border: `1px solid ${T.neutral[200]}`, background: '#fff',
-            fontSize: 13, color: T.neutral[700], fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box',
+            fontSize: 14, color: T.neutral[700], fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box',
           }}
         />
       </div>

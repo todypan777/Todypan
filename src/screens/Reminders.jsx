@@ -123,10 +123,10 @@ export default function Reminders({ reminders, onBack, onRefresh }) {
                       {r.recurring && <><span>·</span><span style={{ color: T.neutral[400] }}>Mensual</span></>}
                     </div>
                     {/* Último pago + próxima fecha para recurrentes */}
-                    {r.recurring && r.lastPaid && (
-                      <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 4, display: 'flex', gap: 10 }}>
-                        <span>Último pago: {fmtDate(r.lastPaid)}</span>
-                        {nextDue && <span style={{ color: T.copper[500], fontWeight: 600 }}>· Próximo: {fmtDate(nextDue)}</span>}
+                    {r.recurring && (r.paid || r.lastPaid) && (
+                      <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 4, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                        {r.lastPaid && <span>Último pago: {fmtDate(r.lastPaid)}</span>}
+                        {r.paid && nextDue && <span style={{ color: T.copper[500], fontWeight: 600 }}>Próximo: {fmtDate(nextDue)}</span>}
                       </div>
                     )}
                     {/* Aviso de bloqueo de pago */}

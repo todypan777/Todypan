@@ -48,8 +48,8 @@ function defaultData() {
     incomeCats: defaultIncomeCats,
     expenseCats: defaultExpenseCats,
     branches: [
-      { id: 1, name: 'Panadería Iglesia' },
-      { id: 2, name: 'Panadería Esquina' },
+      { id: 1, name: 'Panadería Iglesia', colorKey: 'copper' },
+      { id: 2, name: 'Panadería Esquina', colorKey: 'sage' },
     ],
     dailyConfirmations: {},
   }
@@ -65,6 +65,9 @@ function migrate(d) {
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
+  // Migrar colorKey a branches existentes sin color
+  const defaultColors = ['copper', 'sage']
+  d.branches = d.branches.map((b, i) => b.colorKey ? b : { ...b, colorKey: defaultColors[i] || 'copper' })
   return d
 }
 
@@ -301,7 +304,7 @@ export function setExpenseCats(cats) { _data.expenseCats = cats; persist() }
 // ─── Panaderías ───────────────────────────────────────────────
 export function getBranches() { return _data.branches }
 
-export function updateBranch(id, name) {
-  _data.branches = _data.branches.map(b => b.id === id ? { ...b, name } : b)
+export function updateBranch(id, updates) {
+  _data.branches = _data.branches.map(b => b.id === id ? { ...b, ...updates } : b)
   persist()
 }

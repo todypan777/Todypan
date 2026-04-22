@@ -78,51 +78,94 @@ export default function Reminders({ reminders, onBack, onRefresh }) {
           <Card padding={0}>
             {sorted.map((r, i) => {
               const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
-              const urgent = daysLeft <= 3 && !r.paid
-              const overdue = daysLeft < 0 && !r.paid
+              const overdue  = daysLeft < 0 && !r.paid
+              const urgent   = daysLeft <= 3 && !r.paid
+              // Bloquear "Pagar" si faltan más de 10 días (excepto vencidos)
+              const canPay   = !r.paid && (daysLeft <= 10 || overdue)
+              // Próxima fecha para recurrentes (mismo día del mes siguiente)
+              const nextDue  = (() => {
+                if (!r.recurring || !r.due) return null
+                const [y, m, d] = r.due.split('-').map(Number)
+                return new Date(y, m, d).toLocaleDateString('en-CA')
+              })()
+
               return (
                 <div key={r.id} style={{
-                  padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '14px 16px', display: 'flex', alignItems: 'flex-start', gap: 12,
                   borderBottom: i < sorted.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-                  opacity: r.paid ? 0.65 : 1,
+                  opacity: r.paid ? 0.6 : 1,
                 }}>
                   <div style={{
                     width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-                    background: r.paid ? T.neutral[100] : (urgent ? '#FBEAE6' : T.neutral[50]),
+                    background: r.paid ? T.neutral[100] : (urgent || overdue ? '#FBEAE6' : T.neutral[50]),
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    marginTop: 1,
                   }}>
-                    <CatIcon cat={r.cat} size={18} color={r.paid ? T.neutral[400] : (urgent ? T.bad : T.neutral[600])}/>
+                    <CatIcon cat={r.cat} size={18} color={r.paid ? T.neutral[400] : ((urgent || overdue) ? T.bad : T.neutral[600])}/>
                   </div>
+
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 600, color: T.neutral[800], textDecoration: r.paid ? 'line-through' : 'none' }}>
                       {r.title}
                     </div>
-                    <div style={{ fontSize: 12, marginTop: 3, color: overdue ? T.bad : T.neutral[500], display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                    {/* Fecha y estado */}
+                    <div style={{ fontSize: 12, marginTop: 3, display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap',
+                      color: overdue ? T.bad : (urgent ? T.warn : T.neutral[500]) }}>
                       <span>
-                        {r.paid ? 'Pagado' :
-                          overdue ? `Vencido hace ${Math.abs(daysLeft)}d` :
-                          daysLeft === 0 ? 'Hoy' :
-                          daysLeft === 1 ? 'Mañana' :
+                        {r.paid ? `Pagado` :
+                          overdue  ? `⚠ Vencido hace ${Math.abs(daysLeft)}d` :
+                          daysLeft === 0 ? '🔴 Vence hoy' :
+                          daysLeft === 1 ? '🟡 Mañana' :
+                          daysLeft <= 10 ? `${fmtDate(r.due)} · en ${daysLeft}d` :
                           `${fmtDate(r.due)} · en ${daysLeft}d`}
                       </span>
                       {r.branch !== 'both' && <><span>·</span><BranchChip branch={r.branch} size="sm"/></>}
                       {r.recurring && <><span>·</span><span style={{ color: T.neutral[400] }}>Mensual</span></>}
                     </div>
+                    {/* Último pago + próxima fecha para recurrentes */}
+                    {r.recurring && r.lastPaid && (
+                      <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 4, display: 'flex', gap: 10 }}>
+                        <span>Último pago: {fmtDate(r.lastPaid)}</span>
+                        {nextDue && <span style={{ color: T.copper[500], fontWeight: 600 }}>· Próximo: {fmtDate(nextDue)}</span>}
+                      </div>
+                    )}
+                    {/* Aviso de bloqueo de pago */}
+                    {!r.paid && daysLeft > 10 && (
+                      <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 4, fontStyle: 'italic' }}>
+                        Disponible para pagar en {daysLeft - 10}d
+                      </div>
+                    )}
                   </div>
+
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <Amount value={r.amount} size={14} weight={700} color={r.paid ? T.neutral[400] : T.neutral[900]}/>
                     <div style={{ display: 'flex', gap: 6, marginTop: 5, justifyContent: 'flex-end' }}>
-                      <button onClick={() => { setEditId(r.id) }} style={{
+                      <button onClick={() => setEditId(r.id)} style={{
                         padding: '4px 8px', borderRadius: 999, border: 'none',
                         background: T.neutral[100], color: T.neutral[600],
                         fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
                       }}>✏️</button>
-                      <button onClick={() => handleToggle(r.id)} style={{
-                        padding: '4px 10px', borderRadius: 999, border: 'none',
-                        background: r.paid ? T.neutral[100] : T.ok,
-                        color: r.paid ? T.neutral[600] : '#fff',
-                        fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                      }}>{r.paid ? 'Deshacer' : 'Pagar'}</button>
+                      {r.paid ? (
+                        <button onClick={() => handleToggle(r.id)} style={{
+                          padding: '4px 10px', borderRadius: 999, border: 'none',
+                          background: T.neutral[100], color: T.neutral[600],
+                          fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                        }}>Deshacer</button>
+                      ) : (
+                        <button
+                          onClick={() => canPay && handleToggle(r.id)}
+                          title={!canPay ? `Disponible en ${daysLeft - 10} días` : ''}
+                          style={{
+                            padding: '4px 10px', borderRadius: 999, border: 'none',
+                            background: canPay ? T.ok : T.neutral[100],
+                            color: canPay ? '#fff' : T.neutral[400],
+                            fontSize: 11, fontWeight: 600,
+                            cursor: canPay ? 'pointer' : 'not-allowed',
+                            fontFamily: 'inherit',
+                          }}>
+                          {canPay ? 'Pagar' : `${daysLeft - 10}d`}
+                        </button>
+                      )}
                     </div>
                     <button onClick={() => setConfirmDel(r.id)} style={{
                       padding: '2px 0 0', background: 'none', border: 'none', cursor: 'pointer',

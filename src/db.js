@@ -292,7 +292,20 @@ export function deleteReminder(id) {
 
 export function toggleReminderPaid(id) {
   const r = _data.reminders.find(x => x.id === id)
-  if (r) { r.paid = !r.paid; persist() }
+  if (!r) return
+
+  if (!r.paid && r.recurring === 'monthly') {
+    // Para recurrentes: guardar fecha de último pago y avanzar al próximo mes
+    r.lastPaid = r.due
+    const [y, m, d] = r.due.split('-').map(Number)
+    // m es 1-indexed → new Date(y, m, d) usa m como índice 0-based = siguiente mes ✓
+    const next = new Date(y, m, d)
+    r.due = next.toLocaleDateString('en-CA')
+    r.paid = false // queda pendiente para el próximo ciclo
+  } else {
+    r.paid = !r.paid
+  }
+  persist()
 }
 
 // ─── Categorías ───────────────────────────────────────────────

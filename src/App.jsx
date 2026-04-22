@@ -1,5 +1,6 @@
 import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
+import InstallPrompt from './components/UI/InstallPrompt'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
 import { TabBar, Sidebar } from './components/Nav'
 import { DesktopCtx } from './context/DesktopCtx'
@@ -280,6 +281,8 @@ export default function App() {
         )}
 
         {addMovementOverlay}
+
+        <InstallPrompt />
 
         <style>{`
           @keyframes slideUp {

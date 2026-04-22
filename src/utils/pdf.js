@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import { fmtCOP, fmtDate, fmtMonthLabel } from './format'
 import { T } from '../tokens'
+import { getData } from '../db'
 
 export function generatePayrollPDF(emp, attendanceEntries, month) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
@@ -47,7 +48,7 @@ export function generatePayrollPDF(emp, attendanceEntries, month) {
   doc.setTextColor(122, 113, 99)
   doc.text(emp.role, margin + 6, cardY + 20)
 
-  const branchName = emp.branch === 1 ? 'Panadería Iglesia' : 'Panadería Esquina'
+  const branchName = getData().branches?.find(b => b.id === emp.branch)?.name || 'Panadería'
   doc.text(branchName, margin + 6, cardY + 28)
 
   // Rate info

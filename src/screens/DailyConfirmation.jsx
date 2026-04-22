@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate } from '../utils/format'
 import { Card, BranchChip, Modal, InputField, PrimaryButton } from '../components/Atoms'
 import {
-  confirmDay, addEmployee, calcHourRate, calcExtraPay, getBogotaDateStr,
+  confirmDay, addEmployee, calcHourRate, calcExtraPay, getBogotaDateStr, getData,
 } from '../db'
 
 const DAY_NAMES = ['dom','lun','mar','mié','jue','vie','sáb']
@@ -377,13 +377,13 @@ function CreateOccasionalModal({ onClose, onSave }) {
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            {[{ v: 1, l: 'Iglesia' }, { v: 2, l: 'Esquina' }].map(b => (
-              <button key={b.v} onClick={() => setBranch(b.v)} style={{
+            {getData().branches.map(b => (
+              <button key={b.id} onClick={() => setBranch(b.id)} style={{
                 flex: 1, padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                background: branch === b.v ? T.copper[500] : T.neutral[100],
-                color: branch === b.v ? '#fff' : T.neutral[700],
+                background: branch === b.id ? T.copper[500] : T.neutral[100],
+                color: branch === b.id ? '#fff' : T.neutral[700],
                 fontSize: 14, fontWeight: 600,
-              }}>{b.l}</button>
+              }}>{b.name}</button>
             ))}
           </div>
         </div>

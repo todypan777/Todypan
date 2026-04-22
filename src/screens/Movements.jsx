@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, currentMonth, fmtMonthLabel } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { deleteMovement, getIncomeCats, getExpenseCats } from '../db'
+import { deleteMovement, getIncomeCats, getExpenseCats, getData } from '../db'
 
 function allCatLabel(cat, incomeCats, expenseCats) {
   const all = [
@@ -80,8 +80,9 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
       </div>
       <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
         <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Chip label="Iglesia" active={filter === 1} onClick={() => setFilter(1)} />
-        <Chip label="Esquina" active={filter === 2} onClick={() => setFilter(2)} />
+        {getData().branches.map(br => (
+          <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
+        ))}
       </div>
 
       {/* Summary bar */}

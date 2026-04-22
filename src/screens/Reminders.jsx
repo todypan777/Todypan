@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, todayStr } from '../utils/format'
 import { Card, SectionHeader, CatIcon, BranchChip, Amount, IconButton, BackButton, Modal, InputField, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { addReminder, updateReminder, deleteReminder, toggleReminderPaid } from '../db'
+import { addReminder, updateReminder, deleteReminder, toggleReminderPaid, getData } from '../db'
 
 const CATS = [
   { id: 'arriendo', label: 'Arriendo' },
@@ -218,7 +218,7 @@ function ReminderForm({ initial, onClose, onSave, isEdit }) {
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {[{ v: 'both', l: 'Ambas' }, { v: 1, l: 'Iglesia' }, { v: 2, l: 'Esquina' }].map(b => (
+          {[{ v: 'both', l: 'Ambas' }, ...getData().branches.map(b => ({ v: b.id, l: b.name }))].map(b => (
             <button key={b.v} onClick={() => setBranch(b.v)} style={{
               flex: 1, padding: '9px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
               background: branch === b.v ? T.copper[500] : T.neutral[100],

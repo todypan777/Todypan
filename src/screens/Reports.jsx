@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtMonthLabel, currentMonth } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, BackButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
+import { getData } from '../db'
 
 function catLabel(cat, incomeCats, expenseCats) {
   const all = [...incomeCats, ...expenseCats.proveedores, ...expenseCats.operacion, ...expenseCats.empresa]
@@ -73,8 +74,9 @@ export default function Reports({ filter, setFilter, movements, employees, atten
 
       <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
         <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Chip label="Iglesia" active={filter === 1} onClick={() => setFilter(1)} />
-        <Chip label="Esquina" active={filter === 2} onClick={() => setFilter(2)} />
+        {getData().branches.map(br => (
+          <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
+        ))}
       </div>
 
       {/* Net summary */}

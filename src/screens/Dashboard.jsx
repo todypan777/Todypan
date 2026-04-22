@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
+import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
@@ -151,8 +151,9 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
       {/* Branch filter */}
       <div style={{ padding: '4px 20px 16px', display: 'flex', gap: 8, overflowX: 'auto' }}>
         <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Chip label="Iglesia" active={filter === 1} onClick={() => setFilter(1)} />
-        <Chip label="Esquina" active={filter === 2} onClick={() => setFilter(2)} />
+        {getData().branches.map(br => (
+          <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
+        ))}
       </div>
 
       {/* Balance hero card */}

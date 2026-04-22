@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate, fmtMonthLabel, currentMonth } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, IconButton, BackButton, Modal, InputField, PrimaryButton, EmptyState } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { addEmployee, updateEmployee, deleteEmployee, togglePaid, payAllPending } from '../db'
+import { addEmployee, updateEmployee, deleteEmployee, togglePaid, payAllPending, getData } from '../db'
 import { generatePayrollPDF } from '../utils/pdf'
 
 export default function Team({ filter, setFilter, employees, attendance, onRefresh, initialEmpId, onClearEmpId }) {
@@ -43,8 +43,9 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
 
       <div style={{ padding: '4px 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
         <Chip label="Todos" active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Chip label="Iglesia" active={filter === 1} onClick={() => setFilter(1)} />
-        <Chip label="Esquina" active={filter === 2} onClick={() => setFilter(2)} />
+        {getData().branches.map(br => (
+          <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
+        ))}
       </div>
 
       {totalOwed > 0 && (
@@ -135,13 +136,13 @@ function AddEmployeeModal({ onClose, onSave }) {
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {[{ v: 1, l: 'Iglesia' }, { v: 2, l: 'Esquina' }].map(b => (
-            <button key={b.v} onClick={() => setBranch(b.v)} style={{
+          {getData().branches.map(b => (
+            <button key={b.id} onClick={() => setBranch(b.id)} style={{
               flex: 1, padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: branch === b.v ? T.copper[500] : T.neutral[100],
-              color: branch === b.v ? '#fff' : T.neutral[700],
+              background: branch === b.id ? T.copper[500] : T.neutral[100],
+              color: branch === b.id ? '#fff' : T.neutral[700],
               fontSize: 14, fontWeight: 600,
-            }}>{b.l}</button>
+            }}>{b.name}</button>
           ))}
         </div>
       </div>
@@ -446,13 +447,13 @@ function EditEmployeeModal({ emp, onClose, onSave }) {
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {[{ v: 1, l: 'Iglesia' }, { v: 2, l: 'Esquina' }].map(b => (
-            <button key={b.v} onClick={() => setBranch(b.v)} style={{
+          {getData().branches.map(b => (
+            <button key={b.id} onClick={() => setBranch(b.id)} style={{
               flex: 1, padding: '10px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: branch === b.v ? T.copper[500] : T.neutral[100],
-              color: branch === b.v ? '#fff' : T.neutral[700],
+              background: branch === b.id ? T.copper[500] : T.neutral[100],
+              color: branch === b.id ? '#fff' : T.neutral[700],
               fontSize: 14, fontWeight: 600,
-            }}>{b.l}</button>
+            }}>{b.name}</button>
           ))}
         </div>
       </div>

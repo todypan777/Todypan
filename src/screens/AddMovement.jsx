@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { addMovement } from '../db'
+import { addMovement, getData } from '../db'
 
 export default function AddMovement({ initialKind = 'income', onBack, onSave, incomeCats, expenseCats }) {
   const [kind, setKind] = useState(initialKind)
@@ -91,8 +91,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
       {/* Branch */}
       <div style={{ padding: '0 16px 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {[
-          { v: 1, l: 'Iglesia' },
-          { v: 2, l: 'Esquina' },
+          ...getData().branches.map(b => ({ v: b.id, l: b.name })),
           { v: 'both', l: 'Ambas' },
         ].map(b => (
           <BranchBtn key={b.v} label={b.l} active={branch === b.v} onClick={() => setBranch(b.v)} branch={b.v}/>

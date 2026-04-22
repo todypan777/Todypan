@@ -1,5 +1,6 @@
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
+import { getData } from '../db'
 
 export function TodyMark({ size = 20, color = T.copper[500] }) {
   return (
@@ -20,7 +21,9 @@ export function TodyMark({ size = 20, color = T.copper[500] }) {
 
 export function BranchChip({ branch, size = 'md' }) {
   const b = T.branch[branch] || T.branch.both
-  const label = branch === 1 ? 'Iglesia' : branch === 2 ? 'Esquina' : 'Ambas'
+  const branches = getData().branches || []
+  const found = branches.find(br => br.id === branch)
+  const label = found ? found.name : 'Ambas'
   const pad = size === 'sm' ? '2px 7px' : '3px 9px'
   const fs = size === 'sm' ? 10.5 : 11.5
   return (

@@ -28,12 +28,6 @@ export default function More({ onOpen }) {
       ),
     },
     {
-      id: 'categories', label: 'Categorías', desc: 'Personalizar ingresos y gastos',
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 20 20"><rect x="3" y="3" width="6" height="6" rx="1.5" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/><rect x="11" y="3" width="6" height="6" rx="1.5" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/><rect x="3" y="11" width="6" height="6" rx="1.5" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/><rect x="11" y="11" width="6" height="6" rx="1.5" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/></svg>
-      ),
-    },
-    {
       id: 'branches', label: 'Panaderías', desc: 'Panadería Iglesia y Panadería Esquina',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M3 9 L10 4 L17 9 V16 H3 Z" stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"/><path d="M8 16 V12 H12 V16" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/></svg>

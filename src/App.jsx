@@ -9,7 +9,6 @@ import Team from './screens/Team'
 import Reports from './screens/Reports'
 import Reminders from './screens/Reminders'
 import More from './screens/More'
-import Categories from './screens/Categories'
 import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
@@ -152,15 +151,6 @@ export default function App() {
       content = (
         <Reminders
           reminders={data.reminders}
-          onBack={() => setMoreSub(null)}
-          onRefresh={refresh}
-        />
-      )
-    } else if (moreSub === 'categories') {
-      content = (
-        <Categories
-          incomeCats={data.incomeCats}
-          expenseCats={data.expenseCats}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />

@@ -1,7 +1,8 @@
 import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
-import { TabBar } from './components/Nav'
+import { TabBar, Sidebar } from './components/Nav'
+import { DesktopCtx } from './context/DesktopCtx'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
 import AddMovement from './screens/AddMovement'
@@ -13,6 +14,8 @@ import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 
+const SIDEBAR_W = 230
+
 export default function App() {
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
@@ -21,15 +24,20 @@ export default function App() {
   const [pendingEmpId, setPendingEmpId] = useState(null)
 
   const [dbLoaded, setDbLoaded] = useState(false)
-  // confirmingDate: fecha string para abrir DailyConfirmation (null = cerrado)
-  // editingDate: fecha string para abrir DayEditModal (null = cerrado)
   const [confirmingDate, setConfirmingDate] = useState(null)
   const [editingDate, setEditingDate] = useState(null)
+  const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024)
 
   useEffect(() => {
     initDB()
       .then(() => setDbLoaded(true))
       .catch(() => setDbLoaded(true))
+  }, [])
+
+  useEffect(() => {
+    const handler = () => setIsDesktop(window.innerWidth >= 1024)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
   }, [])
 
   const [, forceUpdate] = useReducer(x => x + 1, 0)
@@ -168,47 +176,19 @@ export default function App() {
     }
   }
 
-  return (
-    <div style={{
-      minHeight: '100dvh',
-      background: T.neutral[50],
-      fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
-      color: T.neutral[800],
-      position: 'relative',
-    }}>
-      <div style={{ minHeight: '100dvh', WebkitOverflowScrolling: 'touch', position: 'relative' }}>
-        {content}
-      </div>
-
-      <TabBar active={activeTab} onChange={handleTabChange} />
-
-      {/* Formulario de confirmación — funciona para cualquier fecha */}
-      {confirmingDate && (
-        <DailyConfirmation
-          date={confirmingDate}
-          employees={data.employees}
-          attendance={data.attendance}
-          onDone={() => { setConfirmingDate(null); refresh() }}
-          onRefresh={refresh}
-        />
-      )}
-
-      {/* Edición de día ya confirmado */}
-      {editingDate && (
-        <DayEditModal
-          date={editingDate}
-          employees={data.employees}
-          attendance={data.attendance}
-          onDone={() => { setEditingDate(null); refresh() }}
-          onRefresh={refresh}
-        />
-      )}
-
-      {modal && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 80,
-          background: T.neutral[50],
-          animation: 'slideUp 0.28s cubic-bezier(0.2,0.9,0.3,1.2)',
+  // ── Modal de nuevo movimiento (desktop = centrado, móvil = fullscreen) ──
+  const addMovementOverlay = modal && (
+    isDesktop ? (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        background: 'rgba(0,0,0,0.35)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }} onClick={() => setModal(null)}>
+        <div onClick={e => e.stopPropagation()} style={{
+          width: 480, maxHeight: '90vh', borderRadius: 24,
+          background: T.neutral[50], overflow: 'hidden',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.2)',
+          animation: 'fadeScaleIn 0.2s ease',
         }}>
           <AddMovement
             initialKind={modal.kind}
@@ -218,19 +198,105 @@ export default function App() {
             expenseCats={data.expenseCats}
           />
         </div>
-      )}
+      </div>
+    ) : (
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        background: T.neutral[50],
+        animation: 'slideUp 0.28s cubic-bezier(0.2,0.9,0.3,1.2)',
+      }}>
+        <AddMovement
+          initialKind={modal.kind}
+          onBack={() => setModal(null)}
+          onSave={() => { setModal(null); refresh() }}
+          incomeCats={data.incomeCats}
+          expenseCats={data.expenseCats}
+        />
+      </div>
+    )
+  )
 
-      <style>{`
-        @keyframes slideUp {
-          from { transform: translateY(100%); opacity: 0.9; }
-          to { transform: translateY(0); opacity: 1; }
-        }
-        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
-        body { margin: 0; background: ${T.neutral[100]}; }
-        button:active { opacity: 0.75; }
-        input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
-        ::-webkit-scrollbar { display: none; }
-      `}</style>
-    </div>
+  return (
+    <DesktopCtx.Provider value={isDesktop}>
+      <div style={{
+        minHeight: '100dvh',
+        background: isDesktop ? T.neutral[100] : T.neutral[50],
+        fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
+        color: T.neutral[800],
+      }}>
+
+        {isDesktop ? (
+          /* ── Layout desktop ── */
+          <div style={{ display: 'flex', minHeight: '100dvh' }}>
+            <Sidebar active={activeTab} onChange={handleTabChange} />
+            <main style={{
+              flex: 1,
+              marginLeft: SIDEBAR_W,
+              minHeight: '100dvh',
+              overflowY: 'auto',
+              background: T.neutral[50],
+            }}>
+              <div style={{ maxWidth: 920, margin: '0 auto', minHeight: '100vh' }}>
+                {content}
+              </div>
+            </main>
+          </div>
+        ) : (
+          /* ── Layout móvil ── */
+          <>
+            <div style={{ minHeight: '100dvh', WebkitOverflowScrolling: 'touch' }}>
+              {content}
+            </div>
+            <TabBar active={activeTab} onChange={handleTabChange} />
+          </>
+        )}
+
+        {/* Confirmación de día */}
+        {confirmingDate && (
+          <DailyConfirmation
+            date={confirmingDate}
+            employees={data.employees}
+            attendance={data.attendance}
+            onDone={() => { setConfirmingDate(null); refresh() }}
+            onRefresh={refresh}
+          />
+        )}
+
+        {/* Edición de día confirmado */}
+        {editingDate && (
+          <DayEditModal
+            date={editingDate}
+            employees={data.employees}
+            attendance={data.attendance}
+            onDone={() => { setEditingDate(null); refresh() }}
+            onRefresh={refresh}
+          />
+        )}
+
+        {addMovementOverlay}
+
+        <style>{`
+          @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0.9; }
+            to { transform: translateY(0); opacity: 1; }
+          }
+          @keyframes fadeScaleIn {
+            from { transform: scale(0.96); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+          }
+          * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+          body { margin: 0; background: ${T.neutral[100]}; }
+          button:active { opacity: 0.75; }
+          input[type="date"]::-webkit-calendar-picker-indicator { opacity: 0.6; cursor: pointer; }
+          ::-webkit-scrollbar { display: none; }
+          @media (min-width: 1024px) {
+            ::-webkit-scrollbar { display: block; width: 6px; }
+            ::-webkit-scrollbar-track { background: transparent; }
+            ::-webkit-scrollbar-thumb { background: ${T.neutral[200]}; border-radius: 3px; }
+            ::-webkit-scrollbar-thumb:hover { background: ${T.neutral[300]}; }
+          }
+        `}</style>
+      </div>
+    </DesktopCtx.Provider>
   )
 }

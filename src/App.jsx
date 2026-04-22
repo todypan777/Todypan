@@ -74,6 +74,12 @@ export default function App() {
       setModal({ kind: 'income' })
       return
     }
+    // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
+    if (['movements', 'reports', 'reminders', 'branches'].includes(t)) {
+      setMoreSub(t)
+      setTab('more')
+      return
+    }
     setMoreSub(null)
     setPendingEmpId(null)
     setTab(t)
@@ -228,7 +234,7 @@ export default function App() {
         {isDesktop ? (
           /* ── Layout desktop ── */
           <div style={{ display: 'flex', minHeight: '100dvh' }}>
-            <Sidebar active={activeTab} onChange={handleTabChange} />
+            <Sidebar active={tab === 'more' && moreSub ? moreSub : activeTab} onChange={handleTabChange} />
             <main style={{
               flex: 1,
               marginLeft: SIDEBAR_W,

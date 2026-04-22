@@ -2,7 +2,7 @@ import { T } from '../tokens'
 import { TodyMark } from './Atoms'
 import { useIsDesktop } from '../context/DesktopCtx'
 
-const NAV_TABS = [
+const MAIN_TABS = [
   { id: 'home', label: 'Inicio', icon: (c) => (
     <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
       <path d="M3 11 L11 4 L19 11 V18 Q19 19 18 19 H14 V14 H8 V19 H4 Q3 19 3 18 Z" stroke={c} strokeWidth="1.7" fill="none" strokeLinejoin="round"/>
@@ -22,20 +22,49 @@ const NAV_TABS = [
       <path d="M13 13 Q15 11.5 17 12.5 Q20 13.5 20 17" stroke={c} strokeWidth="1.5" fill="none"/>
     </svg>
   )},
-  { id: 'more', label: 'Más', icon: (c) => (
-    <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
-      <circle cx="5" cy="11" r="1.6" fill={c}/>
-      <circle cx="11" cy="11" r="1.6" fill={c}/>
-      <circle cx="17" cy="11" r="1.6" fill={c}/>
+]
+
+const MORE_TABS = [
+  { id: 'movements', label: 'Movimientos', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M3 6 H13 M3 6 L6 3 M3 6 L6 9" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M17 14 H7 M17 14 L14 11 M17 14 L14 17" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )},
+  { id: 'reports', label: 'Reportes', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={c} strokeWidth="2" strokeLinecap="round"/>
+      <path d="M3 18 H17" stroke={c} strokeWidth="1.5" strokeLinecap="round"/>
+    </svg>
+  )},
+  { id: 'reminders', label: 'Recordatorios', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M5 8 Q5 4 10 4 Q15 4 15 8 V12 L17 15 H3 L5 12 Z" stroke={c} strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+      <path d="M8 16 Q8 18 10 18 Q12 18 12 16" stroke={c} strokeWidth="1.6" fill="none"/>
+    </svg>
+  )},
+  { id: 'branches', label: 'Panaderías', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M3 9 L10 4 L17 9 V16 H3 Z" stroke={c} strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+      <path d="M8 16 V12 H12 V16" stroke={c} strokeWidth="1.6" fill="none"/>
     </svg>
   )},
 ]
 
+// Para móvil (TabBar) — sigue usando "Más"
+const MOBILE_MORE_TAB = { id: 'more', label: 'Más', icon: (c) => (
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+    <circle cx="5" cy="11" r="1.6" fill={c}/>
+    <circle cx="11" cy="11" r="1.6" fill={c}/>
+    <circle cx="17" cy="11" r="1.6" fill={c}/>
+  </svg>
+)}
+
 // ── Tab bar móvil ──────────────────────────────────────────────
 export function TabBar({ active, onChange }) {
   const mobileTabs = [
-    NAV_TABS[0],
-    NAV_TABS[1],
+    MAIN_TABS[0],
+    MAIN_TABS[1],
     {
       id: 'add', label: '', icon: () => (
         <div style={{
@@ -49,8 +78,8 @@ export function TabBar({ active, onChange }) {
         </div>
       ),
     },
-    NAV_TABS[2],
-    NAV_TABS[3],
+    MAIN_TABS[2],
+    MOBILE_MORE_TAB,
   ]
 
   return (
@@ -131,27 +160,23 @@ export function Sidebar({ active, onChange }) {
         </button>
       </div>
 
-      {/* Navegación */}
-      <nav style={{ flex: 1, padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {NAV_TABS.map(t => {
-          const isActive = active === t.id
-          const c = isActive ? T.copper[600] : T.neutral[500]
-          return (
-            <button key={t.id} onClick={() => onChange(t.id)} style={{
-              width: '100%', padding: '10px 12px', borderRadius: 10,
-              background: isActive ? T.copper[50] : 'transparent',
-              border: isActive ? `1px solid ${T.copper[100]}` : '1px solid transparent',
-              cursor: 'pointer', fontFamily: 'inherit',
-              display: 'flex', alignItems: 'center', gap: 12,
-              color: c, fontSize: 14, fontWeight: isActive ? 700 : 500,
-              textAlign: 'left', transition: 'background 0.15s',
-            }}>
-              {t.icon(c)}
-              {t.label}
-            </button>
-          )
-        })}
+      {/* Navegación principal */}
+      <nav style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {MAIN_TABS.map(t => <SidebarItem key={t.id} tab={t} active={active} onChange={onChange}/>)}
       </nav>
+
+      {/* Separador */}
+      <div style={{ margin: '4px 16px', borderTop: `1px solid ${T.neutral[100]}` }}/>
+
+      {/* Sección secundaria */}
+      <div style={{ padding: '2px 10px 0', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ padding: '4px 12px 6px', fontSize: 10, fontWeight: 700, color: T.neutral[300], textTransform: 'uppercase', letterSpacing: 0.8 }}>
+          Gestión
+        </div>
+        {MORE_TABS.map(t => <SidebarItem key={t.id} tab={t} active={active} onChange={onChange}/>)}
+      </div>
+
+      <div style={{ flex: 1 }}/>
 
       {/* Footer */}
       <div style={{
@@ -162,6 +187,25 @@ export function Sidebar({ active, onChange }) {
         TodyPan · versión 1.0
       </div>
     </aside>
+  )
+}
+
+function SidebarItem({ tab: t, active, onChange }) {
+  const isActive = active === t.id
+  const c = isActive ? T.copper[600] : T.neutral[500]
+  return (
+    <button onClick={() => onChange(t.id)} style={{
+      width: '100%', padding: '9px 12px', borderRadius: 10,
+      background: isActive ? T.copper[50] : 'transparent',
+      border: isActive ? `1px solid ${T.copper[100]}` : '1px solid transparent',
+      cursor: 'pointer', fontFamily: 'inherit',
+      display: 'flex', alignItems: 'center', gap: 11,
+      color: c, fontSize: 14, fontWeight: isActive ? 700 : 500,
+      textAlign: 'left', transition: 'background 0.12s',
+    }}>
+      {t.icon(c)}
+      {t.label}
+    </button>
   )
 }
 

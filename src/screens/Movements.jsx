@@ -157,14 +157,19 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
                         {m.group && <span>{groupLabel(m.group)}</span>}
                       </div>
                     </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: m.type === 'income' ? T.ok : T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: m.type === 'income' ? T.ok : T.neutral[800], fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
                         {m.type === 'income' ? '+' : '−'}{fmtCOP(m.amount)}
                       </div>
                       <button onClick={() => setConfirmDel(m.id)} style={{
-                        background: 'none', border: 'none', padding: '2px 0 0', cursor: 'pointer',
-                        fontSize: 11, color: T.neutral[300], fontFamily: 'inherit',
-                      }}>eliminar</button>
+                        background: T.neutral[100], border: 'none', borderRadius: 8,
+                        width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        cursor: 'pointer', flexShrink: 0,
+                      }}>
+                        <svg width="15" height="15" viewBox="0 0 20 20" fill="none">
+                          <path d="M4 6h12M8 6V4h4v2M7 9v6M13 9v6M5 6l1 11h8l1-11" stroke={T.neutral[400]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 ))}

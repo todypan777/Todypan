@@ -14,6 +14,7 @@ import More from './screens/More'
 import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
+import Products from './screens/Products'
 
 const SIDEBAR_W = 230
 
@@ -76,7 +77,7 @@ export default function App() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -174,6 +175,14 @@ export default function App() {
       content = (
         <Branches
           branches={data.branches}
+          onBack={() => setMoreSub(null)}
+          onRefresh={refresh}
+        />
+      )
+    } else if (moreSub === 'products') {
+      content = (
+        <Products
+          products={data.products || []}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />

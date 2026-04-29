@@ -22,6 +22,16 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'products', label: 'Productos', desc: 'Costos, precios y márgenes de ganancia',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="3" y="8" width="14" height="9" rx="2" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <path d="M6 8 Q6 4 10 4 Q14 4 14 8" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <path d="M7 12.5 H13 M9.5 11 V14" stroke={T.copper[600]} strokeWidth="1.4" strokeLinecap="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'reminders', label: 'Recordatorios', desc: 'Servicios y pagos fijos',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M5 8 Q5 4 10 4 Q15 4 15 8 V12 L17 15 H3 L5 12 Z" stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"/><path d="M8 16 Q8 18 10 18 Q12 18 12 16" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/></svg>

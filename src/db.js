@@ -45,6 +45,7 @@ function defaultData() {
     employees: [],
     attendance: {},
     reminders: [],
+    products: [],
     incomeCats: defaultIncomeCats,
     expenseCats: defaultExpenseCats,
     branches: [
@@ -65,6 +66,7 @@ function migrate(d) {
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
+  if (!d.products) d.products = []
   // Migrar colorKey a branches existentes sin color
   const defaultColors = ['copper', 'sage']
   d.branches = d.branches.map((b, i) => b.colorKey ? b : { ...b, colorKey: defaultColors[i] || 'copper' })
@@ -305,6 +307,26 @@ export function toggleReminderPaid(id) {
   } else {
     r.paid = !r.paid
   }
+  persist()
+}
+
+// ─── Productos ────────────────────────────────────────────────
+export function getProducts() { return _data.products }
+
+export function addProduct(prod) {
+  const id = 'p' + Date.now()
+  _data.products = [..._data.products, { id, active: true, ...prod }]
+  persist()
+  return id
+}
+
+export function updateProduct(id, updates) {
+  _data.products = _data.products.map(p => p.id === id ? { ...p, ...updates } : p)
+  persist()
+}
+
+export function deleteProduct(id) {
+  _data.products = _data.products.filter(p => p.id !== id)
   persist()
 }
 

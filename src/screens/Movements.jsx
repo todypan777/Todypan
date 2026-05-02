@@ -91,15 +91,15 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
           <div style={{ display: 'flex', gap: 24 }}>
             <div>
               <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ingresos</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc, { compact: true })}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc)}</div>
             </div>
             <div>
               <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Gastos</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalExp, { compact: true })}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalExp)}</div>
             </div>
             <div>
               <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Neto</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: totalInc - totalExp >= 0 ? T.ok : T.bad, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc - totalExp, { compact: true })}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: totalInc - totalExp >= 0 ? T.ok : T.bad, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc - totalExp)}</div>
             </div>
           </div>
         </Card>
@@ -127,8 +127,8 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
                 {fmtDate(date, { weekday: true })}
               </div>
               <div style={{ fontSize: 12, color: T.neutral[400], display: 'flex', gap: 10 }}>
-                {dayInc > 0 && <span style={{ color: T.ok, fontWeight: 600 }}>+{fmtCOP(dayInc, { compact: true })}</span>}
-                {dayExp > 0 && <span style={{ color: T.copper[500], fontWeight: 600 }}>−{fmtCOP(dayExp, { compact: true })}</span>}
+                {dayInc > 0 && <span style={{ color: T.ok, fontWeight: 600 }}>+{fmtCOP(dayInc)}</span>}
+                {dayExp > 0 && <span style={{ color: T.copper[500], fontWeight: 600 }}>−{fmtCOP(dayExp)}</span>}
               </div>
             </div>
             <div style={{ padding: '0 16px', marginBottom: 4 }}>

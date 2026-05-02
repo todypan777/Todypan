@@ -184,7 +184,7 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
               <div key={label}>
                 <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>{label}</div>
                 <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
-                  {fmtCOP(value, { compact: true })}
+                  {fmtCOP(value)}
                 </div>
               </div>
             ))}
@@ -321,11 +321,11 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
                 <div style={{ display: 'flex', gap: 20 }}>
                   <div>
                     <div style={{ fontSize: 11, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ingresos</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayInc, { compact: true })}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayInc)}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Gastos</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayExp, { compact: true })}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayExp)}</div>
                   </div>
                 </div>
               </Card>

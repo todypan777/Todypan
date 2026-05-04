@@ -231,22 +231,32 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 3 — Flujo de venta básico (efectivo + deuda)
+### ✅ Fase 3 — Flujo de venta básico (efectivo + deuda)
 **Objetivo:** Cajera registra ventas con método EFECTIVO o DEUDA. NEQUI/DAVIPLATA viene en Fase 4.
 
-- [ ] Pantalla "Nueva venta" (botón principal en home cajera)
-- [ ] Buscador de productos con autocompletado
-- [ ] Si producto no existe → modal "Crear producto: nombre + precio"
-- [ ] Carrito con cantidad editable, subtotal, total
-- [ ] Botón "Cobrar" → modal de método de pago
-- [ ] EFECTIVO: campo opcional "recibido" → muestra vuelto
-- [ ] DEUDA: input de nombre del deudor con autocompletado (existentes en `debtors`)
-- [ ] Al guardar venta: actualiza `debtors` (crea o suma)
-- [ ] Build + deploy
+- [x] Pantalla "Nueva venta" (botón cobre grande en home cajera)
+- [x] Buscador de productos con autocompletado (admin + cajera unificados)
+- [x] Si producto no existe → modal "Crear producto: nombre + precio" (queda en `/products/{id}` con `needsCostReview: true`)
+- [x] Carrito con cantidad editable, subtotal por línea, total visible
+- [x] Botón "Cobrar $X" sticky abajo → modal de método de pago
+- [x] EFECTIVO: campo opcional "recibido" → muestra vuelto en verde
+- [x] DEUDA: input de nombre del deudor con autocompletado de existentes
+- [x] Al guardar venta: actualiza `debtors` (crea o suma al `totalOwed`)
+- [x] Lista de **últimas 15 ventas en home cajera** (sin montos — D21)
+- [x] Cajera puede **reportar problema** en una venta (status='flagged' + nota); NO edita ni borra (D6)
+- [x] Sección "Pendientes de revisión" en admin Products para gestionar productos creados por cajera (eliminar)
+- [x] Reglas Firestore actualizadas (bloque /products/{pid})
+- [x] Build + deploy
+
+**Commits:**
+- `2f17bd1` — feat(fase-3): flujo de venta basico (efectivo + deuda)
+- `bae9026` — fix: alinear header/footer/contenido en mismo maxWidth
+- `e5ea33d` — feat(admin): seccion 'Pendientes de revision' en Products
+- `46910e7` — feat: lista de ultimas 15 ventas + reportar problema
 
 ---
 
-### 📸 Fase 4 — NEQUI/DAVIPLATA + ImageBB
+### 🔄 Fase 4 — NEQUI/DAVIPLATA + ImageBB
 **Objetivo:** Pagos digitales con foto obligatoria del comprobante.
 
 - [ ] Configurar API key de ImageBB (paso manual del usuario, te guío)
@@ -410,4 +420,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1 y 2 completas y en producción.** Próxima: Fase 3 (flujo de venta efectivo + deuda). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-04 — **Fases 1, 2 y 3 completas y en producción.** Próxima: Fase 4 (NEQUI/DAVIPLATA con foto obligatoria via ImageBB). Decisiones D1-D21 cerradas.

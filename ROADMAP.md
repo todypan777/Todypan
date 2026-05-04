@@ -179,7 +179,7 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 2 — Apertura/cierre de turno
+### ✅ Fase 2 — Apertura/cierre de turno
 **Objetivo:** Cajera puede iniciar turno (escogiendo panadería) y cerrar con cuadre + handover + manejo de sobras/faltas. Sin ventas todavía.
 
 **Apertura:**
@@ -189,28 +189,35 @@ todypan/data  (doc principal — se añaden estos campos)
 - [x] Si "No": input para declarar lo recibido + nota al admin que el monto es disputado → crea `openingDispute.status = 'pending'`
 - [x] Si no hay handover: cartel "Caja vacía · $0" + botón "Iniciar turno"
 - [x] Validación: solo una sesión `open` por branchId (panadería bloqueada en selector si está ocupada)
-- [x] Pantalla de turno activo: muestra panadería, hora apertura, monto apertura
+- [x] Pantalla de turno activo: card neutro "Tu turno está activo" (sin mostrar monto — D21 anti-fraude)
 - [x] initDB() compartido entre admin y cajera (cajera lee branches reales, no defaults hardcoded)
 
 **Cierre:**
 - [x] Botón "Cerrar turno" → modal en 2 pasos
-- [x] Paso 1 (cuadre): muestra esperado, input "¿cuánto tienes en caja?", calcula diferencia (sobra/falta)
-- [ ] Paso 1.5 si hay diferencia: textarea "¿Quieres dejar una nota al administrador?" (siempre opcional)
-- [x] Paso 2 (handover): selector "¿A quién entregas?" — admin o dropdown de cajeras activas
+- [x] Paso 1 (Conteo): solo input "¿cuánto tienes en caja?" + textarea de nota opcional. **NO se muestra esperado ni diferencia** (D21)
+- [x] Textarea de nota siempre opcional (no condicional a diferencia, para que cajera no infiera)
+- [x] Paso 2 (Entrega): selector "¿A quién entregas?" — admin o dropdown de cajeras activas
 - [x] Tarjeta resumen "Vas a entregar $X" (= lo declarado, no se pide dos veces)
-- [ ] Si **sobra** (declared > expected): el excedente se suma automáticamente a `surplusFund.balance` con entrada en `surplusFund.history`
-- [ ] Si **falta** (declared < expected): se crea `closingDiscrepancy.status = 'pending'` con type='shortage'. Admin decidirá en Pendientes.
+- [x] Si **sobra** (declared > expected): se calcula internamente y se acumula al fondo virtual `surplusFund` (cajera no se entera)
+- [x] Si **falta** (declared < expected): se crea `closingDiscrepancy.status = 'pending'` con type='shortage'. Admin decide en Pendientes (Fase 6).
 - [x] Crear doc completo en `cashSessions` con todo el detalle
 
 **Notificación al admin (banner):**
 - [x] Disputas de apertura cuentan en banner del admin con detalle
-- [ ] Discrepancias de cierre tipo `shortage` cuentan en banner del admin con detalle
-- [ ] Sobras NO requieren acción (solo se suman al fondo en silencio)
+- [x] Discrepancias de cierre tipo `shortage` cuentan en banner del admin con detalle (incluye nota de cajera si la dejó)
+- [x] Sobras NO requieren acción (solo se suman al fondo en silencio)
+- [x] Bloque verde con saldo del fondo de sobras visible cuando > $0
+
+**Anti-fraude (D21):**
+- [x] Cajera nunca ve esperado, total acumulado ni diferencia
+- [x] Input de declaración arranca vacío (no pre-llenado con esperado)
+- [x] Card "Apertura" en pantalla de turno activo NO muestra monto
 
 **Reglas Firestore:**
 - [x] Reglas comprehensivas publicadas que cubren cashSessions, sales, debtors, cashExpenses (no se tocan más hasta Fase 10)
 
 **Resolución completa de disputas/discrepancias por el admin:** vendrá en **Fase 6** con la pestaña Pendientes.
+**Aplicación de descuentos al pago de nómina:** vendrá en **Fase 6.5**.
 
 **Commits:**
 - `a7a41a7` — feat(fase-2): apertura y cierre de turno con cuadre y handover
@@ -218,10 +225,13 @@ todypan/data  (doc principal — se añaden estos campos)
 - `12df9e9` — feat: cajera confirma o disputa el monto recibido en handover
 - `c919514` — fix: quitar cero inicial en campos de monto
 - `bfb1fce` — fix: no pedir el monto entregado dos veces
+- `1270cb9` — feat: sobras al fondo + faltas a Pendientes con nota
+- `6dfb13d` — fix: ocultar monto esperado y diferencia (anti-fraude)
+- `c6144c8` — docs(roadmap): D21 anti-fraude
 
 ---
 
-### 🛒 Fase 3 — Flujo de venta básico (efectivo + deuda)
+### 🔄 Fase 3 — Flujo de venta básico (efectivo + deuda)
 **Objetivo:** Cajera registra ventas con método EFECTIVO o DEUDA. NEQUI/DAVIPLATA viene en Fase 4.
 
 - [ ] Pantalla "Nueva venta" (botón principal en home cajera)
@@ -400,4 +410,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — Fase 1 completa. Fase 2 en progreso (apertura/cierre core listo; falta sobras→fondo y faltas→discrepancia). Decisiones añadidas: D17-D20 (disputas, fondo sobras, descuentos). Nueva fase 6.5 para integración con nómina.
+**Última actualización:** 2026-05-04 — **Fases 1 y 2 completas y en producción.** Próxima: Fase 3 (flujo de venta efectivo + deuda). Decisiones D1-D21 cerradas.

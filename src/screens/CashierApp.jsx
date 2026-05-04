@@ -653,6 +653,7 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
   const expectedCash = session.openingFloat || 0
 
   const [declaredStr, setDeclaredStr] = useState(String(expectedCash))
+  const [closingNote, setClosingNote] = useState('')
   const [handoverType, setHandoverType] = useState('admin') // 'admin' | 'cashier'
   const [handoverToUid, setHandoverToUid] = useState(null)
   const [cashiers, setCashiers] = useState([])
@@ -662,6 +663,8 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
 
   const declared = Number(declaredStr) || 0
   const difference = declared - expectedCash
+  const hasShortage = difference < 0
+  const hasSurplus = difference > 0
 
   useEffect(() => {
     const unsub = watchAllUsers(list => {
@@ -694,11 +697,34 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               toName: `${selectedCashier.nombre} ${selectedCashier.apellido}`.trim(),
               amount: declared,
             }
+
+      // Si hay diferencia, construimos el closingDiscrepancy:
+      // - sobra: status 'resolved' (se absorbe en el fondo automáticamente)
+      // - falta: status 'pending' (admin decide en Pendientes)
+      let closingDiscrepancy = null
+      if (hasSurplus) {
+        closingDiscrepancy = {
+          type: 'surplus',
+          amount: Math.abs(difference),
+          status: 'resolved',
+          note: closingNote.trim() || null,
+        }
+      } else if (hasShortage) {
+        closingDiscrepancy = {
+          type: 'shortage',
+          amount: Math.abs(difference),
+          status: 'pending',
+          note: closingNote.trim() || null,
+        }
+      }
+
       await closeSession(session.id, {
         declaredClosingCash: declared,
         expectedCash,
         difference,
         handover,
+        closingNote: closingNote.trim() || null,
+        closingDiscrepancy,
       })
       onClosed()
     } catch (err) {
@@ -752,21 +778,56 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               disabled={busy}
             />
 
-            {Math.abs(difference) > 0 && (
+            {hasSurplus && (
               <div style={{
-                marginTop: -2, marginBottom: 10,
-                padding: '10px 14px', borderRadius: 12,
-                background: difference < 0 ? '#FBE9E5' : '#E8F4E8',
-                border: `1px solid ${difference < 0 ? '#F0C8BE' : '#C2DDC1'}`,
-                fontSize: 13, color: difference < 0 ? T.bad : T.ok,
-                fontWeight: 600,
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                marginTop: -2, marginBottom: 12,
+                padding: '12px 14px', borderRadius: 12,
+                background: '#E8F4E8', border: `1px solid #C2DDC1`,
               }}>
-                <span>{difference < 0 ? 'Falta' : 'Sobra'}</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 800 }}>
-                  {fmtCOP(Math.abs(difference))}
-                </span>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 8, marginBottom: 4,
+                }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.ok }}>Sobra</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: T.ok, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(Math.abs(difference))}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: T.ok, lineHeight: 1.45 }}>
+                  Esta sobra se sumará al fondo del negocio automáticamente.
+                </div>
               </div>
+            )}
+
+            {hasShortage && (
+              <div style={{
+                marginTop: -2, marginBottom: 12,
+                padding: '12px 14px', borderRadius: 12,
+                background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 8, marginBottom: 4,
+                }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.bad }}>Falta</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: T.bad, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(Math.abs(difference))}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: T.bad, lineHeight: 1.45 }}>
+                  Esta falta se reportará al administrador para revisar.
+                </div>
+              </div>
+            )}
+
+            {(hasShortage || hasSurplus) && (
+              <NoteField
+                label="¿Quieres dejar una nota al administrador? (opcional)"
+                value={closingNote}
+                onChange={setClosingNote}
+                placeholder="Ej: Le di vuelto de más a un cliente sin querer."
+                disabled={busy}
+              />
             )}
           </div>
         )}
@@ -931,6 +992,39 @@ function NumberField({ label, value, onChange, placeholder, autoFocus, disabled,
       {hint && (
         <div style={{ fontSize: 11.5, color: T.neutral[400], marginTop: 4, lineHeight: 1.45 }}>{hint}</div>
       )}
+    </div>
+  )
+}
+
+function NoteField({ label, value, onChange, placeholder, disabled }) {
+  const [focused, setFocused] = useState(false)
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+        {label}
+      </label>
+      <div style={{
+        border: `1.5px solid ${focused ? T.copper[400] : T.neutral[200]}`,
+        borderRadius: 12, background: '#fff',
+        transition: 'border-color 0.12s',
+      }}>
+        <textarea
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          rows={3}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            width: '100%', padding: '12px 14px', border: 'none', outline: 'none',
+            fontFamily: 'inherit', fontSize: 14, color: T.neutral[900],
+            background: 'transparent', borderRadius: 12, resize: 'vertical',
+            opacity: disabled ? 0.6 : 1,
+            minHeight: 64,
+          }}
+        />
+      </div>
     </div>
   )
 }

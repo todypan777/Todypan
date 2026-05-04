@@ -126,16 +126,87 @@ export async function resolveOpeningDispute(sessionId, resolution, note, adminUi
 
 /**
  * Cierra un turno con cuadre + handover.
- * payload: { declaredClosingCash, expectedCash, difference, handover }
+ * payload: {
+ *   declaredClosingCash, expectedCash, difference, handover,
+ *   closingNote?,                    ← nota opcional de la cajera
+ *   closingDiscrepancy?              ← cuando declarado != esperado
+ * }
  * handover: { type: 'admin' | 'cashier', toUid?, toName, amount }
+ *
+ * closingDiscrepancy:
+ *   { type: 'shortage' | 'surplus', amount, status, note? }
+ *   status: 'resolved' (sobras absorbidas en fondo) | 'pending' (faltas requieren admin)
  */
 export async function closeSession(sessionId, payload) {
-  await updateDoc(sessionRef(sessionId), {
+  const data = {
     declaredClosingCash: Number(payload.declaredClosingCash) || 0,
     expectedCash: Number(payload.expectedCash) || 0,
     difference: Number(payload.difference) || 0,
     handover: payload.handover,
     closedAt: serverTimestamp(),
     status: 'closed',
-  })
+  }
+  if (payload.closingNote) {
+    data.closingNote = payload.closingNote
+  }
+  if (payload.closingDiscrepancy) {
+    data.closingDiscrepancy = {
+      type: payload.closingDiscrepancy.type,
+      amount: Number(payload.closingDiscrepancy.amount) || 0,
+      status: payload.closingDiscrepancy.status,
+      note: payload.closingDiscrepancy.note || null,
+      reportedAt: serverTimestamp(),
+    }
+  }
+  await updateDoc(sessionRef(sessionId), data)
+}
+
+/**
+ * Watcher que devuelve cualquier sesión (abierta o cerrada) con un
+ * elemento que requiera acción del admin: openingDispute pendiente o
+ * closingDiscrepancy de tipo shortage pendiente.
+ */
+export function watchSessionsWithPendingReview(callback) {
+  const q = query(sessionsCol())
+  return onSnapshot(
+    q,
+    snap => {
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const filtered = all.filter(s =>
+        s.openingDispute?.status === 'pending' ||
+        s.closingDiscrepancy?.status === 'pending'
+      )
+      callback(filtered)
+    },
+    err => {
+      console.error('[cashSessions] watchSessionsWithPendingReview error:', err)
+      callback([])
+    }
+  )
+}
+
+/**
+ * Calcula el saldo del fondo de sobras a partir de las sesiones cerradas.
+ * Para Fase 2: solo suma sobras. En Fase 6 se restarán los retiros del fondo
+ * (cuando admin lo use para cubrir una falta).
+ */
+export function watchSurplusFundBalance(callback) {
+  const q = query(sessionsCol(), where('status', '==', 'closed'))
+  return onSnapshot(
+    q,
+    snap => {
+      let balance = 0
+      snap.docs.forEach(d => {
+        const data = d.data()
+        if (data.closingDiscrepancy?.type === 'surplus') {
+          balance += Number(data.closingDiscrepancy.amount) || 0
+        }
+      })
+      callback(balance)
+    },
+    err => {
+      console.error('[cashSessions] watchSurplusFundBalance error:', err)
+      callback(0)
+    }
+  )
 }

@@ -655,7 +655,6 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
   const [declaredStr, setDeclaredStr] = useState(String(expectedCash))
   const [handoverType, setHandoverType] = useState('admin') // 'admin' | 'cashier'
   const [handoverToUid, setHandoverToUid] = useState(null)
-  const [handoverAmountStr, setHandoverAmountStr] = useState(String(expectedCash))
   const [cashiers, setCashiers] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -663,11 +662,6 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
 
   const declared = Number(declaredStr) || 0
   const difference = declared - expectedCash
-
-  // Cuando cambia el monto declarado, propaga al handoverAmount
-  useEffect(() => {
-    setHandoverAmountStr(String(declared))
-  }, [declared])
 
   useEffect(() => {
     const unsub = watchAllUsers(list => {
@@ -679,13 +673,10 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
     return unsub
   }, [authUserUid])
 
-  const handoverAmount = Number(handoverAmountStr) || 0
   const selectedCashier = handoverType === 'cashier' ? cashiers.find(c => c.uid === handoverToUid) : null
 
   const canConfirm =
     declared >= 0 &&
-    handoverAmount >= 0 &&
-    handoverAmount <= declared &&
     (handoverType === 'admin' || (handoverType === 'cashier' && selectedCashier))
 
   async function handleConfirm() {
@@ -693,14 +684,15 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
     setBusy(true)
     setError(null)
     try {
+      // El monto entregado siempre es lo que la cajera declara tener.
       const handover =
         handoverType === 'admin'
-          ? { type: 'admin', toName: 'Jhonatan Miranda', amount: handoverAmount }
+          ? { type: 'admin', toName: 'Jhonatan Miranda', amount: declared }
           : {
               type: 'cashier',
               toUid: selectedCashier.uid,
               toName: `${selectedCashier.nombre} ${selectedCashier.apellido}`.trim(),
-              amount: handoverAmount,
+              amount: declared,
             }
       await closeSession(session.id, {
         declaredClosingCash: declared,
@@ -827,15 +819,17 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               </div>
             )}
 
-            <div style={{ marginTop: 16 }}>
-              <NumberField
-                label="Monto entregado"
-                value={handoverAmountStr}
-                onChange={setHandoverAmountStr}
-                placeholder="0"
-                disabled={busy}
-                hint={`Tienes ${fmtCOP(declared)} declarados. Puedes entregar hasta ese monto.`}
-              />
+            {/* Resumen del monto que se entrega */}
+            <div style={{
+              marginTop: 18, padding: '14px 16px', borderRadius: 14,
+              background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
+                Vas a entregar
+              </div>
+              <div style={{ fontSize: 28, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.6 }}>
+                {fmtCOP(declared)}
+              </div>
             </div>
           </div>
         )}

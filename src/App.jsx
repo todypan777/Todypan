@@ -23,9 +23,9 @@ import {
   RegistrationForm,
   PendingApproval,
   Deactivated,
-  CashierComingSoon,
   BootstrappingAdmin,
 } from './screens/AccountStates'
+import CashierApp from './screens/CashierApp'
 
 const SIDEBAR_W = 230
 
@@ -65,7 +65,7 @@ function AuthGate() {
   if (userDoc.status === 'inactive') return <Deactivated authUser={authUser} userDoc={userDoc} />
 
   if (isAdmin) return <AppShell />
-  if (isCashier) return <CashierComingSoon authUser={authUser} userDoc={userDoc} />
+  if (isCashier) return <CashierApp authUser={authUser} userDoc={userDoc} />
 
   // Estado inesperado (rol vacío, status raro): mostrar Login fallback
   return <Login unauthorizedEmail={authUser.email} />

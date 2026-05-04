@@ -115,28 +115,30 @@ cashExpenses/{id}
 
 ## 4 · Plan por fases
 
-### 🔄 Fase 1 — Auth con cola de aprobación
+### ✅ Fase 1 — Auth con cola de aprobación
 **Objetivo:** Empleadas pueden registrarse, quedan pendientes, admin aprueba y se crea empleada.
 
-- [ ] Migrar tu propio usuario admin a Firestore (manual, 1 vez)
-  - [ ] Crear doc `users/{tu-uid}` con `role: 'admin'`, `status: 'approved'`, nombre, etc.
-  - [ ] Verificar que entras igual antes de borrar el chequeo viejo
-- [ ] Reemplazar gatekeeper hardcoded por chequeo de Firestore (`role === 'admin' && status === 'approved'`)
-- [ ] Pantalla de registro pendiente para usuarios nuevos (digita nombre + apellido)
-- [ ] Pantalla "Tu cuenta está pendiente de aprobación" para users con `status === 'pending'`
-- [ ] Pantalla "Tu cuenta fue desactivada" para `status === 'inactive'`
-- [ ] Pestaña **Usuarios** en Más (admin): lista pendientes + aprobados + inactivos
-- [ ] Modal de aprobación: nombre editable, teléfono obligatorio, salario opcional
-- [ ] Al aprobar → crear doc en `users` (status approved) + crear `employee` vinculado
-- [ ] Botón "Desactivar usuario" (status → inactive, no se borra nada)
-- [ ] Popup automático al admin si hay usuarios pendientes al entrar
-- [ ] Build + deploy
+- [x] Bootstrap automático del admin al primer login (sin paso manual)
+- [x] Reemplazar gatekeeper hardcoded por chequeo de Firestore (`role === 'admin' && status === 'approved'`)
+- [x] Pantalla de registro para usuarios nuevos (digita nombre + apellido)
+- [x] Pantalla "Tu cuenta está pendiente de aprobación" para users con `status === 'pending'`
+- [x] Pantalla "Tu cuenta fue desactivada" para `status === 'inactive'`
+- [x] Pantalla "Cashier coming soon" para cajeras aprobadas (placeholder hasta Fase 2+)
+- [x] Pestaña **Usuarios** en Más (admin) y Sidebar: tabs Pendientes / Activos / Inactivos
+- [x] Modal de aprobación: nombre editable, teléfono obligatorio, salario opcional
+- [x] Al aprobar → crear doc en `users` (status approved) + crear `employee` vinculado en colección existente
+- [x] Botones Desactivar/Reactivar/Rechazar (sin borrar nunca)
+- [x] Popup automático al admin si hay usuarios pendientes al entrar
+- [x] Banner persistente "Tienes N cosas por revisar" en Dashboard
+- [x] Reglas Firestore actualizadas (cajera puede crear/leer su propio doc; admin gestiona todo)
+- [x] Build + deploy a Vercel
+- [x] **Probado end-to-end:** registro cajera → aprobación admin → empleada creada → cajera entra como activa
 
-**Riesgos:** si la migración del admin se hace mal, te quedas fuera. Hacemos paso a paso con verificación.
+**Commit:** `4b2ef61` — feat(fase-1): sistema de usuarios con cola de aprobacion
 
 ---
 
-### 📦 Fase 2 — Apertura/cierre de turno
+### 🔄 Fase 2 — Apertura/cierre de turno
 **Objetivo:** Cajera puede iniciar turno (escogiendo panadería) y cerrar con cuadre + handover. Sin ventas todavía.
 
 - [ ] Pantalla "Iniciar turno" para cajera al entrar (selector de panadería + monto inicial)
@@ -295,4 +297,4 @@ cashExpenses/{id}
 
 ---
 
-**Última actualización:** 2026-05-03 — antes de iniciar Fase 1
+**Última actualización:** 2026-05-04 — Fase 1 completa y probada en producción. Próxima: Fase 2 (apertura/cierre de turno).

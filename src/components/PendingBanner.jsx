@@ -2,17 +2,20 @@ import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { Card, UserAvatar } from './Atoms'
 import { watchAllUsers } from '../users'
+import { watchOpenSessions } from '../cashSessions'
 
 /**
- * Banner discreto en Dashboard que muestra cuántas cosas tiene pendientes el admin.
- * Por ahora solo cuenta usuarios pendientes (Fase 1). En fases siguientes se le
- * añaden gastos de caja, solicitudes de edición, productos sin costo, etc.
+ * Banner en Dashboard que muestra todo lo que el admin tiene pendiente:
+ * - Usuarios esperando aprobación
+ * - Disputas de apertura de caja (Fase 2)
+ * - (Más adelante) gastos de caja pendientes, solicitudes de edición, etc.
  *
- * Además: la PRIMERA vez que el admin entra a la app en una sesión y hay usuarios
- * pendientes, abre un popup automático (cumpliendo decisión D13).
+ * La PRIMERA vez que el admin entra a la app en una sesión y hay usuarios
+ * pendientes, abre un popup automático (decisión D13).
  */
 export default function PendingBanner({ onOpenUsers }) {
   const [pendingUsers, setPendingUsers] = useState([])
+  const [openingDisputes, setOpeningDisputes] = useState([])
   const [showPopup, setShowPopup] = useState(false)
   const [popupShown, setPopupShown] = useState(false)
 
@@ -28,8 +31,32 @@ export default function PendingBanner({ onOpenUsers }) {
     return unsub
   }, [popupShown])
 
-  const totalPending = pendingUsers.length
-  if (totalPending === 0) return null
+  useEffect(() => {
+    const unsub = watchOpenSessions(sessions => {
+      const disputes = sessions.filter(s => s.openingDispute?.status === 'pending')
+      setOpeningDisputes(disputes)
+    })
+    return unsub
+  }, [])
+
+  const total = pendingUsers.length + openingDisputes.length
+  if (total === 0) return null
+
+  const subtitleParts = []
+  if (pendingUsers.length > 0) {
+    subtitleParts.push(
+      pendingUsers.length === 1
+        ? '1 solicitud de cuenta'
+        : `${pendingUsers.length} solicitudes de cuenta`
+    )
+  }
+  if (openingDisputes.length > 0) {
+    subtitleParts.push(
+      openingDisputes.length === 1
+        ? '1 disputa de apertura de caja'
+        : `${openingDisputes.length} disputas de apertura de caja`
+    )
+  }
 
   return (
     <>
@@ -62,12 +89,10 @@ export default function PendingBanner({ onOpenUsers }) {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: T.copper[700] }}>
-                Tienes {totalPending} {totalPending === 1 ? 'cosa' : 'cosas'} por revisar
+                Tienes {total} {total === 1 ? 'cosa' : 'cosas'} por revisar
               </div>
               <div style={{ fontSize: 12, color: T.copper[600], marginTop: 1 }}>
-                {totalPending === 1
-                  ? '1 solicitud de cuenta pendiente'
-                  : `${totalPending} solicitudes de cuenta pendientes`}
+                {subtitleParts.join(' · ')}
               </div>
             </div>
             <svg width="8" height="14" viewBox="0 0 7 12">
@@ -75,6 +100,26 @@ export default function PendingBanner({ onOpenUsers }) {
             </svg>
           </button>
         </Card>
+
+        {openingDisputes.length > 0 && (
+          <div style={{
+            marginTop: 8, padding: '11px 14px', borderRadius: 12,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 12.5, color: T.warn, lineHeight: 1.5,
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              ⚠ Disputa de apertura de caja
+            </div>
+            {openingDisputes.map(s => (
+              <div key={s.id} style={{ marginTop: 4, fontWeight: 500 }}>
+                <b>{s.cashierName}</b> dice haber recibido <b>{fmtMoney(s.openingDispute.declared)}</b> pero la cajera anterior reportó haber entregado <b>{fmtMoney(s.openingDispute.expected)}</b> en {s.branchName || '(sin nombre)'}.
+              </div>
+            ))}
+            <div style={{ marginTop: 6, fontSize: 11.5, color: T.neutral[500] }}>
+              La pestaña de revisión llegará en una próxima fase.
+            </div>
+          </div>
+        )}
       </div>
 
       {showPopup && (
@@ -86,6 +131,10 @@ export default function PendingBanner({ onOpenUsers }) {
       )}
     </>
   )
+}
+
+function fmtMoney(n) {
+  return '$' + (Number(n) || 0).toLocaleString('es-CO')
 }
 
 function PendingUsersPopup({ users, onReview, onLater }) {

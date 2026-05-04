@@ -72,7 +72,10 @@ export async function getLatestClosedSessionForBranch(branchId) {
 
 /**
  * Abre un nuevo turno.
- * Si openingSource = handover, indica de qué sesión viene el dinero.
+ * - openingSource describe de dónde viene el dinero inicial:
+ *     { type: 'empty' | 'handover' | 'handover_disputed', fromSessionId?, fromCashierName? }
+ * - openingDispute (opcional): si la cajera receptora declara monto distinto al esperado.
+ *     { expected, declared, difference, status: 'pending' }
  */
 export async function openSession({
   branchId,
@@ -80,7 +83,8 @@ export async function openSession({
   cashierUid,
   cashierName,
   openingFloat,
-  openingSource,   // { type: 'manual' | 'handover', fromSessionId?, fromCashierName? }
+  openingSource,
+  openingDispute,
 }) {
   const data = {
     branchId,
@@ -88,12 +92,36 @@ export async function openSession({
     cashierUid,
     cashierName,
     openingFloat: Number(openingFloat) || 0,
-    openingSource: openingSource || { type: 'manual' },
+    openingSource: openingSource || { type: 'empty' },
     openedAt: serverTimestamp(),
     status: 'open',
   }
+  if (openingDispute) {
+    data.openingDispute = {
+      expected: Number(openingDispute.expected) || 0,
+      declared: Number(openingDispute.declared) || 0,
+      difference: Number(openingDispute.expected || 0) - Number(openingDispute.declared || 0),
+      status: 'pending',
+      reportedAt: serverTimestamp(),
+    }
+  }
   const ref = await addDoc(sessionsCol(), data)
   return ref.id
+}
+
+/**
+ * Resuelve una disputa de apertura (solo admin).
+ * resolution: 'accept' (admin acepta el monto declarado por cajera receptora)
+ *           | 'reject' (admin rechaza, cajera receptora debe asumir la diferencia)
+ */
+export async function resolveOpeningDispute(sessionId, resolution, note, adminUid) {
+  const status = resolution === 'accept' ? 'resolved' : 'rejected'
+  await updateDoc(sessionRef(sessionId), {
+    'openingDispute.status': status,
+    'openingDispute.note': note || null,
+    'openingDispute.reviewedBy': adminUid,
+    'openingDispute.reviewedAt': serverTimestamp(),
+  })
 }
 
 /**

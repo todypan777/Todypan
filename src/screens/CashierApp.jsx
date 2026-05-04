@@ -261,6 +261,8 @@ function BranchCard({ branch, status, onSelect }) {
 
 function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
   const [pendingHandover, setPendingHandover] = useState(undefined) // undefined=loading
+  const [step, setStep] = useState('asking') // 'asking' | 'disputing'
+  const [actualAmountStr, setActualAmountStr] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -288,31 +290,76 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
     return () => { cancelled = true }
   }, [branch.id, authUser.uid])
 
-  async function handleOpen() {
+  const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+
+  // Caso A: no hay handover → caja vacía, abre con $0
+  async function handleOpenEmpty() {
     if (busy) return
-    setBusy(true)
-    setError(null)
+    setBusy(true); setError(null)
     try {
-      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
-      const openingFloat = pendingHandover ? pendingHandover.amount : 0
       await openSession({
-        branchId: branch.id,
-        branchName: branch.name,
-        cashierUid: authUser.uid,
-        cashierName,
-        openingFloat,
-        openingSource: pendingHandover
-          ? {
-              type: 'handover',
-              fromSessionId: pendingHandover.fromSessionId,
-              fromCashierName: pendingHandover.fromCashierName,
-            }
-          : { type: 'empty' },
+        branchId: branch.id, branchName: branch.name,
+        cashierUid: authUser.uid, cashierName,
+        openingFloat: 0,
+        openingSource: { type: 'empty' },
       })
       onOpened()
     } catch (err) {
-      console.error(err)
-      setError('No pudimos iniciar el turno. Intenta de nuevo.')
+      console.error(err); setError('No pudimos iniciar el turno. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  // Caso B: handover, cajera confirma que recibió la cantidad esperada
+  async function handleConfirmExpected() {
+    if (busy || !pendingHandover) return
+    setBusy(true); setError(null)
+    try {
+      await openSession({
+        branchId: branch.id, branchName: branch.name,
+        cashierUid: authUser.uid, cashierName,
+        openingFloat: pendingHandover.amount,
+        openingSource: {
+          type: 'handover',
+          fromSessionId: pendingHandover.fromSessionId,
+          fromCashierName: pendingHandover.fromCashierName,
+        },
+      })
+      onOpened()
+    } catch (err) {
+      console.error(err); setError('No pudimos iniciar el turno. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  // Caso C: handover, cajera dice haber recibido un monto distinto → reporte al admin
+  async function handleSubmitDispute() {
+    if (busy || !pendingHandover) return
+    const declared = Number(actualAmountStr) || 0
+    if (declared < 0) { setError('El monto no puede ser negativo'); return }
+    if (declared === pendingHandover.amount) {
+      setError('Si recibiste el monto exacto, vuelve y selecciona "Sí, los recibí completos"')
+      return
+    }
+    setBusy(true); setError(null)
+    try {
+      await openSession({
+        branchId: branch.id, branchName: branch.name,
+        cashierUid: authUser.uid, cashierName,
+        openingFloat: declared,
+        openingSource: {
+          type: 'handover_disputed',
+          fromSessionId: pendingHandover.fromSessionId,
+          fromCashierName: pendingHandover.fromCashierName,
+        },
+        openingDispute: {
+          expected: pendingHandover.amount,
+          declared,
+        },
+      })
+      onOpened()
+    } catch (err) {
+      console.error(err); setError('No pudimos reportar la diferencia. Intenta de nuevo.')
       setBusy(false)
     }
   }
@@ -320,46 +367,26 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
   return (
     <ModalOverlay onClose={busy ? undefined : onCancel}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 420, background: '#fff', borderRadius: 22,
+        width: '100%', maxWidth: 440, background: '#fff', borderRadius: 22,
         padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
         animation: 'fadeScaleIn 0.2s ease',
-        maxHeight: '92vh', overflowY: 'auto',
+        maxHeight: '94vh', overflowY: 'auto',
       }}>
         <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
           Iniciar turno
         </div>
-        <div style={{ fontSize: 13.5, color: T.neutral[500], marginBottom: 20 }}>
+        <div style={{ fontSize: 13.5, color: T.neutral[500], marginBottom: 18 }}>
           {branch.name}
         </div>
 
-        {pendingHandover === undefined ? (
+        {pendingHandover === undefined && (
           <div style={{ padding: '12px 0', textAlign: 'center', color: T.neutral[500], fontSize: 13 }}>
             Verificando turno anterior...
           </div>
-        ) : pendingHandover ? (
-          <>
-            <div style={{
-              padding: '14px 16px', borderRadius: 14,
-              background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-              marginBottom: 14,
-            }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
-                Recibes de cajera anterior
-              </div>
-              <div style={{ fontSize: 13.5, color: T.copper[700], marginBottom: 10 }}>
-                {pendingHandover.fromCashierName}
-              </div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.6 }}>
-                {fmtCOP(pendingHandover.amount)}
-              </div>
-            </div>
-            <div style={{ fontSize: 13, color: T.neutral[600], textAlign: 'center', marginBottom: 16, lineHeight: 1.55 }}>
-              Confirma que recibiste este efectivo físicamente.
-              <br/>
-              Al iniciar el turno, esta cantidad queda registrada como tu apertura.
-            </div>
-          </>
-        ) : (
+        )}
+
+        {/* CASO A: caja vacía */}
+        {pendingHandover === null && (
           <>
             <div style={{
               padding: '14px 16px', borderRadius: 14,
@@ -368,10 +395,8 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
               display: 'flex', alignItems: 'center', gap: 12,
             }}>
               <div style={{
-                width: 42, height: 42, borderRadius: 999,
-                background: T.neutral[100],
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                flexShrink: 0,
+                width: 42, height: 42, borderRadius: 999, background: T.neutral[100],
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
               }}>
                 <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
                   <rect x="3" y="6" width="16" height="12" rx="2" stroke={T.neutral[500]} strokeWidth="1.6" fill="none"/>
@@ -379,12 +404,8 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
                 </svg>
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800] }}>
-                  Caja vacía
-                </div>
-                <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
-                  Tu turno empieza con $0
-                </div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800] }}>Caja vacía</div>
+                <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>Tu turno empieza con $0</div>
               </div>
             </div>
             <div style={{ fontSize: 13, color: T.neutral[600], textAlign: 'center', marginBottom: 16, lineHeight: 1.55 }}>
@@ -392,33 +413,154 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
               <br/>
               Si el administrador te entregó dinero, díselo a él para registrar el ajuste.
             </div>
+
+            {error && <ErrorBox text={error} />}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+              <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+              <button onClick={handleOpenEmpty} disabled={busy} style={{ ...btnPrimary(T.copper[500]), flex: 1.4, opacity: busy ? 0.7 : 1 }}>
+                {busy ? 'Iniciando...' : 'Iniciar turno'}
+              </button>
+            </div>
           </>
         )}
 
-        {error && (
-          <div style={{
-            marginTop: 4, marginBottom: 8, padding: '10px 12px', borderRadius: 10,
-            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-            fontSize: 12.5, fontWeight: 500, textAlign: 'center',
-          }}>
-            {error}
-          </div>
+        {/* CASO B/C: handover detectado */}
+        {pendingHandover && step === 'asking' && (
+          <>
+            <HandoverCard handover={pendingHandover} />
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], textAlign: 'center', marginBottom: 14 }}>
+              ¿Recibiste exactamente {fmtCOP(pendingHandover.amount)}?
+            </div>
+
+            <button
+              onClick={handleConfirmExpected}
+              disabled={busy}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 14,
+                background: T.copper[500], color: '#fff',
+                border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                fontSize: 14.5, fontWeight: 700, marginBottom: 10,
+                boxShadow: '0 3px 10px rgba(184,122,86,0.3)',
+                opacity: busy ? 0.7 : 1,
+              }}
+            >
+              {busy ? 'Iniciando...' : `Sí, recibí los ${fmtCOP(pendingHandover.amount)} completos`}
+            </button>
+
+            <button
+              onClick={() => setStep('disputing')}
+              disabled={busy}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 14,
+                background: '#fff', color: T.bad,
+                border: `1.5px solid ${T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 14, fontWeight: 700, marginBottom: 14,
+              }}
+            >
+              No, recibí otra cantidad
+            </button>
+
+            {error && <ErrorBox text={error} />}
+
+            <button onClick={onCancel} disabled={busy} style={{
+              width: '100%', padding: '10px', borderRadius: 10,
+              background: 'transparent', color: T.neutral[500],
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 600,
+            }}>
+              Cancelar
+            </button>
+          </>
         )}
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
-          <button
-            onClick={handleOpen}
-            disabled={busy || pendingHandover === undefined}
-            style={{ ...btnPrimary(T.copper[500]), flex: 1.4, opacity: busy ? 0.7 : 1 }}
-          >
-            {busy
-              ? 'Iniciando...'
-              : pendingHandover ? 'Confirmar e iniciar' : 'Iniciar turno'}
-          </button>
-        </div>
+        {pendingHandover && step === 'disputing' && (
+          <>
+            <div style={{
+              padding: '12px 14px', borderRadius: 12,
+              background: T.neutral[50], marginBottom: 14,
+            }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>
+                {pendingHandover.fromCashierName} entregó
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
+                {fmtCOP(pendingHandover.amount)}
+              </div>
+            </div>
+
+            <NumberField
+              label="¿Cuánto recibiste realmente?"
+              value={actualAmountStr}
+              onChange={setActualAmountStr}
+              placeholder="0"
+              autoFocus
+              disabled={busy}
+            />
+
+            <div style={{
+              padding: '11px 14px', borderRadius: 12,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 12.5, color: T.warn, fontWeight: 500, lineHeight: 1.5,
+              marginTop: 4, marginBottom: 14,
+            }}>
+              ⚠ Reportarás una diferencia. El administrador será notificado para revisar y confirmar.
+            </div>
+
+            {error && <ErrorBox text={error} />}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => { setStep('asking'); setError(null) }} disabled={busy} style={btnSecondary()}>
+                Atrás
+              </button>
+              <button
+                onClick={handleSubmitDispute}
+                disabled={busy || !actualAmountStr}
+                style={{
+                  ...btnPrimary(T.warn), flex: 1.4,
+                  opacity: (busy || !actualAmountStr) ? 0.6 : 1,
+                  cursor: (busy || !actualAmountStr) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {busy ? 'Reportando...' : 'Reportar y continuar'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </ModalOverlay>
+  )
+}
+
+function HandoverCard({ handover }) {
+  return (
+    <div style={{
+      padding: '14px 16px', borderRadius: 14,
+      background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+      marginBottom: 14,
+    }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
+        Recibes de cajera anterior
+      </div>
+      <div style={{ fontSize: 13.5, color: T.copper[700], marginBottom: 10 }}>
+        {handover.fromCashierName}
+      </div>
+      <div style={{ fontSize: 28, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.6 }}>
+        {fmtCOP(handover.amount)}
+      </div>
+    </div>
+  )
+}
+
+function ErrorBox({ text }) {
+  return (
+    <div style={{
+      marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+      background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+      fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+    }}>
+      {text}
+    </div>
   )
 }
 

@@ -5,6 +5,7 @@ import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from
 import { TabBar, Sidebar } from './components/Nav'
 import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth } from './context/AuthCtx'
+import { ADMIN_EMAIL } from './auth'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
 import AddMovement from './screens/AddMovement'
@@ -16,7 +17,15 @@ import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
+import Users from './screens/Users'
 import Login from './screens/Login'
+import {
+  RegistrationForm,
+  PendingApproval,
+  Deactivated,
+  CashierComingSoon,
+  BootstrappingAdmin,
+} from './screens/AccountStates'
 
 const SIDEBAR_W = 230
 
@@ -41,13 +50,25 @@ export default function App() {
 }
 
 function AuthGate() {
-  const { user, loading, isAdmin } = useAuth()
+  const { authUser, userDoc, loading, isAdmin, isCashier } = useAuth()
 
   if (loading) return <LoadingScreen label="Verificando sesión..." />
-  if (!user) return <Login />
-  if (!isAdmin) return <Login unauthorizedEmail={user.email} />
+  if (!authUser) return <Login />
 
-  return <AppShell />
+  // Admin email pero todavía sin doc → bootstrap automático en AuthCtx
+  if (!userDoc) {
+    if (authUser.email === ADMIN_EMAIL) return <BootstrappingAdmin />
+    return <RegistrationForm authUser={authUser} />
+  }
+
+  if (userDoc.status === 'pending') return <PendingApproval authUser={authUser} userDoc={userDoc} />
+  if (userDoc.status === 'inactive') return <Deactivated authUser={authUser} userDoc={userDoc} />
+
+  if (isAdmin) return <AppShell />
+  if (isCashier) return <CashierComingSoon authUser={authUser} userDoc={userDoc} />
+
+  // Estado inesperado (rol vacío, status raro): mostrar Login fallback
+  return <Login unauthorizedEmail={authUser.email} />
 }
 
 function AppShell() {
@@ -91,6 +112,9 @@ function AppShell() {
     } else if (target === 'reminders') {
       setMoreSub('reminders')
       setTab('more')
+    } else if (target === 'users') {
+      setMoreSub('users')
+      setTab('more')
     } else {
       setTab(target)
     }
@@ -102,7 +126,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -208,6 +232,13 @@ function AppShell() {
       content = (
         <Products
           products={data.products || []}
+          onBack={() => setMoreSub(null)}
+          onRefresh={refresh}
+        />
+      )
+    } else if (moreSub === 'users') {
+      content = (
+        <Users
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />

@@ -50,6 +50,10 @@ La app actual (`todypan-app`) es el **panel de administración**. Vamos a añadi
 | **D14** | Gastos de caja entran como **pendientes**. Admin aprueba/rechaza → al aprobar se convierten en `movement` tipo gasto con `origen: "caja"`. Sin opción de editar (rechazar y rehacer). |
 | **D15** | Pestaña **"Pendientes"** del admin que agrupa: usuarios pendientes, gastos de caja pendientes, solicitudes de edición/borrado de ventas, productos sin costo. |
 | **D16** | Modal de aprobación de cajera pide: nombre completo (editable), teléfono/WhatsApp (obligatorio), salario (opcional). |
+| **D17** | Apertura de caja: si la cajera receptora detecta que recibió **menos** de lo que la entregadora reportó, puede **disputar** declarando el monto real. Queda como `openingDispute.status = 'pending'` y se notifica al admin. La caja abre con el monto real declarado por la receptora. |
+| **D18** | **Sobras al cierre** (declarado > esperado): el efectivo físico se entrega completo (modelo mezclado). El excedente se suma a un **fondo virtual `surplusFund`** del negocio que crece con cada cierre con sobra. Sirve como reserva contable para cubrir faltantes futuros u otros gastos. |
+| **D19** | **Faltas al cierre** (declarado < esperado): se registra como `closingDiscrepancy.status = 'pending'`. **El admin decide caso por caso** desde Pendientes — sin umbral fijo: o lo asume como pérdida del negocio (se cubre con `surplusFund` si hay saldo), o se descuenta a la cajera. |
+| **D20** | Si admin elige "descontar a la cajera", el monto se **integra automáticamente al sistema de nómina existente**: se resta del próximo pago en la pantalla Equipo / pago de nómina. La cajera puede agregar una **nota** explicativa al momento de cerrar el turno. |
 
 ---
 
@@ -89,10 +93,26 @@ debtors/{id}
   ]
 
 cashSessions/{id}
-  branchId, cashierUid, cashierName
+  branchId, branchName, cashierUid, cashierName
   openedAt, openingFloat
+  openingSource: { type: 'empty' | 'handover' | 'handover_disputed', fromSessionId?, fromCashierName? }
+  openingDispute?: {                          ← cajera receptora declaró monto distinto
+    expected, declared, difference,
+    status: 'pending' | 'resolved' | 'rejected',
+    note?, reviewedBy?, reviewedAt?, reportedAt
+  }
   closedAt?, declaredClosingCash?
   expectedCash?, difference?
+  closingNote?                                ← nota opcional de cajera al cerrar
+  closingDiscrepancy?: {                      ← cuando declarado != esperado
+    type: 'shortage' | 'surplus',             ← falta o sobra
+    amount,                                   ← magnitud absoluta
+    status: 'pending' | 'absorbed' | 'deducted' | 'fundCovered' | 'fundDeposited',
+    resolution?: 'business_loss' | 'cashier_deduction' | 'covered_by_fund',
+    deductionId?,                             ← id de la deducción en nómina (si aplica)
+    fundMovementId?,                          ← id del movimiento en surplusFund (si aplica)
+    reviewedBy?, reviewedAt?, reviewNote?
+  }
   handover?: { type: 'admin' | 'cashier', toUid?, toName, amount }
   status: 'open' | 'closed'
 
@@ -103,10 +123,30 @@ cashExpenses/{id}
   status: 'pending' | 'approved' | 'rejected'
   reviewedBy?, reviewedAt?, reviewNote?
   movementId?              (id del movement creado al aprobar)
+
+todypan/data  (doc principal — se añaden estos campos)
+  + surplusFund: {
+      balance,                                ← saldo virtual acumulado
+      history: [
+        { type: 'deposit', amount, sessionId, cashierName, date },     ← cierre con sobra
+        { type: 'withdrawal', amount, reason, sessionId?, date },      ← admin saca para cubrir falta o gasto
+      ]
+    }
+  + cashierDeductions: [                      ← descuentos pendientes vs nómina
+      {
+        id, employeeId, cashierUid, amount,
+        reason: 'cash_shortage' | 'other',
+        sessionId?, date,
+        status: 'pending' | 'applied',
+        appliedAt?, appliedToPaymentDate?     ← cuándo se restó al pagar
+      }
+    ]
 ```
 
 **Pestaña "Pendientes" del admin** = agregador en UI, no es una colección. Junta:
 - `users` con `status === 'pending'`
+- `cashSessions` con `openingDispute.status === 'pending'` (disputas de apertura)
+- `cashSessions` con `closingDiscrepancy.status === 'pending'` (faltas/sobras de cierre — solo si es shortage requiere acción del admin)
 - `sales` con `status` de tipo `_requested`
 - `cashExpenses` con `status === 'pending'`
 - `products` con `needsCostReview === true`
@@ -139,16 +179,44 @@ cashExpenses/{id}
 ---
 
 ### 🔄 Fase 2 — Apertura/cierre de turno
-**Objetivo:** Cajera puede iniciar turno (escogiendo panadería) y cerrar con cuadre + handover. Sin ventas todavía.
+**Objetivo:** Cajera puede iniciar turno (escogiendo panadería) y cerrar con cuadre + handover + manejo de sobras/faltas. Sin ventas todavía.
 
-- [ ] Pantalla "Iniciar turno" para cajera al entrar (selector de panadería + monto inicial)
-- [ ] Lógica: si última sesión cerrada con handover a cajera = monto inicial pre-llenado
-- [ ] Validación: solo una sesión `open` por branchId
-- [ ] Header con info de turno activo (panadería, hora apertura)
-- [ ] Botón "Cerrar turno" → modal de cuadre (declarado vs esperado, diferencia)
-- [ ] Modal de handover: a quién entrega (admin o lista de cajeras), monto
-- [ ] Crear doc en `cashSessions` con todo el detalle
-- [ ] Build + deploy
+**Apertura:**
+- [x] Pantalla "Iniciar turno" para cajera al entrar (selector de panadería)
+- [x] Cajera NO digita monto inicial (en ningún caso)
+- [x] Si hay handover de cajera anterior: muestra monto en grande + botón "Sí, recibí los $X completos" / "No, recibí otra cantidad"
+- [x] Si "No": input para declarar lo recibido + nota al admin que el monto es disputado → crea `openingDispute.status = 'pending'`
+- [x] Si no hay handover: cartel "Caja vacía · $0" + botón "Iniciar turno"
+- [x] Validación: solo una sesión `open` por branchId (panadería bloqueada en selector si está ocupada)
+- [x] Pantalla de turno activo: muestra panadería, hora apertura, monto apertura
+- [x] initDB() compartido entre admin y cajera (cajera lee branches reales, no defaults hardcoded)
+
+**Cierre:**
+- [x] Botón "Cerrar turno" → modal en 2 pasos
+- [x] Paso 1 (cuadre): muestra esperado, input "¿cuánto tienes en caja?", calcula diferencia (sobra/falta)
+- [ ] Paso 1.5 si hay diferencia: textarea "¿Quieres dejar una nota al administrador?" (siempre opcional)
+- [x] Paso 2 (handover): selector "¿A quién entregas?" — admin o dropdown de cajeras activas
+- [x] Tarjeta resumen "Vas a entregar $X" (= lo declarado, no se pide dos veces)
+- [ ] Si **sobra** (declared > expected): el excedente se suma automáticamente a `surplusFund.balance` con entrada en `surplusFund.history`
+- [ ] Si **falta** (declared < expected): se crea `closingDiscrepancy.status = 'pending'` con type='shortage'. Admin decidirá en Pendientes.
+- [x] Crear doc completo en `cashSessions` con todo el detalle
+
+**Notificación al admin (banner):**
+- [x] Disputas de apertura cuentan en banner del admin con detalle
+- [ ] Discrepancias de cierre tipo `shortage` cuentan en banner del admin con detalle
+- [ ] Sobras NO requieren acción (solo se suman al fondo en silencio)
+
+**Reglas Firestore:**
+- [x] Reglas comprehensivas publicadas que cubren cashSessions, sales, debtors, cashExpenses (no se tocan más hasta Fase 10)
+
+**Resolución completa de disputas/discrepancias por el admin:** vendrá en **Fase 6** con la pestaña Pendientes.
+
+**Commits:**
+- `a7a41a7` — feat(fase-2): apertura y cierre de turno con cuadre y handover
+- `21875cc` — fix: cajera ve panaderias reales y no digita monto inicial
+- `12df9e9` — feat: cajera confirma o disputa el monto recibido en handover
+- `c919514` — fix: quitar cero inicial en campos de monto
+- `bfb1fce` — fix: no pedir el monto entregado dos veces
 
 ---
 
@@ -200,11 +268,41 @@ cashExpenses/{id}
 **Objetivo:** Admin tiene un solo lugar para revisar todo.
 
 - [ ] Pestaña "Pendientes" en sidebar (con badge de contador)
-- [ ] Banner en Dashboard "Tienes N cosas por revisar"
-- [ ] Sub-listas: Usuarios · Gastos de caja · Solicitudes de venta · Productos sin costo
+- [ ] Banner en Dashboard "Tienes N cosas por revisar" (ya existe parcial desde Fase 1+2)
+- [ ] Sub-listas: Usuarios · **Disputas de apertura** · **Faltas de cierre** · Gastos de caja · Solicitudes de venta · Productos sin costo
+
+**Disputas de apertura (`openingDispute`):**
+- [ ] Mostrar: cajera receptora, esperado, declarado, diferencia, fecha
+- [ ] Botones: "Aceptar declaración" (cierra como `resolved`) / "Rechazar" (cierra como `rejected` con nota)
+- [ ] Si rechaza: opción de descontar la diferencia a la cajera **entregadora** (la que dijo haber dado más)
+
+**Faltas de cierre (`closingDiscrepancy.type === 'shortage'`):**
+- [ ] Mostrar: cajera, panadería, fecha, monto faltante, nota explicativa de la cajera
+- [ ] 3 acciones del admin:
+  - [ ] **"Asumir como pérdida del negocio"** → `resolution = 'business_loss'`, sin afectar cajera
+  - [ ] **"Cubrir con fondo de sobras"** → si `surplusFund.balance >= monto`: descuenta del fondo, `resolution = 'covered_by_fund'`, agrega entry tipo `withdrawal` en `surplusFund.history`
+  - [ ] **"Descontar a la cajera"** → crea entry en `cashierDeductions` con `status: 'pending'`, `resolution = 'cashier_deduction'`. Se aplicará al pagar nómina (Fase 7 o mini-update integra al flujo de pagos existente).
+
+**Gastos de caja (`cashExpenses.status === 'pending'`):**
 - [ ] Cada gasto: aprobar / rechazar con nota
 - [ ] Al aprobar gasto → crear `movement` tipo gasto con `origen: "caja"` + linkear `movementId`
+
+**Build + deploy.**
+
+---
+
+### 💰 Fase 6.5 — Integración descuentos con nómina
+**Objetivo:** Cuando admin marca un descuento a cajera (desde Pendientes), se aplica al sistema de pagos existente.
+
+- [ ] En la pantalla **Equipo → detalle de empleada**: nueva sección "Descuentos pendientes"
+- [ ] Lista de `cashierDeductions` con `status: 'pending'` para esa empleada
+- [ ] Cada descuento muestra: monto, razón, fecha, sesión origen
+- [ ] Al pagar nómina (lógica existente en `db.js` + Team/Registro): el sistema **resta automáticamente** los descuentos pendientes del total a pagar
+- [ ] Al confirmar el pago, los descuentos se marcan `status: 'applied'` con timestamp
+- [ ] Pantalla **"Mis descuentos"** para cajera: solo lectura, ve histórico (transparencia)
 - [ ] Build + deploy
+
+**Por qué es 6.5 y no se mete en Fase 6:** Fase 6 ya tiene mucho scope (toda la pestaña Pendientes). Esta integración tocará la pantalla Equipo y la lógica de pagos, mejor aislarla.
 
 ---
 
@@ -293,8 +391,12 @@ cashExpenses/{id}
 - **Turno = sesión de caja:** doc en `cashSessions`, abierto al iniciar turno y cerrado al terminar.
 - **Handover:** entrega de caja al cerrar turno (a admin o a otra cajera).
 - **Cuadre:** comparación entre lo que el sistema espera (apertura + ventas efectivo - gastos efectivo) vs lo que la cajera declara tener físicamente.
-- **Pendiente:** cualquier item esperando acción del admin (usuario, gasto, edición de venta, costo de producto).
+- **Pendiente:** cualquier item esperando acción del admin (usuario, gasto, edición de venta, costo de producto, disputa de apertura, falta de cierre).
+- **Disputa de apertura (`openingDispute`):** la cajera receptora declara haber recibido un monto distinto al que la entregadora reportó. Admin decide quién tiene razón.
+- **Discrepancia de cierre (`closingDiscrepancy`):** al cerrar turno, lo declarado físicamente difiere de lo esperado matemáticamente. Si es **shortage** (falta) requiere acción del admin; si es **surplus** (sobra) se suma al fondo automáticamente.
+- **Fondo de sobras (`surplusFund`):** cuenta virtual del negocio donde se acumulan los excedentes de cierre. Sirve como reserva para cubrir faltantes futuros sin afectar a la cajera o como caja chica para gastos del negocio.
+- **Descuento de nómina (`cashierDeductions`):** monto que se restará automáticamente del próximo pago de la cajera. Origen típico: falta de cierre que el admin decidió cobrar.
 
 ---
 
-**Última actualización:** 2026-05-04 — Fase 1 completa y probada en producción. Próxima: Fase 2 (apertura/cierre de turno).
+**Última actualización:** 2026-05-04 — Fase 1 completa. Fase 2 en progreso (apertura/cierre core listo; falta sobras→fondo y faltas→discrepancia). Decisiones añadidas: D17-D20 (disputas, fondo sobras, descuentos). Nueva fase 6.5 para integración con nómina.

@@ -6,6 +6,7 @@ import { getData } from '../db'
 import { watchCashierProducts, mergeProductCatalogs, createCashierProduct } from '../products'
 import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
 import { createSale } from '../sales'
+import { compressAndUpload } from '../utils/imagebb'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -504,6 +505,10 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
   const [cashReceivedStr, setCashReceivedStr] = useState('')
   const [debtorName, setDebtorName] = useState('')
   const [debtors, setDebtors] = useState([])
+  const [photoUrl, setPhotoUrl] = useState(null)
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoError, setPhotoError] = useState(null)
+  const fileInputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -524,12 +529,48 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
       .slice(0, 5)
   }, [debtors, debtorName])
 
+  const isDigital = method === 'nequi' || method === 'daviplata'
+
   const canConfirm = (() => {
     if (!method) return false
-    if (method === 'deuda') return debtorName.trim().length >= 2
-    if (method === 'efectivo') return true
-    return false // nequi/daviplata Fase 4
+    if (method === 'deuda') return debtorName.trim().length >= 2 && !busy
+    if (method === 'efectivo') return !busy
+    if (isDigital) return !!photoUrl && !photoUploading && !busy
+    return false
   })()
+
+  async function handleFileSelected(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setPhotoError(null)
+    setPhotoUploading(true)
+    try {
+      const result = await compressAndUpload(file)
+      setPhotoUrl(result.url)
+    } catch (err) {
+      console.error(err)
+      setPhotoError(err.message || 'No pudimos subir la foto.')
+      setPhotoUrl(null)
+    } finally {
+      setPhotoUploading(false)
+      // Reset el input para permitir reintentar con el mismo archivo
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  function openCamera() {
+    setPhotoError(null)
+    fileInputRef.current?.click()
+  }
+
+  // Si la cajera cambia de método después de tomar foto, limpiamos
+  function selectMethod(m) {
+    setMethod(m)
+    if (m !== 'nequi' && m !== 'daviplata') {
+      setPhotoUrl(null)
+      setPhotoError(null)
+    }
+  }
 
   async function handleConfirm() {
     if (!canConfirm || busy) return
@@ -558,6 +599,10 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
 
       if (method === 'efectivo' && cashReceivedStr) {
         payload.cashReceived = cashReceived
+      }
+
+      if (isDigital && photoUrl) {
+        payload.photoUrl = photoUrl
       }
 
       if (method === 'deuda') {
@@ -613,10 +658,10 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-          <PaymentOption icon="💵" label="Efectivo" selected={method === 'efectivo'} onClick={() => setMethod('efectivo')} />
-          <PaymentOption icon="🤝" label="Deuda" selected={method === 'deuda'} onClick={() => setMethod('deuda')} />
-          <PaymentOption icon="📱" label="NEQUI" disabled subtitle="Fase 4" />
-          <PaymentOption icon="📱" label="DAVIPLATA" disabled subtitle="Fase 4" />
+          <PaymentOption icon="💵" label="Efectivo" selected={method === 'efectivo'} onClick={() => selectMethod('efectivo')} />
+          <PaymentOption icon="🤝" label="Deuda" selected={method === 'deuda'} onClick={() => selectMethod('deuda')} />
+          <PaymentOption icon="📱" label="NEQUI" selected={method === 'nequi'} onClick={() => selectMethod('nequi')} />
+          <PaymentOption icon="📱" label="DAVIPLATA" selected={method === 'daviplata'} onClick={() => selectMethod('daviplata')} />
         </div>
 
         {/* Detalles según método */}
@@ -700,6 +745,20 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
           </>
         )}
 
+        {isDigital && (
+          <PhotoCapture
+            method={method}
+            photoUrl={photoUrl}
+            uploading={photoUploading}
+            error={photoError}
+            onTake={openCamera}
+            onRetry={openCamera}
+            onClear={() => { setPhotoUrl(null); setPhotoError(null) }}
+            fileInputRef={fileInputRef}
+            onFileSelected={handleFileSelected}
+          />
+        )}
+
         {error && <ErrorBox text={error} />}
 
         <div style={{ display: 'flex', gap: 10 }}>
@@ -720,6 +779,145 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
         </div>
       </div>
     </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Captura de foto del comprobante (NEQUI / DAVIPLATA)
+// ──────────────────────────────────────────────────────────────
+function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onClear, fileInputRef, onFileSelected }) {
+  const methodName = method === 'nequi' ? 'NEQUI' : 'DAVIPLATA'
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], marginBottom: 6 }}>
+        Foto del comprobante de {methodName}
+      </div>
+
+      {/* Input file oculto, capture camera nativa */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={onFileSelected}
+        style={{ display: 'none' }}
+      />
+
+      {!photoUrl && !uploading && !error && (
+        <button
+          onClick={onTake}
+          style={{
+            width: '100%', padding: '20px 14px', borderRadius: 14,
+            background: '#fff', color: T.neutral[700],
+            border: `1.5px dashed ${T.copper[300]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+          }}
+        >
+          <svg width="34" height="34" viewBox="0 0 32 32" fill="none">
+            <rect x="3" y="9" width="26" height="19" rx="3" stroke={T.copper[500]} strokeWidth="1.8" fill="none"/>
+            <path d="M11 9 L13 6 H19 L21 9" stroke={T.copper[500]} strokeWidth="1.8" fill="none" strokeLinejoin="round"/>
+            <circle cx="16" cy="18" r="5" stroke={T.copper[500]} strokeWidth="1.8" fill="none"/>
+          </svg>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.copper[700] }}>
+            Tomar foto del comprobante
+          </div>
+          <div style={{ fontSize: 11.5, color: T.neutral[500] }}>
+            Obligatorio para confirmar la venta
+          </div>
+        </button>
+      )}
+
+      {uploading && (
+        <div style={{
+          padding: '20px 14px', borderRadius: 14,
+          background: T.neutral[50], border: `1.5px solid ${T.neutral[200]}`,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+        }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: 999,
+            border: `3px solid ${T.copper[100]}`,
+            borderTopColor: T.copper[500],
+            animation: 'spin 0.8s linear infinite',
+          }}/>
+          <div style={{ fontSize: 13, color: T.neutral[600], fontWeight: 600 }}>
+            Subiendo foto...
+          </div>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      {error && !uploading && (
+        <div style={{
+          padding: '14px', borderRadius: 14,
+          background: '#FBE9E5', border: `1.5px solid #F0C8BE`,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+        }}>
+          <div style={{ fontSize: 13, color: T.bad, fontWeight: 600, textAlign: 'center' }}>
+            {error}
+          </div>
+          <button
+            onClick={onRetry}
+            style={{
+              padding: '8px 16px', borderRadius: 10,
+              background: T.bad, color: '#fff',
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 700,
+            }}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {photoUrl && !uploading && (
+        <div style={{
+          borderRadius: 14, overflow: 'hidden',
+          border: `1.5px solid ${T.ok}66`,
+          background: '#fff',
+        }}>
+          <div style={{
+            position: 'relative',
+            background: T.neutral[100],
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <img
+              src={photoUrl}
+              alt="Comprobante"
+              style={{
+                display: 'block', width: '100%',
+                maxHeight: 240, objectFit: 'contain',
+                background: T.neutral[900],
+              }}
+            />
+            <div style={{
+              position: 'absolute', top: 8, right: 8,
+              background: T.ok, color: '#fff',
+              padding: '4px 10px', borderRadius: 999,
+              fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}>
+              <svg width="10" height="10" viewBox="0 0 10 10">
+                <path d="M2 5 L4 7 L8 3" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              Subida
+            </div>
+          </div>
+          <button
+            onClick={onClear}
+            style={{
+              width: '100%', padding: '10px',
+              background: 'transparent', border: 'none', borderTop: `1px solid ${T.neutral[100]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12.5, fontWeight: 600, color: T.neutral[600],
+            }}
+          >
+            Cambiar foto
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 

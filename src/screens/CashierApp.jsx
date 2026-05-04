@@ -12,6 +12,7 @@ import {
   closeSession,
 } from '../cashSessions'
 import { watchAllUsers } from '../users'
+import NewSale from './NewSale'
 
 // ──────────────────────────────────────────────────────────────
 // Wrapper top-level: decide StartTurn vs ActiveSession
@@ -39,7 +40,7 @@ export default function CashierApp({ authUser, userDoc }) {
       <CashierTopBar authUser={authUser} userDoc={userDoc} />
 
       {mySession ? (
-        <ActiveSession session={mySession} userDoc={userDoc} />
+        <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
       ) : (
         <StartTurn
           authUser={authUser}
@@ -567,8 +568,9 @@ function ErrorBox({ text }) {
 // ──────────────────────────────────────────────────────────────
 // PANTALLA: Turno activo (header + cerrar turno)
 // ──────────────────────────────────────────────────────────────
-function ActiveSession({ session, userDoc }) {
+function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
+  const [newSaleOpen, setNewSaleOpen] = useState(false)
   const branches = getData().branches || []
   const branch = branches.find(b => b.id === session.branchId) || { name: session.branchName, colorKey: 'copper' }
   const colorKey = branch.colorKey || 'copper'
@@ -593,7 +595,27 @@ function ActiveSession({ session, userDoc }) {
         Iniciado {openedDay} a las {openedTime}
       </div>
 
-      {/* Card de estado activo (sin mostrar monto — control anti-fraude) */}
+      {/* Botón principal: Nueva venta */}
+      <button
+        onClick={() => setNewSaleOpen(true)}
+        style={{
+          width: '100%', padding: '20px', borderRadius: 18,
+          background: T.copper[500], color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 17, fontWeight: 800, letterSpacing: -0.2,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+          boxShadow: '0 6px 18px rgba(184,122,86,0.4)',
+          marginBottom: 14,
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="9" stroke="#fff" strokeWidth="2" fill="none"/>
+          <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
+        </svg>
+        Nueva venta
+      </button>
+
+      {/* Card de estado activo (sin mostrar monto — control anti-fraude D21) */}
       <Card style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{
@@ -611,13 +633,6 @@ function ActiveSession({ session, userDoc }) {
               Cuando termines, cierra el turno y entrega el efectivo.
             </div>
           </div>
-        </div>
-      </Card>
-
-      {/* Placeholder para Fase 3+: aquí irá la lista de ventas del día */}
-      <Card style={{ marginBottom: 14, background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`, boxShadow: 'none' }}>
-        <div style={{ padding: '8px 0', textAlign: 'center', color: T.neutral[500], fontSize: 12.5, lineHeight: 1.6 }}>
-          Las funciones de venta y gastos llegarán pronto.
         </div>
       </Card>
 
@@ -646,6 +661,21 @@ function ActiveSession({ session, userDoc }) {
           onCancel={() => setClosing(false)}
           onClosed={() => setClosing(false)}
         />
+      )}
+
+      {newSaleOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 60, background: T.neutral[50],
+          animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+        }}>
+          <NewSale
+            session={session}
+            authUser={authUser}
+            userDoc={userDoc}
+            onCancel={() => setNewSaleOpen(false)}
+            onSaved={() => setNewSaleOpen(false)}
+          />
+        </div>
       )}
     </div>
   )

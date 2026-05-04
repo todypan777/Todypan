@@ -98,34 +98,39 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
       minHeight: '100dvh', background: T.neutral[50],
       display: 'flex', flexDirection: 'column',
     }}>
-      {/* Header */}
+      {/* Header (fondo full-width, contenido en maxWidth) */}
       <div style={{
-        padding: '16px 18px',
-        display: 'flex', alignItems: 'center', gap: 12,
         background: '#fff', borderBottom: `1px solid ${T.neutral[100]}`,
         position: 'sticky', top: 0, zIndex: 20,
       }}>
-        <button onClick={onCancel} style={{
-          width: 36, height: 36, borderRadius: 999,
-          background: T.neutral[100], border: 'none',
-          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        <div style={{
+          maxWidth: 640, margin: '0 auto',
+          padding: '16px 18px',
+          display: 'flex', alignItems: 'center', gap: 12,
         }}>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M11 4 L5 9 L11 14" stroke={T.neutral[700]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-            Nueva venta
-          </div>
-          <div style={{ fontSize: 12, color: T.neutral[500] }}>
-            {session.branchName || 'Panadería'}
+          <button onClick={onCancel} style={{
+            width: 36, height: 36, borderRadius: 999,
+            background: T.neutral[100], border: 'none',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M11 4 L5 9 L11 14" stroke={T.neutral[700]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
+              Nueva venta
+            </div>
+            <div style={{ fontSize: 12, color: T.neutral[500] }}>
+              {session.branchName || 'Panadería'}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Buscador */}
-      <div style={{ padding: '14px 18px 6px', maxWidth: 640, margin: '0 auto', width: '100%' }}>
+      <div style={{ padding: '14px 18px 6px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         <SearchInput
           value={query}
           onChange={setQuery}
@@ -169,7 +174,7 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
                     </div>
                   )}
                 </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                   {fmtCOP(p.salePrice)}
                 </div>
               </button>
@@ -183,9 +188,10 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
                   cursor: 'pointer', fontFamily: 'inherit',
                   display: 'flex', alignItems: 'center', gap: 10,
                   color: T.copper[700], fontSize: 13.5, fontWeight: 700,
+                  textAlign: 'left',
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                   <circle cx="8" cy="8" r="7" stroke={T.copper[700]} strokeWidth="1.5" fill="none"/>
                   <path d="M8 5 V11 M5 8 H11" stroke={T.copper[700]} strokeWidth="1.6" strokeLinecap="round"/>
                 </svg>
@@ -197,7 +203,7 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
       </div>
 
       {/* Carrito */}
-      <div style={{ flex: 1, padding: '8px 18px 24px', maxWidth: 640, margin: '0 auto', width: '100%' }}>
+      <div style={{ flex: 1, padding: '8px 18px 24px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         {cart.length === 0 ? (
           <div style={{
             marginTop: 20, padding: '32px 20px', textAlign: 'center',
@@ -212,7 +218,7 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
             </div>
           </div>
         ) : (
-          <Card padding={0} style={{ marginTop: 8 }}>
+          <Card padding={0} style={{ marginTop: 8, overflow: 'hidden' }}>
             {cart.map((it, i) => (
               <CartItem
                 key={it.key}
@@ -227,14 +233,17 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
         )}
       </div>
 
-      {/* Footer con total + botón Cobrar */}
+      {/* Footer con total + botón Cobrar (fondo full-width, contenido en maxWidth) */}
       {cart.length > 0 && (
         <div style={{
-          padding: '14px 18px', paddingBottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
           background: '#fff', borderTop: `1px solid ${T.neutral[100]}`,
           position: 'sticky', bottom: 0,
         }}>
-          <div style={{ maxWidth: 640, margin: '0 auto' }}>
+          <div style={{
+            maxWidth: 640, margin: '0 auto',
+            padding: '14px 18px',
+            paddingBottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
+          }}>
             <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: T.neutral[600] }}>Total</span>
               <span style={{ fontSize: 28, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
@@ -346,7 +355,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove }) {
   const subtotal = item.qty * item.unitPrice
   return (
     <div style={{
-      padding: '12px 14px',
+      padding: '12px 16px',
       display: 'flex', alignItems: 'center', gap: 10,
       borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
     }}>

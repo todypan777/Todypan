@@ -256,23 +256,27 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 4 — NEQUI/DAVIPLATA + ImageBB
+### ✅ Fase 4 — NEQUI/DAVIPLATA + ImageBB
 **Objetivo:** Pagos digitales con foto obligatoria del comprobante.
 
-- [ ] Configurar API key de ImageBB (paso manual del usuario, te guío)
-- [ ] Helper `uploadToImageBB(blob)` con compresión previa
-- [ ] Captura de cámara nativa (input + capture="environment")
-- [ ] Vista previa de la foto antes de guardar
-- [ ] Validación: no se puede guardar venta nequi/daviplata sin foto
-- [ ] Estado de carga durante upload
-- [ ] Manejo de error de red (reintentar)
-- [ ] Build + deploy
+- [x] API key de ImageBB configurada (env var `VITE_IMGBB_API_KEY`)
+- [x] `.env.local` para dev + Vercel env var para producción (no se sube al repo)
+- [x] Helper `compressImage()` (max 1024px lado mayor, calidad JPEG 0.85)
+- [x] Helper `uploadToImageBB()` con manejo de errores (sin red, server error, response inválida)
+- [x] Captura de cámara nativa (input file con `capture="environment"`)
+- [x] Vista previa de la foto antes de guardar
+- [x] Validación: no se puede guardar venta NEQUI/DAVIPLATA sin foto
+- [x] 4 estados visuales: inicial · subiendo · error con reintentar · subida con preview + cambiar foto
+- [x] `photoUrl` se guarda en `sales[].photoUrl`
+- [x] Build + deploy a producción
 
-**Pendiente manual:** crear cuenta en imagebb.com y obtener API key (te paso link e instrucciones cuando lleguemos aquí).
+**Commits:**
+- `110d4a7` — feat(fase-4): NEQUI/DAVIPLATA con foto obligatoria via ImageBB
+- `94cfe4d` — chore: trigger redeploy para activar env var en produccion
 
 ---
 
-### 💸 Fase 5 — Gastos de caja
+### 🔄 Fase 5 — Gastos de caja
 **Objetivo:** Cajera registra gastos de caja → quedan pendientes para admin.
 
 - [ ] Botón "Gasto de caja" en home cajera
@@ -420,4 +424,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1, 2 y 3 completas y en producción.** Próxima: Fase 4 (NEQUI/DAVIPLATA con foto obligatoria via ImageBB). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-04 — **Fases 1-4 completas y en producción.** Próxima: Fase 5 (gastos de caja con aprobación admin). Decisiones D1-D21 cerradas.

@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Card, UserAvatar } from './Atoms'
 import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview, watchSurplusFundBalance } from '../cashSessions'
+import { watchPendingExpenses } from '../cashExpenses'
 
 /**
  * Banner en Dashboard que muestra todo lo que el admin tiene pendiente:
@@ -19,6 +20,7 @@ import { watchSessionsWithPendingReview, watchSurplusFundBalance } from '../cash
 export default function PendingBanner({ onOpenUsers }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
+  const [pendingExpenses, setPendingExpenses] = useState([])
   const [surplusBalance, setSurplusBalance] = useState(0)
   const [showPopup, setShowPopup] = useState(false)
   const [popupShown, setPopupShown] = useState(false)
@@ -41,6 +43,11 @@ export default function PendingBanner({ onOpenUsers }) {
   }, [])
 
   useEffect(() => {
+    const unsub = watchPendingExpenses(setPendingExpenses)
+    return unsub
+  }, [])
+
+  useEffect(() => {
     const unsub = watchSurplusFundBalance(setSurplusBalance)
     return unsub
   }, [])
@@ -51,7 +58,11 @@ export default function PendingBanner({ onOpenUsers }) {
     s.closingDiscrepancy?.status === 'pending' && s.closingDiscrepancy?.type === 'shortage'
   )
 
-  const total = pendingUsers.length + openingDisputes.length + closingShortages.length
+  const total =
+    pendingUsers.length +
+    openingDisputes.length +
+    closingShortages.length +
+    pendingExpenses.length
 
   const subtitleParts = []
   if (pendingUsers.length > 0) {
@@ -73,6 +84,13 @@ export default function PendingBanner({ onOpenUsers }) {
       closingShortages.length === 1
         ? '1 falta de cierre'
         : `${closingShortages.length} faltas de cierre`
+    )
+  }
+  if (pendingExpenses.length > 0) {
+    subtitleParts.push(
+      pendingExpenses.length === 1
+        ? '1 gasto de caja'
+        : `${pendingExpenses.length} gastos de caja`
     )
   }
 
@@ -143,6 +161,20 @@ export default function PendingBanner({ onOpenUsers }) {
                     <div style={{ marginTop: 4, fontStyle: 'italic', color: T.neutral[600], fontWeight: 400 }}>
                       Nota: {s.closingDiscrepancy.note}
                     </div>
+                  )}
+                </div>
+              ))}
+              <FaseFootnote />
+            </DetailBox>
+          )}
+
+          {pendingExpenses.length > 0 && (
+            <DetailBox title="Gastos de caja pendientes de aprobar" tone="warn">
+              {pendingExpenses.map(e => (
+                <div key={e.id} style={{ marginTop: 4, fontWeight: 500 }}>
+                  <b>{e.cashierName}</b> registró <b>{fmtMoney(e.amount)}</b> · {e.description}
+                  {e.photoUrl && (
+                    <span> · <a href={e.photoUrl} target="_blank" rel="noreferrer" style={{ color: T.copper[700], textDecoration: 'underline' }}>ver foto</a></span>
                   )}
                 </div>
               ))}

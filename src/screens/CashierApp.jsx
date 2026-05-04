@@ -13,6 +13,8 @@ import {
 } from '../cashSessions'
 import { watchAllUsers } from '../users'
 import { watchSessionSales, flagSale } from '../sales'
+import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
+import { compressAndUpload } from '../utils/imagebb'
 import NewSale from './NewSale'
 
 // ──────────────────────────────────────────────────────────────
@@ -572,12 +574,19 @@ function ErrorBox({ text }) {
 function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
   const [newSaleOpen, setNewSaleOpen] = useState(false)
+  const [expenseOpen, setExpenseOpen] = useState(false)
   const [sessionSales, setSessionSales] = useState([])
+  const [sessionExpenses, setSessionExpenses] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const branches = getData().branches || []
 
   useEffect(() => {
     const unsub = watchSessionSales(session.id, setSessionSales)
+    return unsub
+  }, [session.id])
+
+  useEffect(() => {
+    const unsub = watchSessionExpenses(session.id, setSessionExpenses)
     return unsub
   }, [session.id])
 
@@ -616,7 +625,7 @@ function ActiveSession({ session, userDoc, authUser }) {
           fontSize: 17, fontWeight: 800, letterSpacing: -0.2,
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
           boxShadow: '0 6px 18px rgba(184,122,86,0.4)',
-          marginBottom: 14,
+          marginBottom: 10,
         }}
       >
         <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
@@ -624,6 +633,25 @@ function ActiveSession({ session, userDoc, authUser }) {
           <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
         </svg>
         Nueva venta
+      </button>
+
+      {/* Botón secundario: Gasto de caja */}
+      <button
+        onClick={() => setExpenseOpen(true)}
+        style={{
+          width: '100%', padding: '13px', borderRadius: 14,
+          background: '#fff', color: T.neutral[700],
+          border: `1.5px solid ${T.neutral[200]}`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 14, fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          marginBottom: 14,
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
+          <path d="M3 17 H17 M3 14 L7 10 L11 13 L17 5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        Registrar gasto de caja
       </button>
 
       {/* Card de estado activo (sin mostrar monto — control anti-fraude D21) */}
@@ -678,6 +706,28 @@ function ActiveSession({ session, userDoc, authUser }) {
         </div>
       )}
 
+      {/* Gastos del turno */}
+      {sessionExpenses.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: T.neutral[500],
+            letterSpacing: 0.5, textTransform: 'uppercase',
+            margin: '0 4px 8px',
+          }}>
+            Gastos de caja del turno
+          </div>
+          <Card padding={0} style={{ overflow: 'hidden' }}>
+            {sessionExpenses.map((e, i) => (
+              <ExpenseRow
+                key={e.id}
+                expense={e}
+                isLast={i === sessionExpenses.length - 1}
+              />
+            ))}
+          </Card>
+        </div>
+      )}
+
       <button
         onClick={() => setClosing(true)}
         style={{
@@ -729,6 +779,373 @@ function ActiveSession({ session, userDoc, authUser }) {
           onDone={() => setReportSale(null)}
         />
       )}
+
+      {expenseOpen && (
+        <CashExpenseModal
+          session={session}
+          authUser={authUser}
+          userDoc={userDoc}
+          onCancel={() => setExpenseOpen(false)}
+          onSaved={() => setExpenseOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Fila de gasto en lista (la cajera SI ve montos: ella misma los digitó)
+// ──────────────────────────────────────────────────────────────
+function ExpenseRow({ expense, isLast }) {
+  const time = expense.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+
+  const statusColor = {
+    pending: T.warn,
+    approved: T.ok,
+    rejected: T.bad,
+  }[expense.status] || T.neutral[500]
+
+  const statusLabel = {
+    pending: 'Pendiente',
+    approved: 'Aprobado',
+    rejected: 'Rechazado',
+  }[expense.status] || expense.status
+
+  return (
+    <div style={{
+      padding: '12px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          fontVariantNumeric: 'tabular-nums', minWidth: 42, flexShrink: 0,
+        }}>
+          {timeStr}
+        </div>
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13.5, fontWeight: 600, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {expense.description}
+        </div>
+        <div style={{
+          fontSize: 13.5, fontWeight: 700, color: T.neutral[800],
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          {fmtCOP(expense.amount)}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 52 }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: statusColor,
+          background: statusColor + '15',
+          padding: '2px 8px', borderRadius: 999,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+        }}>
+          {statusLabel}
+        </span>
+        {expense.status === 'rejected' && expense.reviewNote && (
+          <span style={{
+            fontSize: 11.5, color: T.bad, fontStyle: 'italic',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {expense.reviewNote}
+          </span>
+        )}
+        {expense.photoUrl && (
+          <a
+            href={expense.photoUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 11, color: T.copper[600], textDecoration: 'none', fontWeight: 600 }}
+          >
+            📎 Ver foto
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal: Registrar gasto de caja
+// ──────────────────────────────────────────────────────────────
+function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
+  const [description, setDescription] = useState('')
+  const [amountStr, setAmountStr] = useState('')
+  const [photoUrl, setPhotoUrl] = useState(null)
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoError, setPhotoError] = useState(null)
+  const fileInputRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const amount = Number(amountStr) || 0
+  const valid = description.trim().length >= 3 && amount > 0 && !photoUploading
+
+  async function handleFileSelected(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setPhotoError(null)
+    setPhotoUploading(true)
+    try {
+      const result = await compressAndUpload(file)
+      setPhotoUrl(result.url)
+    } catch (err) {
+      console.error(err)
+      setPhotoError(err.message || 'No pudimos subir la foto.')
+      setPhotoUrl(null)
+    } finally {
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  async function handleSave() {
+    if (!valid || busy) return
+    setBusy(true); setError(null)
+    try {
+      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+      await createCashExpense({
+        sessionId: session.id,
+        branchId: session.branchId,
+        branchName: session.branchName,
+        cashierUid: authUser.uid,
+        cashierName,
+        description,
+        amount,
+        photoUrl: photoUrl || undefined,
+      })
+      onSaved()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos guardar el gasto. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 440, background: '#fff', borderRadius: 22,
+        padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+        animation: 'fadeScaleIn 0.2s ease',
+        maxHeight: '92vh', overflowY: 'auto',
+      }}>
+        <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          Registrar gasto de caja
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
+          Quedará pendiente de aprobación del administrador.
+        </div>
+
+        <ExpenseTextField
+          label="¿Para qué fue?"
+          value={description}
+          onChange={setDescription}
+          placeholder="Ej: Compra de empaques al proveedor"
+          autoFocus
+          disabled={busy}
+        />
+
+        <ExpenseNumberField
+          label="Monto"
+          value={amountStr}
+          onChange={setAmountStr}
+          disabled={busy}
+        />
+
+        {/* Foto opcional */}
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+            Foto del recibo (opcional)
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileSelected}
+            style={{ display: 'none' }}
+          />
+          {!photoUrl && !photoUploading && !photoError && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                background: '#fff', color: T.neutral[600],
+                border: `1.5px dashed ${T.neutral[300]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              📸 Adjuntar foto
+            </button>
+          )}
+          {photoUploading && (
+            <div style={{
+              padding: '14px', borderRadius: 12, textAlign: 'center',
+              background: T.neutral[50], border: `1.5px solid ${T.neutral[200]}`,
+              fontSize: 13, color: T.neutral[600], fontWeight: 600,
+            }}>
+              Subiendo foto...
+            </div>
+          )}
+          {photoError && !photoUploading && (
+            <div style={{
+              padding: '11px 14px', borderRadius: 12,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              fontSize: 12.5, color: T.bad, fontWeight: 500,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            }}>
+              <span style={{ flex: 1 }}>{photoError}</span>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  background: T.bad, color: '#fff', border: 'none',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+          {photoUrl && !photoUploading && (
+            <div style={{
+              borderRadius: 12, overflow: 'hidden',
+              border: `1.5px solid ${T.ok}66`, background: '#fff',
+            }}>
+              <img
+                src={photoUrl}
+                alt="Recibo"
+                style={{
+                  display: 'block', width: '100%', maxHeight: 180,
+                  objectFit: 'contain', background: T.neutral[900],
+                }}
+              />
+              <button
+                onClick={() => setPhotoUrl(null)}
+                style={{
+                  width: '100%', padding: '8px',
+                  background: 'transparent', border: 'none',
+                  borderTop: `1px solid ${T.neutral[100]}`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12, fontWeight: 600, color: T.neutral[600],
+                }}
+              >
+                Quitar foto
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div style={{
+          padding: '11px 14px', borderRadius: 12,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`,
+          fontSize: 12.5, color: T.warn, fontWeight: 500, lineHeight: 1.5,
+          marginBottom: 14,
+        }}>
+          ⚠ Este monto reduce tu caja del turno. Cuando cierres el turno, ya estará descontado.
+        </div>
+
+        {error && <ErrorBox text={error} />}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={!valid || busy}
+            style={{
+              ...btnPrimary(valid && !busy ? T.copper[500] : T.neutral[200]),
+              flex: 1.4,
+              color: valid && !busy ? '#fff' : T.neutral[400],
+              cursor: valid && !busy ? 'pointer' : 'not-allowed',
+              boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            {busy ? 'Guardando...' : 'Registrar gasto'}
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+function ExpenseTextField({ label, value, onChange, placeholder, autoFocus, disabled }) {
+  const [focused, setFocused] = useState(false)
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+        {label}
+      </label>
+      <div style={{
+        border: `1.5px solid ${focused ? T.copper[400] : T.neutral[200]}`,
+        borderRadius: 12, background: '#fff', transition: 'border-color 0.12s',
+      }}>
+        <input
+          type="text"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          autoFocus={autoFocus}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            width: '100%', padding: '12px 14px', border: 'none', outline: 'none',
+            fontFamily: 'inherit', fontSize: 14.5, color: T.neutral[900],
+            background: 'transparent', borderRadius: 12,
+            opacity: disabled ? 0.6 : 1,
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function ExpenseNumberField({ label, value, onChange, disabled }) {
+  const [focused, setFocused] = useState(false)
+  function sanitize(raw) {
+    return raw.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
+  }
+  const display = value === '0' ? '' : value
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+        {label}
+      </label>
+      <div style={{
+        border: `1.5px solid ${focused ? T.copper[400] : T.neutral[200]}`,
+        borderRadius: 12, background: '#fff', transition: 'border-color 0.12s',
+        display: 'flex', alignItems: 'center',
+      }}>
+        <span style={{ paddingLeft: 14, color: T.neutral[500], fontSize: 15, fontWeight: 600 }}>$</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          value={display}
+          onChange={e => onChange(sanitize(e.target.value))}
+          placeholder="0"
+          disabled={disabled}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          style={{
+            width: '100%', padding: '12px 14px 12px 8px', border: 'none', outline: 'none',
+            fontFamily: 'inherit', fontSize: 16, color: T.neutral[900],
+            background: 'transparent', borderRadius: 12,
+            opacity: disabled ? 0.6 : 1,
+            fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+          }}
+        />
+      </div>
     </div>
   )
 }

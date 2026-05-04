@@ -12,6 +12,7 @@ import {
   closeSession,
 } from '../cashSessions'
 import { watchAllUsers } from '../users'
+import { watchSessionSales, flagSale } from '../sales'
 import NewSale from './NewSale'
 
 // ──────────────────────────────────────────────────────────────
@@ -571,7 +572,17 @@ function ErrorBox({ text }) {
 function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
   const [newSaleOpen, setNewSaleOpen] = useState(false)
+  const [sessionSales, setSessionSales] = useState([])
+  const [reportSale, setReportSale] = useState(null)
   const branches = getData().branches || []
+
+  useEffect(() => {
+    const unsub = watchSessionSales(session.id, setSessionSales)
+    return unsub
+  }, [session.id])
+
+  // Mostrar últimas 15 ventas (D21: sin totales agregados)
+  const recentSales = sessionSales.slice(0, 15)
   const branch = branches.find(b => b.id === session.branchId) || { name: session.branchName, colorKey: 'copper' }
   const colorKey = branch.colorKey || 'copper'
   const palette = T[colorKey] || T.copper
@@ -636,6 +647,37 @@ function ActiveSession({ session, userDoc, authUser }) {
         </div>
       </Card>
 
+      {/* Últimas ventas (sin montos — D21) */}
+      {recentSales.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: T.neutral[500],
+            letterSpacing: 0.5, textTransform: 'uppercase',
+            margin: '0 4px 8px',
+          }}>
+            Últimas ventas
+          </div>
+          <Card padding={0} style={{ overflow: 'hidden' }}>
+            {recentSales.map((s, i) => (
+              <SaleRow
+                key={s.id}
+                sale={s}
+                isLast={i === recentSales.length - 1}
+                onClick={() => setReportSale(s)}
+              />
+            ))}
+          </Card>
+          {sessionSales.length > 15 && (
+            <div style={{
+              fontSize: 11.5, color: T.neutral[400],
+              textAlign: 'center', marginTop: 8,
+            }}>
+              + {sessionSales.length - 15} ventas anteriores en este turno
+            </div>
+          )}
+        </div>
+      )}
+
       <button
         onClick={() => setClosing(true)}
         style={{
@@ -677,7 +719,230 @@ function ActiveSession({ session, userDoc, authUser }) {
           />
         </div>
       )}
+
+      {reportSale && (
+        <ReportSaleModal
+          sale={reportSale}
+          authUser={authUser}
+          userDoc={userDoc}
+          onCancel={() => setReportSale(null)}
+          onDone={() => setReportSale(null)}
+        />
+      )}
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Fila de venta en lista (sin monto — D21)
+// ──────────────────────────────────────────────────────────────
+function SaleRow({ sale, isLast, onClick }) {
+  const time = sale.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+
+  const itemsCount = sale.items?.length || 0
+  const firstName = sale.items?.[0]?.name || ''
+  const summary = itemsCount === 1
+    ? firstName
+    : itemsCount > 1
+      ? `${firstName} + ${itemsCount - 1} más`
+      : 'Sin productos'
+
+  const methodIcons = {
+    efectivo: '💵',
+    nequi: '📱',
+    daviplata: '📱',
+    deuda: '🤝',
+  }
+  const methodIcon = methodIcons[sale.paymentMethod] || ''
+
+  const isFlagged = sale.status === 'flagged'
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%', padding: '12px 14px',
+        background: isFlagged ? '#FFF7E6' : 'transparent',
+        border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+        display: 'flex', alignItems: 'center', gap: 10,
+        textAlign: 'left',
+      }}
+    >
+      <div style={{
+        fontSize: 12, fontWeight: 700, color: T.neutral[500],
+        fontVariantNumeric: 'tabular-nums', minWidth: 42, flexShrink: 0,
+      }}>
+        {timeStr}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13.5, fontWeight: 600, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {summary}
+        </div>
+        {isFlagged && (
+          <div style={{ fontSize: 11, color: T.warn, fontWeight: 600, marginTop: 2 }}>
+            ⚠ Reportado al admin
+          </div>
+        )}
+        {sale.paymentMethod === 'deuda' && sale.debtorName && !isFlagged && (
+          <div style={{
+            fontSize: 11, color: T.neutral[500], marginTop: 2,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            deudor: {sale.debtorName}
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 16, flexShrink: 0 }} title={sale.paymentMethod}>
+        {methodIcon}
+      </div>
+    </button>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal: Reportar problema con una venta
+// ──────────────────────────────────────────────────────────────
+function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const isAlreadyFlagged = sale.status === 'flagged'
+  const valid = note.trim().length >= 10
+
+  async function handleReport() {
+    if (!valid || busy) return
+    setBusy(true); setError(null)
+    try {
+      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+      await flagSale(sale.id, {
+        note,
+        byUid: authUser.uid,
+        byName: cashierName,
+      })
+      onDone()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos enviar el reporte. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  const time = sale.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 420, background: '#fff', borderRadius: 22,
+        padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+        animation: 'fadeScaleIn 0.2s ease',
+        maxHeight: '92vh', overflowY: 'auto',
+      }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          Reportar problema
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
+          Venta de las {timeStr} · {sale.items?.length || 0} producto(s)
+        </div>
+
+        {/* Lista de items para que la cajera identifique cuál es */}
+        <div style={{
+          padding: '10px 12px', borderRadius: 12,
+          background: T.neutral[50], marginBottom: 14,
+          maxHeight: 140, overflowY: 'auto',
+        }}>
+          {sale.items?.map((it, i) => (
+            <div key={i} style={{
+              fontSize: 12.5, color: T.neutral[700],
+              padding: '3px 0',
+              display: 'flex', justifyContent: 'space-between', gap: 8,
+            }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {it.qty}× {it.name}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {isAlreadyFlagged ? (
+          <>
+            <div style={{
+              padding: '12px 14px', borderRadius: 12,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 13, color: T.warn, lineHeight: 1.5, marginBottom: 14,
+            }}>
+              Esta venta ya está reportada al admin. Estas son las notas dejadas:
+            </div>
+            <div style={{
+              padding: '10px 12px', borderRadius: 10,
+              background: '#fff', border: `1px solid ${T.neutral[100]}`,
+              maxHeight: 200, overflowY: 'auto', marginBottom: 14,
+            }}>
+              {(sale.notes || []).map((n, i) => (
+                <div key={i} style={{
+                  padding: '6px 0',
+                  borderBottom: i < (sale.notes.length - 1) ? `0.5px solid ${T.neutral[100]}` : 'none',
+                  fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5,
+                }}>
+                  <div style={{ fontWeight: 600, color: T.neutral[800], marginBottom: 2 }}>
+                    {n.byName || 'Cajera'}
+                  </div>
+                  <div>{n.message}</div>
+                </div>
+              ))}
+            </div>
+            <button onClick={onCancel} style={btnSecondary()}>Cerrar</button>
+          </>
+        ) : (
+          <>
+            <NoteField
+              label="¿Qué pasó? (mínimo 10 caracteres)"
+              value={note}
+              onChange={setNote}
+              placeholder="Ej: La cantidad de panes está mal, eran 3 no 5..."
+              disabled={busy}
+            />
+
+            <div style={{
+              padding: '11px 14px', borderRadius: 12,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 12.5, color: T.warn, fontWeight: 500, lineHeight: 1.5,
+              marginTop: 4, marginBottom: 14,
+            }}>
+              ⚠ La venta no se modifica ni se elimina. El admin verá tu reporte y decidirá qué hacer.
+            </div>
+
+            {error && <ErrorBox text={error} />}
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+              <button
+                onClick={handleReport}
+                disabled={!valid || busy}
+                style={{
+                  ...btnPrimary(valid && !busy ? T.warn : T.neutral[200]),
+                  flex: 1.4,
+                  color: valid && !busy ? '#fff' : T.neutral[400],
+                  cursor: valid && !busy ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {busy ? 'Reportando...' : 'Reportar al admin'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </ModalOverlay>
   )
 }
 

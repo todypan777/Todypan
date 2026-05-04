@@ -3,11 +3,15 @@ import {
   doc,
   collection,
   addDoc,
+  updateDoc,
   serverTimestamp,
   query,
   where,
   onSnapshot,
+  arrayUnion,
 } from 'firebase/firestore'
+
+const saleRef = (id) => doc(firestoreDb, 'sales', id)
 
 const salesCol = () => collection(firestoreDb, 'sales')
 
@@ -71,6 +75,24 @@ export function watchSessionSales(sessionId, callback) {
       callback([])
     }
   )
+}
+
+/**
+ * La cajera marca una venta como "tiene un error". Solo añade nota y cambia
+ * status a 'flagged'. NO modifica items, total, ni nada del contenido.
+ * El admin verá en su pestaña Ventas qué decidir (Fase 7).
+ */
+export async function flagSale(saleId, { note, byUid, byName }) {
+  const newNote = {
+    by: byUid,
+    byName: byName || null,
+    at: Date.now(),
+    message: note.trim(),
+  }
+  await updateDoc(saleRef(saleId), {
+    status: 'flagged',
+    notes: arrayUnion(newNote),
+  })
 }
 
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */

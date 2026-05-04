@@ -593,25 +593,31 @@ function ActiveSession({ session, userDoc }) {
         Iniciado {openedDay} a las {openedTime}
       </div>
 
+      {/* Card de estado activo (sin mostrar monto — control anti-fraude) */}
       <Card style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 }}>
-          Apertura
-        </div>
-        <div style={{ fontSize: 32, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.6 }}>
-          {fmtCOP(session.openingFloat)}
-        </div>
-        {session.openingSource?.type === 'handover' && (
-          <div style={{ fontSize: 12, color: T.copper[700], marginTop: 6 }}>
-            Recibido de {session.openingSource.fromCashierName}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 999, flexShrink: 0,
+            background: '#E8F4E8',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <div style={{ width: 12, height: 12, borderRadius: 999, background: T.ok }}/>
           </div>
-        )}
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900], marginBottom: 2 }}>
+              Tu turno está activo
+            </div>
+            <div style={{ fontSize: 12, color: T.neutral[500], lineHeight: 1.45 }}>
+              Cuando termines, cierra el turno y entrega el efectivo.
+            </div>
+          </div>
+        </div>
       </Card>
 
       {/* Placeholder para Fase 3+: aquí irá la lista de ventas del día */}
       <Card style={{ marginBottom: 14, background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`, boxShadow: 'none' }}>
         <div style={{ padding: '8px 0', textAlign: 'center', color: T.neutral[500], fontSize: 12.5, lineHeight: 1.6 }}>
-          Las funciones de venta y gastos llegarán pronto.<br/>
-          Por ahora puedes cerrar tu turno cuando termines.
+          Las funciones de venta y gastos llegarán pronto.
         </div>
       </Card>
 
@@ -650,9 +656,12 @@ function ActiveSession({ session, userDoc }) {
 // ──────────────────────────────────────────────────────────────
 function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
   // Fase 2: aún no hay ventas/gastos. expectedCash = openingFloat.
+  // ⚠ Este valor NUNCA se muestra a la cajera. Solo se calcula internamente
+  // y se reporta al admin si hay diferencia. La cajera declara a ciegas
+  // lo que tiene físicamente (control anti-fraude).
   const expectedCash = session.openingFloat || 0
 
-  const [declaredStr, setDeclaredStr] = useState(String(expectedCash))
+  const [declaredStr, setDeclaredStr] = useState('')
   const [closingNote, setClosingNote] = useState('')
   const [handoverType, setHandoverType] = useState('admin') // 'admin' | 'cashier'
   const [handoverToUid, setHandoverToUid] = useState(null)
@@ -748,29 +757,22 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
             Cerrar turno
           </div>
           <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
-            Paso {step === 'count' ? '1' : '2'} de 2 · {step === 'count' ? 'Cuadre' : 'Entrega'}
+            Paso {step === 'count' ? '1' : '2'} de 2 · {step === 'count' ? 'Conteo' : 'Entrega'}
           </div>
         </div>
 
         {step === 'count' && (
           <div style={{ padding: '8px 22px 4px' }}>
             <div style={{
-              padding: '14px 16px', borderRadius: 14,
-              background: T.neutral[50], marginBottom: 16,
+              padding: '12px 14px', borderRadius: 12,
+              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+              marginBottom: 16, fontSize: 12.5, color: T.neutral[600], lineHeight: 1.55,
             }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4 }}>
-                Esperado en caja
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
-                {fmtCOP(expectedCash)}
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 4 }}>
-                Monto de apertura. (Las ventas y gastos se sumarán cuando estén disponibles.)
-              </div>
+              Cuenta el efectivo físico que tienes en caja y declara la cantidad exacta. El administrador se encarga del cuadre.
             </div>
 
             <NumberField
-              label="¿Cuánto tienes en caja realmente?"
+              label="¿Cuánto tienes en caja?"
               value={declaredStr}
               onChange={setDeclaredStr}
               placeholder="0"
@@ -778,57 +780,13 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               disabled={busy}
             />
 
-            {hasSurplus && (
-              <div style={{
-                marginTop: -2, marginBottom: 12,
-                padding: '12px 14px', borderRadius: 12,
-                background: '#E8F4E8', border: `1px solid #C2DDC1`,
-              }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: 8, marginBottom: 4,
-                }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: T.ok }}>Sobra</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: T.ok, fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtCOP(Math.abs(difference))}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11.5, color: T.ok, lineHeight: 1.45 }}>
-                  Esta sobra se sumará al fondo del negocio automáticamente.
-                </div>
-              </div>
-            )}
-
-            {hasShortage && (
-              <div style={{
-                marginTop: -2, marginBottom: 12,
-                padding: '12px 14px', borderRadius: 12,
-                background: '#FBE9E5', border: `1px solid #F0C8BE`,
-              }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  gap: 8, marginBottom: 4,
-                }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: T.bad }}>Falta</span>
-                  <span style={{ fontSize: 16, fontWeight: 800, color: T.bad, fontVariantNumeric: 'tabular-nums' }}>
-                    {fmtCOP(Math.abs(difference))}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11.5, color: T.bad, lineHeight: 1.45 }}>
-                  Esta falta se reportará al administrador para revisar.
-                </div>
-              </div>
-            )}
-
-            {(hasShortage || hasSurplus) && (
-              <NoteField
-                label="¿Quieres dejar una nota al administrador? (opcional)"
-                value={closingNote}
-                onChange={setClosingNote}
-                placeholder="Ej: Le di vuelto de más a un cliente sin querer."
-                disabled={busy}
-              />
-            )}
+            <NoteField
+              label="¿Quieres dejar alguna observación? (opcional)"
+              value={closingNote}
+              onChange={setClosingNote}
+              placeholder="Ej: Le di vuelto de más a un cliente sin querer."
+              disabled={busy}
+            />
           </div>
         )}
 

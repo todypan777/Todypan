@@ -312,20 +312,27 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
         const todayMovs = movements.filter(m => m.date === today && matchesBranch(m))
         const todayInc = todayMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
         const todayExp = todayMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
-        if (todayInc === 0 && todayExp === 0) return null
+        const todayNet = todayInc - todayExp
         return (
           <>
             <SectionHeader title="Hoy" />
             <div style={{ padding: '0 16px' }}>
               <Card padding={16}>
-                <div style={{ display: 'flex', gap: 20 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 11, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ingresos</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayInc)}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayInc)}</div>
                   </div>
                   <div>
                     <div style={{ fontSize: 11, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Gastos</div>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayExp)}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(todayExp)}</div>
+                  </div>
+                  <div style={{ paddingLeft: 12, borderLeft: `1px solid ${T.neutral[100]}` }}>
+                    <div style={{ fontSize: 11, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ganancia</div>
+                    <div style={{
+                      fontSize: 18, fontWeight: 700, marginTop: 3, fontVariantNumeric: 'tabular-nums',
+                      color: todayNet > 0 ? T.ok : todayNet < 0 ? T.bad : T.neutral[500],
+                    }}>{fmtCOP(todayNet, { sign: todayNet !== 0 })}</div>
                   </div>
                 </div>
               </Card>

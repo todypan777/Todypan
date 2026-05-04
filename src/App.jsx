@@ -64,11 +64,35 @@ function AuthGate() {
   if (userDoc.status === 'pending') return <PendingApproval authUser={authUser} userDoc={userDoc} />
   if (userDoc.status === 'inactive') return <Deactivated authUser={authUser} userDoc={userDoc} />
 
-  if (isAdmin) return <AppShell />
-  if (isCashier) return <CashierApp authUser={authUser} userDoc={userDoc} />
+  if (isAdmin || isCashier) {
+    return (
+      <ApprovedAppLoader>
+        {isAdmin
+          ? <AppShell />
+          : <CashierApp authUser={authUser} userDoc={userDoc} />}
+      </ApprovedAppLoader>
+    )
+  }
 
   // Estado inesperado (rol vacío, status raro): mostrar Login fallback
   return <Login unauthorizedEmail={authUser.email} />
+}
+
+/**
+ * Carga los datos compartidos (todypan/data) de Firestore antes de renderizar
+ * la app del admin o la cajera. Las dos necesitan acceso a branches/products/etc.
+ */
+function ApprovedAppLoader({ children }) {
+  const [dbLoaded, setDbLoaded] = useState(false)
+
+  useEffect(() => {
+    initDB()
+      .then(() => setDbLoaded(true))
+      .catch(() => setDbLoaded(true))
+  }, [])
+
+  if (!dbLoaded) return <LoadingScreen label="Cargando datos..." />
+  return children
 }
 
 function AppShell() {
@@ -78,16 +102,9 @@ function AppShell() {
   const [moreSub, setMoreSub] = useState(null)
   const [pendingEmpId, setPendingEmpId] = useState(null)
 
-  const [dbLoaded, setDbLoaded] = useState(false)
   const [confirmingDate, setConfirmingDate] = useState(null)
   const [editingDate, setEditingDate] = useState(null)
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024)
-
-  useEffect(() => {
-    initDB()
-      .then(() => setDbLoaded(true))
-      .catch(() => setDbLoaded(true))
-  }, [])
 
   useEffect(() => {
     const handler = () => setIsDesktop(window.innerWidth >= 1024)
@@ -97,9 +114,6 @@ function AppShell() {
 
   const [, forceUpdate] = useReducer(x => x + 1, 0)
   const refresh = useCallback(() => forceUpdate(), [])
-
-  if (!dbLoaded) return <LoadingScreen />
-
 
   const data = getData()
 

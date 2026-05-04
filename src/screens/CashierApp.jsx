@@ -261,7 +261,6 @@ function BranchCard({ branch, status, onSelect }) {
 
 function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
   const [pendingHandover, setPendingHandover] = useState(undefined) // undefined=loading
-  const [openingFloat, setOpeningFloat] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -278,15 +277,12 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
             fromCashierName: last.cashierName,
             fromSessionId: last.id,
           })
-          setOpeningFloat(String(last.handover.amount))
         } else {
           setPendingHandover(null)
-          setOpeningFloat('0')
         }
       } catch (err) {
         console.error(err)
         setPendingHandover(null)
-        setOpeningFloat('0')
       }
     })()
     return () => { cancelled = true }
@@ -298,19 +294,20 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
     setError(null)
     try {
       const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+      const openingFloat = pendingHandover ? pendingHandover.amount : 0
       await openSession({
         branchId: branch.id,
         branchName: branch.name,
         cashierUid: authUser.uid,
         cashierName,
-        openingFloat: pendingHandover ? pendingHandover.amount : Number(openingFloat) || 0,
+        openingFloat,
         openingSource: pendingHandover
           ? {
               type: 'handover',
               fromSessionId: pendingHandover.fromSessionId,
               fromCashierName: pendingHandover.fromCashierName,
             }
-          : { type: 'manual' },
+          : { type: 'empty' },
       })
       onOpened()
     } catch (err) {
@@ -342,35 +339,59 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
         ) : pendingHandover ? (
           <>
             <div style={{
-              padding: '12px 14px', borderRadius: 12,
+              padding: '14px 16px', borderRadius: 14,
               background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-              marginBottom: 16,
+              marginBottom: 14,
             }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6 }}>
                 Recibes de cajera anterior
               </div>
-              <div style={{ fontSize: 13, color: T.copper[700], marginBottom: 8 }}>
+              <div style={{ fontSize: 13.5, color: T.copper[700], marginBottom: 10 }}>
                 {pendingHandover.fromCashierName}
               </div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>
+              <div style={{ fontSize: 28, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.6 }}>
                 {fmtCOP(pendingHandover.amount)}
               </div>
             </div>
-            <div style={{ fontSize: 12, color: T.neutral[500], textAlign: 'center', marginBottom: 18, lineHeight: 1.5 }}>
-              El monto inicial viene del cierre anterior y no se puede editar.
+            <div style={{ fontSize: 13, color: T.neutral[600], textAlign: 'center', marginBottom: 16, lineHeight: 1.55 }}>
+              Confirma que recibiste este efectivo físicamente.
+              <br/>
+              Al iniciar el turno, esta cantidad queda registrada como tu apertura.
             </div>
           </>
         ) : (
           <>
-            <NumberField
-              label="Monto inicial en caja"
-              value={openingFloat}
-              onChange={setOpeningFloat}
-              placeholder="0"
-              autoFocus
-              disabled={busy}
-              hint="Si recibiste dinero del administrador, ingrésalo aquí. Si no, déjalo en 0."
-            />
+            <div style={{
+              padding: '14px 16px', borderRadius: 14,
+              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+              marginBottom: 14,
+              display: 'flex', alignItems: 'center', gap: 12,
+            }}>
+              <div style={{
+                width: 42, height: 42, borderRadius: 999,
+                background: T.neutral[100],
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
+                  <rect x="3" y="6" width="16" height="12" rx="2" stroke={T.neutral[500]} strokeWidth="1.6" fill="none"/>
+                  <circle cx="11" cy="12" r="2" stroke={T.neutral[500]} strokeWidth="1.4" fill="none"/>
+                </svg>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800] }}>
+                  Caja vacía
+                </div>
+                <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
+                  Tu turno empieza con $0
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: T.neutral[600], textAlign: 'center', marginBottom: 16, lineHeight: 1.55 }}>
+              No hay efectivo recibido de una cajera anterior.
+              <br/>
+              Si el administrador te entregó dinero, díselo a él para registrar el ajuste.
+            </div>
           </>
         )}
 
@@ -391,7 +412,9 @@ function OpenTurnModal({ branch, authUser, userDoc, onCancel, onOpened }) {
             disabled={busy || pendingHandover === undefined}
             style={{ ...btnPrimary(T.copper[500]), flex: 1.4, opacity: busy ? 0.7 : 1 }}
           >
-            {busy ? 'Iniciando...' : 'Iniciar turno'}
+            {busy
+              ? 'Iniciando...'
+              : pendingHandover ? 'Confirmar e iniciar' : 'Iniciar turno'}
           </button>
         </div>
       </div>

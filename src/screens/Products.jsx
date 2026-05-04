@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card, Modal, InputField, PrimaryButton, BackButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { addProduct, updateProduct, deleteProduct, getData } from '../db'
 import { useIsDesktop } from '../context/DesktopCtx'
+import { watchCashierProducts, deleteCashierProduct } from '../products'
 
 // ── Helpers de cálculo ─────────────────────────────────────────
 function calcProduct(p) {
@@ -82,6 +83,13 @@ export default function Products({ products, onBack, onRefresh }) {
   const [editId, setEditId] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
   const [sortBy, setSortBy] = useState('margin') // 'margin' | 'name' | 'profit'
+  const [cashierProducts, setCashierProducts] = useState([])
+  const [confirmDelCashier, setConfirmDelCashier] = useState(null)
+
+  useEffect(() => {
+    const unsub = watchCashierProducts(setCashierProducts)
+    return unsub
+  }, [])
 
   const enriched = useMemo(() =>
     products.map(p => ({ ...p, ...calcProduct(p) })),
@@ -184,6 +192,70 @@ export default function Products({ products, onBack, onRefresh }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Productos creados por cajera (pendientes de revisión) */}
+      {cashierProducts.length > 0 && (
+        <div style={{ padding: '0 16px 16px' }}>
+          <Card padding={0} style={{
+            border: `1px solid ${T.warn}33`,
+            background: '#FFF7E6',
+          }}>
+            <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 999, flexShrink: 0,
+                background: T.warn, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M7 3 V8 M7 10.5 V11" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: T.warn }}>
+                  Pendientes de revisión ({cashierProducts.length})
+                </div>
+                <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 1 }}>
+                  Productos creados por cajeras. Asígnales costo o elimínalos.
+                </div>
+              </div>
+            </div>
+            <div style={{ borderTop: `1px solid ${T.warn}22` }}>
+              {cashierProducts.map((p, i) => (
+                <div key={p.id} style={{
+                  padding: '12px 14px',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  borderBottom: i < cashierProducts.length - 1 ? `1px solid ${T.warn}22` : 'none',
+                  background: '#fff',
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 14, fontWeight: 700, color: T.neutral[900],
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {p.name}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+                      Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
+                      {p.createdByName && ` · por ${p.createdByName}`}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setConfirmDelCashier(p)}
+                    style={{
+                      padding: '7px 12px', borderRadius: 10,
+                      background: 'transparent', color: T.bad,
+                      border: `1px solid ${T.bad}33`,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: 12.5, fontWeight: 600, flexShrink: 0,
+                    }}
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Card>
         </div>
       )}
 
@@ -311,6 +383,38 @@ export default function Products({ products, onBack, onRefresh }) {
               background: T.bad, color: '#fff',
               fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
             }}>Eliminar</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirmar eliminar producto cajera */}
+      {confirmDelCashier && (
+        <Modal onClose={() => setConfirmDelCashier(null)} title="¿Eliminar producto?">
+          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8 }}>
+            <b>{confirmDelCashier.name}</b>
+          </div>
+          <div style={{ fontSize: 13, color: T.neutral[500], marginBottom: 20, lineHeight: 1.5 }}>
+            Este producto fue creado por una cajera. Se eliminará del catálogo y ya no aparecerá en futuras búsquedas. Las ventas que ya lo usaron no se ven afectadas.
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setConfirmDelCashier(null)} style={{
+              flex: 1, padding: 13, borderRadius: 12, border: 'none',
+              background: T.neutral[100], color: T.neutral[700],
+              fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Cancelar</button>
+            <button
+              onClick={async () => {
+                await deleteCashierProduct(confirmDelCashier.id)
+                setConfirmDelCashier(null)
+              }}
+              style={{
+                flex: 1, padding: 13, borderRadius: 12, border: 'none',
+                background: T.bad, color: '#fff',
+                fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Eliminar
+            </button>
           </div>
         </Modal>
       )}

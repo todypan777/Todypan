@@ -4,6 +4,7 @@ import {
   collection,
   addDoc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
   query,
   onSnapshot,
@@ -48,6 +49,20 @@ export async function createCashierProduct({ name, salePrice, createdByUid, crea
   }
   const ref = await addDoc(productsCol(), data)
   return ref.id
+}
+
+/** Solo admin: elimina un producto creado por cajera (rechazo definitivo). */
+export async function deleteCashierProduct(id) {
+  await deleteDoc(doc(firestoreDb, 'products', id))
+}
+
+/** Solo admin: actualiza precio/costo de un producto cajera. */
+export async function updateCashierProduct(id, updates) {
+  await updateDoc(doc(firestoreDb, 'products', id), {
+    ...updates,
+    needsCostReview: false,  // ya fue revisado
+    reviewedAt: serverTimestamp(),
+  })
 }
 
 /**

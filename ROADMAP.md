@@ -54,6 +54,7 @@ La app actual (`todypan-app`) es el **panel de administración**. Vamos a añadi
 | **D18** | **Sobras al cierre** (declarado > esperado): el efectivo físico se entrega completo (modelo mezclado). El excedente se suma a un **fondo virtual `surplusFund`** del negocio que crece con cada cierre con sobra. Sirve como reserva contable para cubrir faltantes futuros u otros gastos. |
 | **D19** | **Faltas al cierre** (declarado < esperado): se registra como `closingDiscrepancy.status = 'pending'`. **El admin decide caso por caso** desde Pendientes — sin umbral fijo: o lo asume como pérdida del negocio (se cubre con `surplusFund` si hay saldo), o se descuenta a la cajera. |
 | **D20** | Si admin elige "descontar a la cajera", el monto se **integra automáticamente al sistema de nómina existente**: se resta del próximo pago en la pantalla Equipo / pago de nómina. La cajera puede agregar una **nota** explicativa al momento de cerrar el turno. |
+| **D21** | **Control anti-fraude:** la cajera **NUNCA** ve el monto esperado en caja, el total acumulado, ni la diferencia (sobra/falta) al cerrar. Declara a ciegas el efectivo físico que tiene; el sistema calcula y reporta al admin. Aplica en TODAS las fases: en cierre, durante el turno y mientras hay ventas activas (Fase 3+). La única excepción es el monto del **handover de apertura** (que ella vio físicamente al recibir y debe poder confirmar/disputar). |
 
 ---
 

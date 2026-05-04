@@ -4,6 +4,7 @@ import InstallPrompt from './components/UI/InstallPrompt'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
 import { TabBar, Sidebar } from './components/Nav'
 import { DesktopCtx } from './context/DesktopCtx'
+import { AuthProvider, useAuth } from './context/AuthCtx'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
 import AddMovement from './screens/AddMovement'
@@ -15,10 +16,41 @@ import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
+import Login from './screens/Login'
 
 const SIDEBAR_W = 230
 
+function LoadingScreen({ label = 'Cargando TodyPan...' }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      minHeight: '100dvh', background: '#FAF7F2', flexDirection: 'column', gap: 16,
+    }}>
+      <div style={{ fontSize: 52 }}>🥖</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: '#B08060', letterSpacing: 0.3 }}>{label}</div>
+    </div>
+  )
+}
+
 export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  )
+}
+
+function AuthGate() {
+  const { user, loading, isAdmin } = useAuth()
+
+  if (loading) return <LoadingScreen label="Verificando sesión..." />
+  if (!user) return <Login />
+  if (!isAdmin) return <Login unauthorizedEmail={user.email} />
+
+  return <AppShell />
+}
+
+function AppShell() {
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
   const [modal, setModal] = useState(null)
@@ -45,15 +77,8 @@ export default function App() {
   const [, forceUpdate] = useReducer(x => x + 1, 0)
   const refresh = useCallback(() => forceUpdate(), [])
 
-  if (!dbLoaded) return (
-    <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      minHeight: '100dvh', background: '#FAF7F2', flexDirection: 'column', gap: 16,
-    }}>
-      <div style={{ fontSize: 52 }}>🥖</div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: '#B08060', letterSpacing: 0.3 }}>Cargando TodyPan...</div>
-    </div>
-  )
+  if (!dbLoaded) return <LoadingScreen />
+
 
   const data = getData()
 

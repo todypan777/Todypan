@@ -1,6 +1,38 @@
+import { useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { getData } from '../db'
+
+export function UserAvatar({ user, size = 36 }) {
+  const initial = (user?.displayName || user?.email || '?').trim().charAt(0).toUpperCase()
+  const [imgError, setImgError] = useState(false)
+
+  if (user?.photoURL && !imgError) {
+    return (
+      <img
+        src={user.photoURL}
+        alt={user.displayName || user.email}
+        referrerPolicy="no-referrer"
+        onError={() => setImgError(true)}
+        style={{
+          width: size, height: size, borderRadius: 999, flexShrink: 0,
+          objectFit: 'cover', background: T.copper[50],
+        }}
+      />
+    )
+  }
+
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 999, flexShrink: 0,
+      background: T.copper[100], color: T.copper[700],
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: size * 0.42, fontWeight: 700,
+    }}>
+      {initial}
+    </div>
+  )
+}
 
 export function TodyMark({ size = 20, color = T.copper[500] }) {
   return (

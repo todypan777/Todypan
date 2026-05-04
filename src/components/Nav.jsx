@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { T } from '../tokens'
-import { TodyMark } from './Atoms'
+import { TodyMark, UserAvatar } from './Atoms'
 import { useIsDesktop } from '../context/DesktopCtx'
+import { useAuth } from '../context/AuthCtx'
+import { signOut } from '../auth'
 
 const MAIN_TABS = [
   { id: 'home', label: 'Inicio', icon: (c) => (
@@ -185,7 +188,30 @@ export function Sidebar({ active, onChange }) {
 
       <div style={{ flex: 1 }}/>
 
-      {/* Footer */}
+      {/* Footer con bloque de usuario */}
+      <SidebarUserFooter />
+    </aside>
+  )
+}
+
+function SidebarUserFooter() {
+  const { user } = useAuth()
+  const [busy, setBusy] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+
+  async function handleSignOut() {
+    setBusy(true)
+    try {
+      await signOut()
+    } catch (err) {
+      console.error('Error al cerrar sesión:', err)
+      setBusy(false)
+      setConfirm(false)
+    }
+  }
+
+  if (!user) {
+    return (
       <div style={{
         padding: '16px 22px',
         borderTop: `1px solid ${T.neutral[100]}`,
@@ -193,7 +219,112 @@ export function Sidebar({ active, onChange }) {
       }}>
         TodyPan · versión 1.0
       </div>
-    </aside>
+    )
+  }
+
+  return (
+    <div style={{
+      padding: '12px 14px 14px',
+      borderTop: `1px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 8px',
+      }}>
+        <UserAvatar user={user} size={36} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 13, fontWeight: 700, color: T.neutral[800],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {user.displayName || 'Administrador'}
+          </div>
+          <div style={{
+            fontSize: 11, color: T.neutral[400], marginTop: 1,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {user.email}
+          </div>
+        </div>
+      </div>
+
+      <button
+        onClick={() => setConfirm(true)}
+        style={{
+          width: '100%', marginTop: 6, padding: '9px 12px', borderRadius: 10,
+          background: 'transparent', color: T.bad,
+          border: `1px solid ${T.neutral[100]}`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          fontSize: 12.5, fontWeight: 600,
+          transition: 'background 0.12s, border-color 0.12s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#FBE9E5'; e.currentTarget.style.borderColor = '#F0C8BE' }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = T.neutral[100] }}
+      >
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="none">
+          <path d="M11 4 H6 Q4 4 4 6 V14 Q4 16 6 16 H11" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+          <path d="M14 7 L17 10 L14 13 M9 10 H17" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        Cerrar sesión
+      </button>
+
+      {confirm && (
+        <div
+          onClick={busy ? undefined : () => setConfirm(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 90,
+            background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 340,
+              background: '#fff', borderRadius: 20,
+              padding: '24px 22px',
+              boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+            }}
+          >
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], textAlign: 'center', marginBottom: 8 }}>
+              Cerrar sesión
+            </div>
+            <div style={{ fontSize: 13.5, color: T.neutral[600], textAlign: 'center', marginBottom: 22, lineHeight: 1.5 }}>
+              ¿Seguro que quieres salir de TodyPan?
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setConfirm(false)}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: 12,
+                  background: T.neutral[100], color: T.neutral[700],
+                  border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSignOut}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: 12,
+                  background: T.bad, color: '#fff',
+                  border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                  opacity: busy ? 0.7 : 1,
+                }}
+              >
+                {busy ? 'Saliendo...' : 'Cerrar sesión'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

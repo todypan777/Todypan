@@ -892,6 +892,16 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
 // ──────────────────────────────────────────────────────────────
 function NumberField({ label, value, onChange, placeholder, autoFocus, disabled, hint }) {
   const [focused, setFocused] = useState(false)
+
+  // Permite solo dígitos y elimina ceros a la izquierda (excepto "0" solo)
+  function sanitize(raw) {
+    const onlyDigits = raw.replace(/[^0-9]/g, '')
+    return onlyDigits.replace(/^0+(?=\d)/, '')
+  }
+
+  // Muestra string vacío en vez de "0" para que la UX sea más limpia
+  const displayValue = value === '0' ? '' : value
+
   return (
     <div style={{ marginBottom: 12 }}>
       <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
@@ -908,9 +918,9 @@ function NumberField({ label, value, onChange, placeholder, autoFocus, disabled,
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
-          value={value}
-          onChange={e => onChange(e.target.value.replace(/[^0-9]/g, ''))}
-          placeholder={placeholder}
+          value={displayValue}
+          onChange={e => onChange(sanitize(e.target.value))}
+          placeholder={placeholder || '0'}
           autoFocus={autoFocus}
           disabled={disabled}
           onFocus={() => setFocused(true)}

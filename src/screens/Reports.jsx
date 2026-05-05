@@ -78,9 +78,6 @@ export default function Reports({ filter, setFilter, movements, employees, atten
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <div style={{ padding: '56px 16px 0' }}>
-        <BackButton onBack={onBack} label="Más"/>
-      </div>
       <ScreenHeader title="Reportes" subtitle={fmtMonthLabel(month)}/>
 
       {/* Month nav */}

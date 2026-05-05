@@ -125,13 +125,6 @@ export default function Products({ products, onBack, onRefresh }) {
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      {/* Header */}
-      {!isDesktop && (
-        <div style={{ padding: '56px 16px 0' }}>
-          <BackButton onBack={onBack} label="Más"/>
-        </div>
-      )}
-
       <ScreenHeader
         title="Productos"
         subtitle={isDesktop ? undefined : undefined}

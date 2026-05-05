@@ -9,9 +9,6 @@ export default function Branches({ branches, onBack, onRefresh }) {
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <div style={{ padding: '56px 16px 0' }}>
-        <BackButton onBack={onBack} label="Más"/>
-      </div>
       <ScreenHeader title="Panaderías"/>
 
       <div style={{ padding: '8px 16px 0' }}>

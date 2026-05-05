@@ -73,12 +73,6 @@ const MORE_TABS = [
       <path d="M15 5 V9 M13 7 H17" stroke={c} strokeWidth="1.6" strokeLinecap="round"/>
     </svg>
   )},
-  { id: 'pendientes', label: 'Pendientes', icon: (c) => (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <path d="M5 8 Q5 4 10 4 Q15 4 15 8 V12 L17 15 H3 L5 12 Z" stroke={c} strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
-      <path d="M8 16 Q8 18 10 18 Q12 18 12 16" stroke={c} strokeWidth="1.6" fill="none"/>
-    </svg>
-  )},
 ]
 
 // Para móvil (TabBar) — sigue usando "Más"

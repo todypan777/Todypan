@@ -21,7 +21,7 @@ import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
  * - Cierre de turno pendiente (pending_close)
  * - Usuario nuevo esperando aprobación
  */
-export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick }) {
+export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
@@ -106,6 +106,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
 
   return (
     <>
+      {!hidden && (
       <button
         onClick={() => onOpenPendientes?.()}
         title={totalCount > 0 ? `${totalCount} cosas por revisar` : 'Sin pendientes'}
@@ -155,6 +156,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
           }
         `}</style>
       </button>
+      )}
 
       {/* Popup llamativo: cierres de turno pendientes */}
       {closesPopup && closesPopup.length > 0 && (

@@ -387,11 +387,12 @@ function AppShell() {
 
         {addMovementOverlay}
 
-        {/* Campanita de notificaciones global (siempre visible para admin) */}
+        {/* Campanita de notificaciones global (oculta cuando ya estamos en Pendientes) */}
         <NotificationBell
           onOpenPendientes={() => handleNav('pendientes')}
           onOpenUsers={() => handleNav('users')}
           dataTick={dataTick}
+          hidden={moreSub === 'pendientes'}
         />
 
         <InstallPrompt />

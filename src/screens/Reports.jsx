@@ -1,17 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtMonthLabel, currentMonth } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, BackButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
+import { watchAllSales } from '../sales'
 
 function catLabel(cat, incomeCats, expenseCats) {
+  if (cat === 'ventas_cajera') return 'Ventas (cajera)'
   const all = [...incomeCats, ...expenseCats.proveedores, ...expenseCats.operacion, ...expenseCats.empresa]
   return all.find(c => c.id === cat)?.label || cat
 }
 
 export default function Reports({ filter, setFilter, movements, employees, attendance, incomeCats, expenseCats, onBack }) {
   const [month, setMonth] = useState(currentMonth())
+  const [sales, setSales] = useState([])
+  useEffect(() => watchAllSales(setSales), [])
 
   function changeMonth(delta) {
     const [y, m] = month.split('-').map(Number)
@@ -20,8 +24,17 @@ export default function Reports({ filter, setFilter, movements, employees, atten
   }
 
   const match = (m) => filter === 'all' || m.branch === filter || m.branch === 'both'
+  const matchSale = (s) => filter === 'all' || String(s.branchId) === String(filter)
+  const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
+
   const movs = movements.filter(m => m.date.startsWith(month) && match(m))
-  const income = movs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+  const monthSales = sales.filter(s =>
+    isActiveSale(s) && s.date?.startsWith(month) && matchSale(s)
+  )
+
+  const movIncome = movs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+  const salesIncome = monthSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
+  const income = movIncome + salesIncome
   const expense = movs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
 
   // Payroll
@@ -38,12 +51,16 @@ export default function Reports({ filter, setFilter, movements, employees, atten
   const byGroup = { proveedores: 0, operacion: 0, empresa: 0 }
   movs.filter(m => m.type === 'expense').forEach(m => { if (m.group) byGroup[m.group] = (byGroup[m.group] || 0) + m.amount })
 
-  // Income by branch
+  // Income by branch (movements + sales)
   const byBranchInc = { 1: 0, 2: 0 }
   movs.filter(m => m.type === 'income').forEach(m => {
     if (m.branch === 1) byBranchInc[1] += m.amount
     if (m.branch === 2) byBranchInc[2] += m.amount
     if (m.branch === 'both') { byBranchInc[1] += m.amount / 2; byBranchInc[2] += m.amount / 2 }
+  })
+  monthSales.forEach(s => {
+    const bid = Number(s.branchId)
+    if (bid === 1 || bid === 2) byBranchInc[bid] = (byBranchInc[bid] || 0) + (Number(s.total) || 0)
   })
 
   // Top expense categories
@@ -51,9 +68,10 @@ export default function Reports({ filter, setFilter, movements, employees, atten
   movs.filter(m => m.type === 'expense').forEach(m => { byCat[m.cat] = (byCat[m.cat] || 0) + m.amount })
   const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6)
 
-  // Income categories
+  // Income categories (movements + ventas cajera consolidadas como 'ventas_cajera')
   const byIncCat = {}
   movs.filter(m => m.type === 'income').forEach(m => { byIncCat[m.cat] = (byIncCat[m.cat] || 0) + m.amount })
+  if (salesIncome > 0) byIncCat['ventas_cajera'] = (byIncCat['ventas_cajera'] || 0) + salesIncome
   const topIncCats = Object.entries(byIncCat).sort((a, b) => b[1] - a[1])
 
   const net = income - expense - monthPayroll

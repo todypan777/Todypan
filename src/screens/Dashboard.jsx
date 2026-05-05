@@ -1,18 +1,32 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtDate, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
+import { watchAllSales } from '../sales'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
   const month = currentMonth()
 
-  const matchesBranch = (m) => filter === 'all' || m.branch === filter || m.branch === 'both'
-  const monthMovs = movements.filter(m => m.date.startsWith(month) && matchesBranch(m))
+  // Ventas de cajeras (modelo devengado: cuentan como ingreso desde el día de la venta,
+  // incluso si fueron a deuda)
+  const [sales, setSales] = useState([])
+  useEffect(() => watchAllSales(setSales), [])
 
-  const income = monthMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+  const matchesBranch = (m) => filter === 'all' || m.branch === filter || m.branch === 'both'
+  const matchesSaleBranch = (s) => filter === 'all' || String(s.branchId) === String(filter)
+  const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
+
+  const monthMovs = movements.filter(m => m.date.startsWith(month) && matchesBranch(m))
+  const monthSales = sales.filter(s =>
+    isActiveSale(s) && s.date?.startsWith(month) && matchesSaleBranch(s)
+  )
+
+  const movIncome = monthMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+  const salesIncome = monthSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
+  const income = movIncome + salesIncome
   const expense = monthMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
 
   const pendingByEmp = employees
@@ -53,11 +67,13 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
     dates.push(d.toISOString().slice(0, 10))
   }
   const byDay = dates.map(d => {
-    const day = movements.filter(m => m.date === d && matchesBranch(m))
+    const dayMovs = movements.filter(m => m.date === d && matchesBranch(m))
+    const daySales = sales.filter(s => s.date === d && isActiveSale(s) && matchesSaleBranch(s))
     return {
       d,
-      inc: day.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0),
-      exp: day.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0),
+      inc: dayMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+         + daySales.reduce((s, x) => s + (Number(x.total) || 0), 0),
+      exp: dayMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0),
     }
   })
   const maxDay = Math.max(1, ...byDay.map(x => Math.max(x.inc, x.exp)))
@@ -239,7 +255,9 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
       {/* Today summary */}
       {(() => {
         const todayMovs = movements.filter(m => m.date === today && matchesBranch(m))
+        const todaySales = sales.filter(s => s.date === today && isActiveSale(s) && matchesSaleBranch(s))
         const todayInc = todayMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+                       + todaySales.reduce((s, x) => s + (Number(x.total) || 0), 0)
         const todayExp = todayMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
         const todayNet = todayInc - todayExp
         return (

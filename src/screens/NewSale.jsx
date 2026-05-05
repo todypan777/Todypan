@@ -32,7 +32,11 @@ import {
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
-export default function NewSale({ session, authUser, userDoc, tab, onCancel, onSaved }) {
+export default function NewSale({ session, authUser, userDoc, tab, assistMode, onCancel, onSaved }) {
+  // Modo "asistir": admin haciendo ventas en el turno de una cajera.
+  // Las ventas/mesas quedan a nombre de la cajera (session.cashierUid),
+  // pero registradas como recordedByUid del admin.
+  const isAssistMode = !!assistMode
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
@@ -184,13 +188,21 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
   // Devuelve un mensaje de error si falla, null si OK (para que el modal lo muestre).
   async function handleConvertToTab(numberToUse) {
     try {
+      // En modo asistir: la mesa queda a nombre de la cajera dueña del turno.
+      // Si no, a nombre del usuario actual.
+      const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
       await createOpenTab({
         sessionId: session.id,
-        cashierUid: authUser.uid,
+        cashierUid: ownerUid,
         branchId: session.branchId,
         branchName: session.branchName,
         tableNumber: numberToUse,
         items: cart,
+        ...(isAssistMode ? {
+          recordedByUid: authUser.uid,
+          recordedByName: assistMode.adminName,
+          recordedByRole: 'admin',
+        } : {}),
       })
       setConvertOpen(false)
       onCancel() // cerrar el modal de venta; la burbuja aparecerá vía listener
@@ -294,6 +306,7 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
               {session.branchName || 'Panadería'}
+              {isAssistMode && session.cashierName && ` · turno de ${session.cashierName}`}
             </div>
           </div>
           {isTabMode && (
@@ -306,6 +319,32 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
           )}
         </div>
       </div>
+
+      {/* Banner modo asistir: aviso para que el admin no se confunda */}
+      {isAssistMode && (
+        <div style={{
+          background: '#FFF7E6', borderBottom: `1px solid #F4E0BC`,
+        }}>
+          <div style={{
+            maxWidth: 640, margin: '0 auto',
+            padding: '10px 18px',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 999, flexShrink: 0,
+              background: T.warn, color: '#fff',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 16, fontWeight: 800,
+            }}>
+              !
+            </div>
+            <div style={{ flex: 1, fontSize: 12.5, color: '#7A5C00', lineHeight: 1.4 }}>
+              <b>Asistiendo el turno de {session.cashierName || 'la cajera'}.</b><br/>
+              La venta se contabiliza a su caja. Deja el efectivo en caja.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Buscador + boton refresh catalogo */}
       <div style={{ padding: '14px 18px 6px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
@@ -538,6 +577,7 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
           session={session}
           authUser={authUser}
           userDoc={userDoc}
+          assistMode={assistMode}
           cart={cart}
           total={total}
           onCancel={() => setPaymentOpen(false)}
@@ -995,7 +1035,7 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: Método de pago
 // ──────────────────────────────────────────────────────────────
-function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onConfirmed }) {
+function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onCancel, onConfirmed }) {
   const [method, setMethod] = useState(null) // 'efectivo' | 'deuda' | 'nequi' | 'daviplata'
   const [cashReceivedStr, setCashReceivedStr] = useState('')
   const [debtorName, setDebtorName] = useState('')
@@ -1072,13 +1112,19 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
     setBusy(true)
     setError(null)
     try {
-      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+      const isAssist = !!assistMode
+      // Modo asistir: la venta se contabiliza a la cajera dueña del turno.
+      // Si no, al usuario actual (que ES la cajera).
+      const cashierUid = isAssist ? (session.cashierUid || authUser.uid) : authUser.uid
+      const cashierName = isAssist
+        ? (session.cashierName || 'Cajera')
+        : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
 
       const payload = {
         sessionId: session.id,
         branchId: session.branchId,
-        cashierUid: authUser.uid,
+        cashierUid,
         cashierName,
         items: cart.map(it => ({
           productId: it.productId,
@@ -1098,6 +1144,13 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
 
       if (isDigital && photoUrl) {
         payload.photoUrl = photoUrl
+      }
+
+      // Modo asistir: marcar quién registró la venta (admin)
+      if (isAssist) {
+        payload.recordedByUid = authUser.uid
+        payload.recordedByName = assistMode.adminName
+        payload.recordedByRole = 'admin'
       }
 
       if (method === 'deuda') {

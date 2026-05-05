@@ -1529,6 +1529,17 @@ function SaleRow({ sale, isLast, onClick }) {
             ⚠ Reportado al admin
           </div>
         )}
+        {sale.recordedByUid && sale.recordedByRole === 'admin' && (
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            marginTop: 4, padding: '2px 8px', borderRadius: 999,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 10.5, fontWeight: 700, color: '#7A5C00',
+            letterSpacing: 0.3, textTransform: 'uppercase',
+          }}>
+            👤 Hecha por admin{sale.recordedByName ? ` · ${sale.recordedByName}` : ''}
+          </div>
+        )}
         {sale.paymentMethod === 'deuda' && sale.debtorName && !isFlagged && (
           <div style={{
             fontSize: 11, color: T.neutral[500], marginTop: 2,

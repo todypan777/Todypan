@@ -5,6 +5,7 @@ import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } fr
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
 import { watchAllSales } from '../sales'
+import ActiveTurnsCard from '../components/ActiveTurnsCard'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
@@ -103,6 +104,9 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
           <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
         ))}
       </div>
+
+      {/* Turnos activos (vivos): asistir a cajeras ausentes */}
+      <ActiveTurnsCard />
 
       {/* Balance hero card */}
       <div style={{ padding: '0 16px' }}>

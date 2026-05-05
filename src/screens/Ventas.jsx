@@ -389,11 +389,23 @@ function SalesTable({ sales, branches, onClick }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
               <CashierAvatar name={s.cashierName} />
-              <div style={{
-                fontSize: 13, color: T.neutral[900], fontWeight: 700,
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {s.cashierName}
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontSize: 13, color: T.neutral[900], fontWeight: 700,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {s.cashierName}
+                </div>
+                {s.recordedByUid && s.recordedByRole === 'admin' && (
+                  <div style={{
+                    fontSize: 10, fontWeight: 700, color: '#7A5C00',
+                    background: '#FFF7E6', display: 'inline-block',
+                    padding: '1px 6px', borderRadius: 999, marginTop: 2,
+                    letterSpacing: 0.3, textTransform: 'uppercase',
+                  }}>
+                    👤 admin
+                  </div>
+                )}
               </div>
             </div>
             <div style={{
@@ -464,6 +476,16 @@ function SalesList({ sales, branches, onClick }) {
               }}>
                 {s.cashierName}
                 <span style={{ fontSize: 14 }}>{methodIcon(s.paymentMethod)}</span>
+                {s.recordedByUid && s.recordedByRole === 'admin' && (
+                  <span style={{
+                    fontSize: 9.5, fontWeight: 700, color: '#7A5C00',
+                    background: '#FFF7E6', border: `1px solid #F4E0BC`,
+                    padding: '1px 6px', borderRadius: 999,
+                    letterSpacing: 0.3, textTransform: 'uppercase',
+                  }}>
+                    👤 admin
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
                 {fmtDate(s.date)} · {timeOf(s)} · {branch?.name || '—'}

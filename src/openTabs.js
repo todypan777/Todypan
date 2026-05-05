@@ -72,10 +72,14 @@ export function isTableNumberTaken(tabs, number, excludeId = null) {
 /**
  * Crea una nueva tab con items iniciales. tableNumber se valida contra
  * duplicados (la UI debe haber resuelto eso antes).
+ *
+ * Si el admin la crea asistiendo el turno de una cajera, pasar
+ * recordedByUid/Name/Role para registrar quién la creó.
  */
 export async function createOpenTab({
   sessionId, cashierUid, branchId, branchName,
   tableNumber, items,
+  recordedByUid, recordedByName, recordedByRole,
 }) {
   const cleanItems = (items || []).map(it => ({
     key: it.key,
@@ -95,6 +99,11 @@ export async function createOpenTab({
     total: computeTabTotal(cleanItems),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  }
+  if (recordedByUid && recordedByUid !== cashierUid) {
+    data.recordedByUid = recordedByUid
+    data.recordedByName = recordedByName || null
+    data.recordedByRole = recordedByRole || 'admin'
   }
   const ref = await addDoc(tabsCol(), data)
   return ref.id

@@ -67,6 +67,59 @@ export function watchPendingDeductions(callback, { cashierUid } = {}) {
   )
 }
 
+/** Watcher de descuentos pendientes filtrados por employeeId. */
+export function watchPendingDeductionsForEmployee(employeeId, callback) {
+  if (!employeeId) { callback([]); return () => {} }
+  const q = query(
+    deductionsCol(),
+    where('status', '==', 'pending'),
+    where('employeeId', '==', employeeId),
+  )
+  return onSnapshot(
+    q,
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => {
+      console.error('[deductions] watchPendingDeductionsForEmployee error:', err)
+      callback([])
+    }
+  )
+}
+
+/** Watcher de TODOS los descuentos de una cajera (incluye applied/cancelled). */
+export function watchAllDeductionsForCashier(cashierUid, callback) {
+  if (!cashierUid) { callback([]); return () => {} }
+  const q = query(deductionsCol(), where('cashierUid', '==', cashierUid))
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => {
+        const ta = a.createdAt?.toMillis?.() ?? 0
+        const tb = b.createdAt?.toMillis?.() ?? 0
+        return tb - ta
+      })
+      callback(list)
+    },
+    err => {
+      console.error('[deductions] watchAllDeductionsForCashier error:', err)
+      callback([])
+    }
+  )
+}
+
+/** Aplica una lista de descuentos al pago: marca todos como applied con fecha. */
+export async function applyDeductions(deductionIds, paymentDate) {
+  await Promise.all(
+    deductionIds.map(id =>
+      updateDoc(deductionRef(id), {
+        status: 'applied',
+        appliedAt: serverTimestamp(),
+        appliedToPaymentDate: paymentDate || null,
+      })
+    )
+  )
+}
+
 /** Marcar descuento como aplicado (en el flujo de pago de nómina, Fase 6.5). */
 export async function markDeductionApplied(id, paymentDate) {
   await updateDoc(deductionRef(id), {

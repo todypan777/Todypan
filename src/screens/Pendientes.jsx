@@ -27,12 +27,16 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   const { authUser } = useAuth()
 
   const [pendingUsers, setPendingUsers] = useState([])
+  const [allUsers, setAllUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
   const [allSales, setAllSales] = useState([])
   const [surplusBalance, setSurplusBalance] = useState(0)
 
-  useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
+  useEffect(() => watchAllUsers(list => {
+    setAllUsers(list)
+    setPendingUsers(list.filter(u => u.status === 'pending'))
+  }), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchPendingExpenses(setPendingExpenses), [])
   useEffect(() => watchAllSales(setAllSales), [])
@@ -109,6 +113,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
           sessions={closingShortages}
           adminUid={authUser.uid}
           surplusBalance={surplusBalance}
+          allUsers={allUsers}
         />
       )}
 
@@ -296,7 +301,7 @@ function OpeningDisputeModal({ session, adminUid, onCancel, onResolved }) {
 // ──────────────────────────────────────────────────────────────
 // Faltas de cierre
 // ──────────────────────────────────────────────────────────────
-function ClosingShortagesSection({ sessions, adminUid, surplusBalance }) {
+function ClosingShortagesSection({ sessions, adminUid, surplusBalance, allUsers }) {
   const [resolving, setResolving] = useState(null)
   return (
     <>
@@ -332,6 +337,7 @@ function ClosingShortagesSection({ sessions, adminUid, surplusBalance }) {
           session={resolving}
           adminUid={adminUid}
           surplusBalance={surplusBalance}
+          allUsers={allUsers}
           onCancel={() => setResolving(null)}
           onResolved={() => setResolving(null)}
         />
@@ -340,7 +346,7 @@ function ClosingShortagesSection({ sessions, adminUid, surplusBalance }) {
   )
 }
 
-function ClosingShortageModal({ session, adminUid, surplusBalance, onCancel, onResolved }) {
+function ClosingShortageModal({ session, adminUid, surplusBalance, allUsers, onCancel, onResolved }) {
   const [resolution, setResolution] = useState(null) // 'business_loss' | 'covered_by_fund' | 'cashier_deduction'
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -356,10 +362,13 @@ function ClosingShortageModal({ session, adminUid, surplusBalance, onCancel, onR
     try {
       let deductionId = null
       if (resolution === 'cashier_deduction') {
-        // Crear entrada en cashierDeductions
+        // Buscar el employeeId vinculado al user de la cajera
+        const cashierUser = (allUsers || []).find(u => u.uid === session.cashierUid)
+        const employeeId = cashierUser?.linkedEmployeeId || null
         deductionId = await createDeduction({
           cashierUid: session.cashierUid,
           cashierName: session.cashierName,
+          employeeId,
           amount,
           reason: 'cash_shortage',
           sessionId: session.id,

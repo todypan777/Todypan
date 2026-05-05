@@ -14,6 +14,7 @@ import {
 import { watchAllUsers } from '../users'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
+import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { compressAndUpload } from '../utils/imagebb'
 import NewSale from './NewSale'
 
@@ -575,8 +576,10 @@ function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
   const [newSaleOpen, setNewSaleOpen] = useState(false)
   const [expenseOpen, setExpenseOpen] = useState(false)
+  const [showDeductions, setShowDeductions] = useState(false)
   const [sessionSales, setSessionSales] = useState([])
   const [sessionExpenses, setSessionExpenses] = useState([])
+  const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const branches = getData().branches || []
 
@@ -590,8 +593,14 @@ function ActiveSession({ session, userDoc, authUser }) {
     return unsub
   }, [session.id])
 
+  useEffect(() => {
+    const unsub = watchAllDeductionsForCashier(authUser.uid, setMyDeductions)
+    return unsub
+  }, [authUser.uid])
+
   // Mostrar últimas 15 ventas (D21: sin totales agregados)
   const recentSales = sessionSales.slice(0, 15)
+  const pendingDeductions = myDeductions.filter(d => d.status === 'pending')
   const branch = branches.find(b => b.id === session.branchId) || { name: session.branchName, colorKey: 'copper' }
   const colorKey = branch.colorKey || 'copper'
   const palette = T[colorKey] || T.copper
@@ -725,6 +734,71 @@ function ActiveSession({ session, userDoc, authUser }) {
               />
             ))}
           </Card>
+        </div>
+      )}
+
+      {/* Mis descuentos (transparencia para la cajera) */}
+      {myDeductions.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={() => setShowDeductions(v => !v)}
+            style={{
+              width: '100%', padding: '12px 14px', borderRadius: 14,
+              background: pendingDeductions.length > 0 ? '#FBE9E5' : T.neutral[100],
+              border: pendingDeductions.length > 0 ? `1px solid #F0C8BE` : `1px solid ${T.neutral[200]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}
+          >
+            <div style={{ textAlign: 'left' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: pendingDeductions.length > 0 ? T.bad : T.neutral[700] }}>
+                Mis descuentos
+              </div>
+              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1 }}>
+                {pendingDeductions.length > 0
+                  ? `${pendingDeductions.length} pendiente(s) · ${myDeductions.length - pendingDeductions.length} aplicado(s)`
+                  : `${myDeductions.length} en total`}
+              </div>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ transform: showDeductions ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+              <path d="M3 5 L7 9 L11 5" stroke={T.neutral[600]} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+
+          {showDeductions && (
+            <Card padding={0} style={{ marginTop: 8, overflow: 'hidden' }}>
+              {myDeductions.map((d, i) => (
+                <div key={d.id} style={{
+                  padding: '10px 14px',
+                  borderBottom: i < myDeductions.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                  display: 'flex', alignItems: 'center', gap: 10,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: T.neutral[800] }}>
+                      {d.reason === 'cash_shortage' ? 'Falta de caja' : d.reason}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
+                      {d.createdAt?.toDate?.().toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) || ''}
+                      {d.status === 'applied' && d.appliedToPaymentDate && ` · aplicado ${d.appliedToPaymentDate}`}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: d.status === 'pending' ? T.bad : T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
+                      −{fmtCOP(d.amount)}
+                    </div>
+                    <span style={{
+                      fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+                      color: d.status === 'pending' ? T.bad : d.status === 'applied' ? T.neutral[500] : T.neutral[400],
+                      background: d.status === 'pending' ? '#FBE9E5' : T.neutral[100],
+                      padding: '2px 6px', borderRadius: 999,
+                    }}>
+                      {d.status === 'pending' ? 'pendiente' : d.status === 'applied' ? 'aplicado' : 'cancelado'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </Card>
+          )}
         </div>
       )}
 

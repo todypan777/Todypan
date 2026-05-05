@@ -276,7 +276,7 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 5 — Gastos de caja
+### ✅ Fase 5 — Gastos de caja
 **Objetivo:** Cajera registra gastos de caja → quedan pendientes para admin.
 
 - [ ] Botón "Gasto de caja" en home cajera
@@ -289,7 +289,7 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔔 Fase 6 — Pestaña Pendientes (admin)
+### ✅ Fase 6 — Pestaña Pendientes (admin)
 **Objetivo:** Admin tiene un solo lugar para revisar todo.
 
 - [ ] Pestaña "Pendientes" en sidebar (con badge de contador)
@@ -316,22 +316,23 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 💰 Fase 6.5 — Integración descuentos con nómina
+### ✅ Fase 6.5 — Integración descuentos con nómina
 **Objetivo:** Cuando admin marca un descuento a cajera (desde Pendientes), se aplica al sistema de pagos existente.
 
-- [ ] En la pantalla **Equipo → detalle de empleada**: nueva sección "Descuentos pendientes"
-- [ ] Lista de `cashierDeductions` con `status: 'pending'` para esa empleada
-- [ ] Cada descuento muestra: monto, razón, fecha, sesión origen
-- [ ] Al pagar nómina (lógica existente en `db.js` + Team/Registro): el sistema **resta automáticamente** los descuentos pendientes del total a pagar
-- [ ] Al confirmar el pago, los descuentos se marcan `status: 'applied'` con timestamp
-- [ ] Pantalla **"Mis descuentos"** para cajera: solo lectura, ve histórico (transparencia)
-- [ ] Build + deploy
+- [x] En la pantalla **Equipo → detalle de empleada**: nueva sección "Descuentos pendientes"
+- [x] Lista de `cashierDeductions` con `status: 'pending'` para esa empleada
+- [x] Cada descuento muestra: razón, fecha, monto en rojo
+- [x] Al pagar nómina: el sistema **resta automáticamente** los descuentos pendientes del total a pagar (`owed = grossOwed − totalDeductions`)
+- [x] Modal de confirmación de pago con desglose: días + descuentos − = neto a pagar
+- [x] Al confirmar el pago: `payAllPending` + `applyDeductions` (status → applied con fecha)
+- [x] Sección colapsable **"Mis descuentos"** para cajera en home: ve histórico completo (pending/applied/cancelled) con montos y fechas — transparencia
+- [x] Build + deploy
 
-**Por qué es 6.5 y no se mete en Fase 6:** Fase 6 ya tiene mucho scope (toda la pestaña Pendientes). Esta integración tocará la pantalla Equipo y la lógica de pagos, mejor aislarla.
+**Commits:** `[ver siguiente push]`
 
 ---
 
-### 📊 Fase 7 — Vista admin de Ventas
+### 🔄 Fase 7 — Vista admin de Ventas
 **Objetivo:** Admin ve todas las ventas con filtros.
 
 - [ ] Pestaña "Ventas" en sidebar
@@ -424,4 +425,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1-4 completas y en producción.** Próxima: Fase 5 (gastos de caja con aprobación admin). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-04 — **Fases 1-6.5 completas y en producción.** Próxima: Fase 7 (vista admin de Ventas con filtros). Decisiones D1-D21 cerradas.

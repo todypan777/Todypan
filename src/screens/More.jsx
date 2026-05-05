@@ -21,6 +21,16 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'ventas', label: 'Ventas', desc: 'Historial de ventas de cajeras',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="3" y="6" width="14" height="11" rx="2" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <path d="M7 6 V4 Q7 3 8 3 H12 Q13 3 13 4 V6" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <path d="M6 10 H14 M6 13 H10" stroke={T.copper[600]} strokeWidth="1.4" strokeLinecap="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'reports', label: 'Reportes', desc: 'Análisis del mes',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={T.copper[600]} strokeWidth="2" strokeLinecap="round"/><path d="M3 18 H17" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/></svg>

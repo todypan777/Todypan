@@ -332,20 +332,28 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 7 — Vista admin de Ventas
+### ✅ Fase 7 — Vista admin de Ventas
 **Objetivo:** Admin ve todas las ventas con filtros.
 
-- [ ] Pestaña "Ventas" en sidebar
-- [ ] Tabla con: fecha, hora, cajera, panadería, total, método, estado
-- [ ] Filtros: rango de fechas, cajera, panadería, método de pago, estado
-- [ ] Click en venta → modal con detalle (items, foto comprobante si aplica, notas)
-- [ ] Bandeja de solicitudes (sales con `status === 'edit_requested'` o `'delete_requested'`)
-- [ ] Botones: aprobar edición, rechazar, ver historial
-- [ ] Build + deploy
+- [x] Pestaña "Ventas" en sidebar y en Más (mobile)
+- [x] Vista responsive: tabla compacta en desktop, lista de tarjetas en mobile
+- [x] Cada item: fecha, hora, cajera, panadería, método (icono), total, badge de estado
+- [x] Filtros: rango de fechas (con shortcuts Hoy / Este mes), cajera, panadería, método (chips), estado (chips)
+- [x] Subtítulo dinámico: "N ventas · $total"
+- [x] Click en venta → modal con detalle completo:
+  - [x] Items con qty, precio unitario, subtotal
+  - [x] Total grande
+  - [x] Método de pago (icono + capitalize)
+  - [x] Si efectivo: monto recibido + vuelto
+  - [x] Si deuda: nombre del deudor
+  - [x] Si NEQUI/DAVIPLATA: foto del comprobante (clickeable a tamaño completo)
+  - [x] Notas / reportes de la cajera con autor y timestamp
+- [x] **Resolución de solicitudes:** se hace desde la pestaña Pendientes (Fase 6) — no se duplica aquí. El modal incluye nota.
+- [x] Build + deploy
 
 ---
 
-### 💳 Fase 8 — Deudores (admin)
+### 🔄 Fase 8 — Deudores (admin)
 **Objetivo:** Admin gestiona pagos y abonos de deudas.
 
 - [ ] Pestaña "Deudores" en sidebar
@@ -425,4 +433,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1-6.5 completas y en producción.** Próxima: Fase 7 (vista admin de Ventas con filtros). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-04 — **Fases 1-7 completas y en producción.** Próxima: Fase 8 (Deudores admin). Decisiones D1-D21 cerradas.

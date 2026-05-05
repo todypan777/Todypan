@@ -25,7 +25,7 @@ import {
   approveChangeRequest,
   rejectChangeRequest,
 } from '../productChangeRequests'
-import { addMovement, getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid } from '../db'
+import { addMovement, getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
 
@@ -639,14 +639,22 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
   )
   const pendingExpensesCount = expenses.filter(e => effectiveStatus(e) === 'pending').length
 
-  // EXPECTED en caja = apertura + ventas en EFECTIVO − gastos aprobados
+  // EXPECTED en caja = base + apertura + ventas en EFECTIVO − gastos aprobados
+  const cashFloor = getCashFloor(session.branchId)
   const openingFloat = Number(session.openingFloat) || 0
   const declared = Number(session.declaredClosingCash) || 0
-  const expectedCash = openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal
+  const expectedCash = cashFloor + openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal
   const difference = declared - expectedCash
   const hasShortage = difference < 0
   const hasSurplus = difference > 0
   const isExact = difference === 0
+  // ¿La base bajó? (declarado < base esperada)
+  const baseShortfall = declared < cashFloor ? cashFloor - declared : 0
+  const baseLowered = baseShortfall > 0
+  // Decisión del admin sobre la base reducida (solo aplica si baseLowered)
+  // 'replenish' = repongo y siguiente turno arranca con base completa
+  // 'reduce'   = siguiente turno arranca con base = declared
+  const [floorAction, setFloorAction] = useState(null)
 
   function setDecision(expenseId, decision) {
     setExpenseDecisions(prev => ({ ...prev, [expenseId]: decision }))
@@ -656,6 +664,7 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
   const canConfirm = !busy
     && pendingExpensesCount === 0   // no debe quedar ningún gasto sin decidir
     && (!hasShortage || !!resolution) // si hay falta, resolution requerida
+    && (!baseLowered || !!floorAction) // si la base bajó, requiere decisión
 
   async function handleApprove() {
     if (!canConfirm) return
@@ -708,6 +717,10 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
         resolution: hasShortage ? resolution : null,
         deductionId,
         session,
+        // Si la base bajó, persistir la decisión del admin sobre el siguiente turno
+        nextCashFloor: baseLowered
+          ? (floorAction === 'reduce' ? declared : CASH_FLOOR_DEFAULT)
+          : null,
       })
       onResolved()
     } catch (err) {
@@ -782,7 +795,8 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
           padding: '14px 16px', borderRadius: 12,
           background: T.neutral[50], marginBottom: 12,
         }}>
-          <Row label="Esperado en caja" value={fmtCOP(expectedCash)} />
+          <Row label="Base de caja" value={fmtCOP(cashFloor)} muted />
+          <Row label="Esperado total" value={fmtCOP(expectedCash)} />
           <Row label="Declarado por la cajera" value={fmtCOP(declared)} />
           <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
             {isExact && <Row label="✓ CUADRE EXACTO" value={fmtCOP(0)} highlight tone="ok" />}
@@ -790,6 +804,34 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
             {hasShortage && <Row label="FALTA" value={fmtCOP(Math.abs(difference))} highlight />}
           </div>
         </div>
+
+        {/* Alerta: la base bajó */}
+        {baseLowered && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 12,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`,
+            marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: T.bad, marginBottom: 4 }}>
+              ⚠ La base bajó a {fmtCOP(declared)}
+            </div>
+            <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5, marginBottom: 10 }}>
+              Faltan <b>{fmtCOP(baseShortfall)}</b> para los {fmtCOP(cashFloor)} de base. ¿Qué hacemos para el siguiente turno?
+            </div>
+            <RadioOption
+              selected={floorAction === 'replenish'}
+              onClick={() => setFloorAction('replenish')}
+              title={`Repongo ${fmtCOP(baseShortfall)}`}
+              subtitle="El siguiente turno arranca con la base completa."
+            />
+            <RadioOption
+              selected={floorAction === 'reduce'}
+              onClick={() => setFloorAction('reduce')}
+              title={`Iniciar con base reducida (${fmtCOP(declared)})`}
+              subtitle="El siguiente turno arrancará con menos base. Se va a detectar de nuevo si no se repone."
+            />
+          </div>
+        )}
 
         {/* Handover info */}
         {session.handover && (

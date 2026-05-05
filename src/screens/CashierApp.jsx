@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
 import { signOut } from '../auth'
-import { getData } from '../db'
+import { getData, getCashFloor } from '../db'
 import {
   watchMyOpenSession,
   watchOpenSessions,
@@ -1704,7 +1704,11 @@ function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onC
   // a ciegas lo que tiene físicamente. El admin recibe el cuadre con el
   // desglose real (ventas + gastos) y aprueba/rechaza gastos pendientes
   // ahí mismo, calculando expected en vivo.
-  const [declaredStr, setDeclaredStr] = useState('')
+  const cashFloor = getCashFloor(session.branchId)
+
+  // mode: 'extra' = tiene plata sobre la base | 'falta' = la base bajó
+  const [mode, setMode] = useState(null) // null | 'extra' | 'falta'
+  const [amountStr, setAmountStr] = useState('')
   const [closingNote, setClosingNote] = useState('')
   const [handoverType, setHandoverType] = useState('admin') // 'admin' | 'cashier'
   const [handoverToUid, setHandoverToUid] = useState(null)
@@ -1713,7 +1717,13 @@ function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onC
   const [error, setError] = useState(null)
   const [step, setStep] = useState('count') // count → handover
 
-  const declared = Number(declaredStr) || 0
+  const amount = Number(amountStr) || 0
+  // declared = lo que físicamente hay en caja (incluyendo la base)
+  const declared = mode === 'extra'
+    ? cashFloor + amount
+    : mode === 'falta'
+      ? Math.max(0, cashFloor - amount)
+      : 0
 
   useEffect(() => {
     const unsub = watchAllUsers(list => {
@@ -1728,9 +1738,12 @@ function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onC
   const selectedCashier = handoverType === 'cashier' ? cashiers.find(c => c.uid === handoverToUid) : null
 
   const blockedByOpenTabs = openTabsCount > 0
+  // El conteo es válido si la cajera escogió modo Y un monto >= 0.
+  // (amount = 0 con modo 'extra' significa "exacto a la base" → ok).
+  const countValid = mode !== null && amount >= 0
   const canConfirm =
     !blockedByOpenTabs &&
-    declared >= 0 &&
+    countValid &&
     (handoverType === 'admin' || (handoverType === 'cashier' && selectedCashier))
 
   async function handleConfirm() {
@@ -1799,17 +1812,62 @@ function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onC
               background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
               marginBottom: 16, fontSize: 12.5, color: T.neutral[600], lineHeight: 1.55,
             }}>
-              Cuenta el efectivo físico que tienes en caja y declara la cantidad exacta. El administrador se encarga del cuadre.
+              Recuerda que la caja siempre tiene <b>{fmtCOP(cashFloor)}</b> de base.
+              Cuenta el efectivo físico y dime cómo terminó:
             </div>
 
-            <NumberField
-              label="¿Cuánto tienes en caja?"
-              value={declaredStr}
-              onChange={setDeclaredStr}
-              placeholder="0"
-              autoFocus
-              disabled={busy}
-            />
+            {/* Dos botones grandes para escoger modo */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14 }}>
+              <button
+                onClick={() => { setMode('extra'); setAmountStr('') }}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '14px 12px', borderRadius: 14,
+                  background: mode === 'extra' ? T.ok : T.neutral[50],
+                  color: mode === 'extra' ? '#fff' : T.neutral[700],
+                  border: mode === 'extra' ? 'none' : `1.5px solid ${T.neutral[200]}`,
+                  cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 800, textAlign: 'center', lineHeight: 1.3,
+                  boxShadow: mode === 'extra' ? `0 3px 10px ${T.ok}55` : 'none',
+                }}
+              >
+                ✓ Tengo extra<br/>
+                <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.85 }}>
+                  sobre los {fmtCOP(cashFloor)}
+                </span>
+              </button>
+              <button
+                onClick={() => { setMode('falta'); setAmountStr('') }}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '14px 12px', borderRadius: 14,
+                  background: mode === 'falta' ? T.bad : T.neutral[50],
+                  color: mode === 'falta' ? '#fff' : T.neutral[700],
+                  border: mode === 'falta' ? 'none' : `1.5px solid ${T.neutral[200]}`,
+                  cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 800, textAlign: 'center', lineHeight: 1.3,
+                  boxShadow: mode === 'falta' ? `0 3px 10px ${T.bad}55` : 'none',
+                }}
+              >
+                ⚠ Falta para<br/>
+                <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.85 }}>
+                  llegar a {fmtCOP(cashFloor)}
+                </span>
+              </button>
+            </div>
+
+            {mode && (
+              <NumberField
+                label={mode === 'extra'
+                  ? '¿Cuánto efectivo tienes APARTE de la base?'
+                  : '¿Cuánto FALTA para completar la base?'}
+                value={amountStr}
+                onChange={setAmountStr}
+                placeholder="0"
+                autoFocus
+                disabled={busy}
+              />
+            )}
 
             <NoteField
               label="¿Quieres dejar alguna observación? (opcional)"
@@ -1901,12 +1959,12 @@ function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onC
               <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
               <button
                 onClick={() => setStep('handover')}
-                disabled={busy || declared < 0 || blockedByOpenTabs}
+                disabled={busy || !countValid || blockedByOpenTabs}
                 style={{
-                  ...btnPrimary(blockedByOpenTabs ? T.neutral[200] : T.neutral[900]),
+                  ...btnPrimary((!countValid || blockedByOpenTabs) ? T.neutral[200] : T.neutral[900]),
                   flex: 1.4,
-                  color: blockedByOpenTabs ? T.neutral[400] : '#fff',
-                  cursor: blockedByOpenTabs ? 'not-allowed' : 'pointer',
+                  color: (!countValid || blockedByOpenTabs) ? T.neutral[400] : '#fff',
+                  cursor: (!countValid || blockedByOpenTabs) ? 'not-allowed' : 'pointer',
                 }}
               >
                 Siguiente

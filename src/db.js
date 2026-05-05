@@ -41,6 +41,13 @@ const defaultExpenseCats = {
   ],
 }
 
+// ─── Base de caja (cashFloor) ────────────────────────────────
+// La caja siempre tiene un PISO de efectivo para vueltos. La base se
+// asume intacta entre turnos. Si los gastos consumen parte de la base,
+// el admin debe reponer (o aceptar que el siguiente turno arranque
+// con base reducida).
+export const CASH_FLOOR_DEFAULT = 200000
+
 function defaultData() {
   return {
     movements: [],
@@ -55,6 +62,7 @@ function defaultData() {
       { id: 2, name: 'Panadería Esquina', colorKey: 'sage' },
     ],
     dailyConfirmations: {},
+    branchCashFloors: {}, // override por branch si la base bajó y admin no repuso
   }
 }
 
@@ -64,6 +72,7 @@ let _data = null
 function migrate(d) {
   if (!d.dailyConfirmations) d.dailyConfirmations = {}
   if (!d.branches) d.branches = defaultData().branches
+  if (!d.branchCashFloors) d.branchCashFloors = {}
   if (!d.incomeCats) d.incomeCats = defaultIncomeCats
   // Migrar: agregar 'sobra_caja' si falta (apps con datos previos)
   if (Array.isArray(d.incomeCats) && !d.incomeCats.some(c => c.id === 'sobra_caja')) {
@@ -482,5 +491,30 @@ export function getBranches() { return _data.branches }
 
 export function updateBranch(id, updates) {
   _data.branches = _data.branches.map(b => b.id === id ? { ...b, ...updates } : b)
+  persist()
+}
+
+// ─── CashFloor por panaderia ─────────────────────────────────
+/** Devuelve la base actual de una panaderia (default si no hay override) */
+export function getCashFloor(branchId) {
+  if (branchId == null) return CASH_FLOOR_DEFAULT
+  const key = String(branchId)
+  const override = _data?.branchCashFloors?.[key]
+  if (typeof override === 'number' && override >= 0) return override
+  return CASH_FLOOR_DEFAULT
+}
+
+/** Setea la base actual de una panaderia. Si value === CASH_FLOOR_DEFAULT, limpia el override. */
+export function setCashFloor(branchId, value) {
+  if (branchId == null) return
+  if (!_data.branchCashFloors) _data.branchCashFloors = {}
+  const key = String(branchId)
+  const num = Number(value)
+  if (!isFinite(num) || num < 0) return
+  if (num === CASH_FLOOR_DEFAULT) {
+    delete _data.branchCashFloors[key]
+  } else {
+    _data.branchCashFloors[key] = num
+  }
   persist()
 }

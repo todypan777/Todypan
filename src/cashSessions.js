@@ -10,7 +10,7 @@ import {
   onSnapshot,
   getDocs,
 } from 'firebase/firestore'
-import { addMovement, getBogotaDateStr } from './db'
+import { addMovement, getBogotaDateStr, setCashFloor } from './db'
 
 const sessionsCol = () => collection(firestoreDb, 'cashSessions')
 const sessionRef = (id) => doc(firestoreDb, 'cashSessions', id)
@@ -275,6 +275,18 @@ export async function approveSessionClose(sessionId, payload = {}) {
   }
 
   await updateDoc(sessionRef(sessionId), data)
+
+  // Si el admin decidió actualizar la base de la panaderia (porque bajó),
+  // persistir el cambio. nextCashFloor: si vino el valor, se aplica;
+  // si es null/undefined, no se toca la base.
+  if (payload.nextCashFloor != null && session.branchId != null) {
+    try {
+      setCashFloor(session.branchId, Number(payload.nextCashFloor))
+    } catch (e) {
+      console.warn('[cashSessions] No se pudo persistir nextCashFloor:', e)
+    }
+  }
+
   return { surplusMovementId, difference, expectedCash }
 }
 

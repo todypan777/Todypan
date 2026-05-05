@@ -28,6 +28,12 @@ export default defineConfig({
         // El handler de Firebase Auth (/__/auth/*) NO debe ser interceptado
         // por el SW: rompería el flujo de login con Google en PWA.
         navigateFallbackDenylist: [/^\/__\/auth\//],
+        // Activar la nueva versión del SW de inmediato (sin esperar a que se
+        // cierren todas las pestañas). Crítico para que un fix llegue a los
+        // celulares ya cacheados.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
       },
     }),
   ],

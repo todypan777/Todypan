@@ -6,6 +6,7 @@ import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchAllSales } from '../sales'
 import { watchCashierProducts } from '../products'
+import { watchPendingChangeRequests } from '../productChangeRequests'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
 
 /**
@@ -25,6 +26,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   const [pendingSessions, setPendingSessions] = useState([])
   const [allSales, setAllSales] = useState([])
   const [cashierProducts, setCashierProducts] = useState([])
+  const [changeRequests, setChangeRequests] = useState([])
 
   // Para popups automáticos
   const [closesPopup, setClosesPopup] = useState(null)
@@ -36,6 +38,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+  useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   const flaggedSales = useMemo(() => allSales.filter(s => s.status === 'flagged'), [allSales])
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
@@ -73,6 +76,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     orphanShortages.length +
     flaggedSales.length +
     cashierProducts.length +
+    changeRequests.length +
     overdueReminders.length +
     (needsAttendanceConfirm ? 1 : 0)
 

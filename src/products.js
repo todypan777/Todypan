@@ -72,6 +72,16 @@ export async function updateCashierProduct(id, updates) {
 }
 
 /**
+ * Actualización liviana de un producto cajera SIN tocar needsCostReview
+ * (para aplicar solicitudes de cambio aprobadas, donde el costo no cambió).
+ */
+export async function patchCashierProduct(id, updates) {
+  const clean = { ...updates }
+  delete clean.salePrice
+  await updateDoc(doc(firestoreDb, 'products', id), clean)
+}
+
+/**
  * Establece el precio de un producto cajera para una panadería específica.
  * Lee el doc, modifica el mapa y lo guarda. Si price es 0/null elimina la entrada.
  */

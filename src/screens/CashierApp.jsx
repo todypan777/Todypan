@@ -19,6 +19,7 @@ import { compressAndUpload } from '../utils/imagebb'
 import NewSale from './NewSale'
 import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import MissingPricesPanel from '../components/MissingPricesPanel'
+import ProductCatalogPanel from '../components/ProductCatalogPanel'
 import { watchOpenTabsForSession } from '../openTabs'
 import {
   watchCashierProducts,
@@ -49,7 +50,12 @@ export default function CashierApp({ authUser, userDoc }) {
       fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
       color: T.neutral[800],
     }}>
-      <CashierTopBar authUser={authUser} userDoc={userDoc} />
+      <CashierTopBar
+        authUser={authUser}
+        userDoc={userDoc}
+        session={mySession}
+        branches={getData().branches || []}
+      />
 
       {mySession ? (
         <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
@@ -82,8 +88,10 @@ function LoadingScreen({ label }) {
 // ──────────────────────────────────────────────────────────────
 // Top bar (avatar + nombre + cerrar sesión)
 // ──────────────────────────────────────────────────────────────
-function CashierTopBar({ authUser, userDoc }) {
+function CashierTopBar({ authUser, userDoc, session, branches }) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [catalogOpen, setCatalogOpen] = useState(false)
 
   return (
     <div style={{
@@ -111,7 +119,7 @@ function CashierTopBar({ authUser, userDoc }) {
       </div>
 
       <button
-        onClick={() => setConfirmSignOut(true)}
+        onClick={() => setMenuOpen(true)}
         style={{
           width: 36, height: 36, borderRadius: 999,
           background: 'transparent', border: 'none', padding: 0,
@@ -121,14 +129,111 @@ function CashierTopBar({ authUser, userDoc }) {
         <UserAvatar user={authUser} size={34} />
       </button>
 
+      {menuOpen && (
+        <AvatarMenu
+          authUser={authUser}
+          userDoc={userDoc}
+          onCancel={() => setMenuOpen(false)}
+          onOpenCatalog={() => { setMenuOpen(false); setCatalogOpen(true) }}
+          onSignOut={() => { setMenuOpen(false); setConfirmSignOut(true) }}
+        />
+      )}
+
       {confirmSignOut && (
         <SignOutModal
           onCancel={() => setConfirmSignOut(false)}
           onConfirm={async () => { await signOut() }}
         />
       )}
+
+      {catalogOpen && session && (
+        <ProductCatalogPanel
+          branchId={session.branchId}
+          branchName={session.branchName}
+          branches={branches}
+          cashierUid={authUser.uid}
+          cashierName={`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()}
+          onClose={() => setCatalogOpen(false)}
+        />
+      )}
     </div>
   )
+}
+
+function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onSignOut }) {
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 340, background: '#fff', borderRadius: 20,
+        padding: '20px 0 12px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+      }}>
+        {/* Header con avatar y nombre */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '0 22px 16px', borderBottom: `1px solid ${T.neutral[100]}`,
+        }}>
+          <UserAvatar user={authUser} size={44} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {userDoc?.nombre} {userDoc?.apellido}
+            </div>
+            <div style={{
+              fontSize: 11.5, color: T.neutral[500],
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {authUser?.email}
+            </div>
+          </div>
+        </div>
+
+        {/* Opciones */}
+        <button onClick={onOpenCatalog} style={menuItemStyle()}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <rect x="3" y="3" width="14" height="14" rx="2" stroke={T.neutral[600]} strokeWidth="1.6" fill="none"/>
+            <path d="M6 7 H14 M6 10 H14 M6 13 H11" stroke={T.neutral[600]} strokeWidth="1.4" strokeLinecap="round"/>
+          </svg>
+          <span style={{ flex: 1 }}>Ver catálogo</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 1 L8 6 L3 11" stroke={T.neutral[400]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+
+        <button onClick={onSignOut} style={menuItemStyle({ danger: true })}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M8 4 L4 4 L4 16 L8 16" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M11 7 L15 10 L11 13 M15 10 H7" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span style={{ flex: 1 }}>Cerrar sesión</span>
+        </button>
+
+        <div style={{ padding: '8px 12px 0' }}>
+          <button onClick={onCancel} style={{
+            width: '100%', padding: '10px', borderRadius: 12,
+            background: T.neutral[100], color: T.neutral[700],
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 13.5, fontWeight: 600,
+          }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+function menuItemStyle({ danger = false } = {}) {
+  return {
+    width: '100%', padding: '14px 22px',
+    background: 'transparent', border: 'none',
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 14.5, fontWeight: 600,
+    color: danger ? T.bad : T.neutral[800],
+    display: 'flex', alignItems: 'center', gap: 14,
+    textAlign: 'left',
+  }
 }
 
 function SignOutModal({ onCancel, onConfirm }) {

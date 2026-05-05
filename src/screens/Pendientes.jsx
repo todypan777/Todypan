@@ -19,7 +19,12 @@ import {
 } from '../cashExpenses'
 import { watchAllSales, watchSessionSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
-import { watchCashierProducts, deleteCashierProduct } from '../products'
+import { watchCashierProducts, deleteCashierProduct, patchCashierProduct } from '../products'
+import {
+  watchPendingChangeRequests,
+  approveChangeRequest,
+  rejectChangeRequest,
+} from '../productChangeRequests'
 import { addMovement, getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid } from '../db'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
@@ -32,6 +37,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [pendingSessions, setPendingSessions] = useState([])
   const [allSales, setAllSales] = useState([])
   const [cashierProducts, setCashierProducts] = useState([])
+  const [changeRequests, setChangeRequests] = useState([])
 
   useEffect(() => watchAllUsers(list => {
     setAllUsers(list)
@@ -40,6 +46,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+  useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   // Reminders y asistencia (legacy del admin) — recalcula al cambiar dataTick
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,6 +88,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     orphanShortages.length +
     flaggedSales.length +
     cashierProducts.length +
+    changeRequests.length +
     overdueReminders.length +
     (needsAttendanceConfirm ? 1 : 0)
 
@@ -218,6 +226,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
           products={cashierProducts}
           onOpenProducts={onOpenProducts}
         />
+      )}
+
+      {changeRequests.length > 0 && (
+        <ChangeRequestsSection requests={changeRequests} adminUid={authUser.uid} />
       )}
     </div>
   )
@@ -1111,6 +1123,212 @@ function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolve
           confirmDisabled={!resolution || busy}
           confirmColor={T.copper[500]}
         />
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Solicitudes de cambio de productos (cajera → admin)
+// ──────────────────────────────────────────────────────────────
+function ChangeRequestsSection({ requests, adminUid }) {
+  const [reviewing, setReviewing] = useState(null)
+  return (
+    <>
+      <Section title="Solicitudes de cambio en productos" count={requests.length} tone="copper">
+        {requests.map((r, i) => {
+          const nameChanged = (r.requestedName || '') !== (r.currentName || '')
+          const branches = getData().branches || []
+          const priceChanges = branches.filter(b => {
+            const cur = Number(r.currentPricesByBranch?.[String(b.id)] || 0)
+            const req = Number(r.requestedPricesByBranch?.[String(b.id)] || 0)
+            return cur !== req
+          })
+          return (
+            <div key={r.id} style={{
+              padding: '12px 14px',
+              borderBottom: i < requests.length - 1 ? `0.5px solid ${T.copper[100]}` : 'none',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {r.currentName || 'Producto'}
+                </div>
+                <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
+                  {nameChanged && <>Nombre · </>}
+                  {priceChanges.length > 0 && <>{priceChanges.length} precio{priceChanges.length === 1 ? '' : 's'}</>}
+                  {!nameChanged && priceChanges.length === 0 && 'Sin cambios'}
+                  {r.cashierName && ` · ${r.cashierName}`}
+                </div>
+              </div>
+              <button onClick={() => setReviewing(r)} style={btnSmall(T.copper[500])}>
+                Revisar
+              </button>
+            </div>
+          )
+        })}
+      </Section>
+
+      {reviewing && (
+        <ChangeRequestModal
+          request={reviewing}
+          adminUid={adminUid}
+          onCancel={() => setReviewing(null)}
+          onResolved={() => setReviewing(null)}
+        />
+      )}
+    </>
+  )
+}
+
+function ChangeRequestModal({ request, adminUid, onCancel, onResolved }) {
+  const branches = getData().branches || []
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const nameChanged = (request.requestedName || '') !== (request.currentName || '')
+
+  async function handleApprove() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      await approveChangeRequest(request, {
+        adminUid,
+        updateCashierProduct: patchCashierProduct,
+      })
+      onResolved()
+    } catch (err) {
+      console.error('[changeReq] approve failed:', err)
+      setError('No se pudo aprobar la solicitud.')
+      setBusy(false)
+    }
+  }
+
+  async function handleReject() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      await rejectChangeRequest(request.id, { adminUid })
+      onResolved()
+    } catch (err) {
+      console.error('[changeReq] reject failed:', err)
+      setError('No se pudo rechazar la solicitud.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Solicitud de cambio</ModalTitle>
+        <ModalSub>
+          {request.cashierName} · {request.branchName || 'Sin nombre'}
+        </ModalSub>
+
+        {/* Nombre */}
+        <div style={{
+          padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+            Nombre
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: 13.5, color: nameChanged ? T.neutral[500] : T.neutral[800],
+              textDecoration: nameChanged ? 'line-through' : 'none',
+            }}>
+              {request.currentName || '—'}
+            </span>
+            {nameChanged && (
+              <>
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke={T.copper[500]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span style={{ fontSize: 14, fontWeight: 700, color: T.copper[700] }}>
+                  {request.requestedName}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Precios */}
+        <div style={{
+          padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+            Precios por panadería
+          </div>
+          {branches.map(b => {
+            const cur = Number(request.currentPricesByBranch?.[String(b.id)] || 0)
+            const req = Number(request.requestedPricesByBranch?.[String(b.id)] || 0)
+            const changed = cur !== req
+            return (
+              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                <span style={{ flex: 1, fontSize: 12.5, color: T.neutral[600] }}>{b.name}</span>
+                <span style={{
+                  fontSize: 13, color: changed ? T.neutral[500] : T.neutral[800],
+                  textDecoration: changed ? 'line-through' : 'none',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {cur > 0 ? fmtCOP(cur) : '—'}
+                </span>
+                {changed && (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                      <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke={T.copper[500]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                    <span style={{
+                      fontSize: 14, fontWeight: 700, color: T.copper[700],
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {req > 0 ? fmtCOP(req) : '—'}
+                    </span>
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Motivo */}
+        {request.reason && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 10,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 12.5, color: T.neutral[700], fontStyle: 'italic',
+            marginBottom: 12, lineHeight: 1.5,
+          }}>
+            <b style={{ fontStyle: 'normal', color: T.warn }}>Motivo:</b> "{request.reason}"
+          </div>
+        )}
+
+        {error && <ErrorBox>{error}</ErrorBox>}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button onClick={handleReject} disabled={busy} style={{
+            flex: 1, padding: '12px', borderRadius: 12,
+            background: 'transparent', color: T.bad,
+            border: `1.5px solid ${T.bad}55`,
+            cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 700,
+          }}>
+            Rechazar
+          </button>
+          <button onClick={handleApprove} disabled={busy} style={{
+            flex: 1.4, padding: '12px', borderRadius: 12,
+            background: T.ok, color: '#fff',
+            border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 700,
+            boxShadow: `0 3px 10px ${T.ok}44`,
+            opacity: busy ? 0.7 : 1,
+          }}>
+            {busy ? 'Guardando...' : 'Aprobar cambio'}
+          </button>
+        </div>
       </ModalCard>
     </ModalOverlay>
   )

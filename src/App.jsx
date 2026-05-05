@@ -18,7 +18,6 @@ import Branches from './screens/Branches'
 import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
-import Users from './screens/Users'
 import Pendientes from './screens/Pendientes'
 import Deudores from './screens/Deudores'
 import Login from './screens/Login'
@@ -130,8 +129,9 @@ function AppShell() {
       setMoreSub('reminders')
       setTab('more')
     } else if (target === 'users') {
-      setMoreSub('users')
-      setTab('more')
+      // 'users' ahora vive dentro de Equipo (tab Pendientes/Inactivos)
+      setMoreSub(null)
+      setTab('team')
     } else if (target === 'pendientes') {
       setMoreSub('pendientes')
       setTab('more')
@@ -149,7 +149,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users', 'pendientes', 'deudores'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -259,18 +259,11 @@ function AppShell() {
           onRefresh={refresh}
         />
       )
-    } else if (moreSub === 'users') {
-      content = (
-        <Users
-          onBack={() => setMoreSub(null)}
-          onRefresh={refresh}
-        />
-      )
     } else if (moreSub === 'pendientes') {
       content = (
         <Pendientes
           onBack={() => setMoreSub(null)}
-          onOpenUsers={() => setMoreSub('users')}
+          onOpenUsers={() => { setMoreSub(null); setTab('team') }}
           onOpenProducts={() => setMoreSub('products')}
           onOpenReminders={() => setMoreSub('reminders')}
           onConfirmAttendance={() => setConfirmingDate(getBogotaDateStr())}

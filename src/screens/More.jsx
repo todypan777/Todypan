@@ -59,16 +59,6 @@ export default function More({ onOpen }) {
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M3 9 L10 4 L17 9 V16 H3 Z" stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"/><path d="M8 16 V12 H12 V16" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/></svg>
       ),
     },
-    {
-      id: 'users', label: 'Usuarios', desc: 'Cajeras y administradores',
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <circle cx="8" cy="7" r="3" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
-          <path d="M2 17 Q2 11 8 11 Q14 11 14 17" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
-          <path d="M15 5 V9 M13 7 H17" stroke={T.copper[600]} strokeWidth="1.6" strokeLinecap="round"/>
-        </svg>
-      ),
-    },
   ]
 
   async function handleSignOut() {

@@ -115,7 +115,7 @@ export default function Users({ onBack, onRefresh }) {
       )}
 
       {confirmDeactivate && (
-        <ConfirmModal
+        <ConfirmUserModal
           title={
             confirmDeactivate.action === 'reject'
               ? 'Rechazar solicitud'
@@ -238,7 +238,7 @@ function primaryBtn() {
 }
 
 // ─── Modal de aprobación ──────────────────────────────────────
-function ApprovalModal({ user, adminUid, onCancel, onDone }) {
+export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
   const [nombre, setNombre] = useState(user.nombre || '')
   const [apellido, setApellido] = useState(user.apellido || '')
   const [telefono, setTelefono] = useState('')
@@ -386,7 +386,7 @@ function ModalField({ label, value, onChange, placeholder, type = 'text', disabl
   )
 }
 
-function ConfirmModal({ title, message, confirmLabel, confirmColor, onCancel, onConfirm }) {
+export function ConfirmUserModal({ title, message, confirmLabel, confirmColor, onCancel, onConfirm }) {
   const [busy, setBusy] = useState(false)
   return (
     <ModalOverlay onClose={busy ? undefined : onCancel}>

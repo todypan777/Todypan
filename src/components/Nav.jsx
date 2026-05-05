@@ -67,13 +67,6 @@ const MORE_TABS = [
       <path d="M8 16 V12 H12 V16" stroke={c} strokeWidth="1.6" fill="none"/>
     </svg>
   )},
-  { id: 'users', label: 'Usuarios', icon: (c) => (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <circle cx="8" cy="7" r="3" stroke={c} strokeWidth="1.6" fill="none"/>
-      <path d="M2 17 Q2 11 8 11 Q14 11 14 17" stroke={c} strokeWidth="1.6" fill="none"/>
-      <path d="M15 5 V9 M13 7 H17" stroke={c} strokeWidth="1.6" strokeLinecap="round"/>
-    </svg>
-  )},
 ]
 
 // Para móvil (TabBar) — sigue usando "Más"

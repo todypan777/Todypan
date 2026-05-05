@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['Logo.png'],
+      includeAssets: ['Logo.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'TodyPan',
         short_name: 'TodyPan',
@@ -17,10 +17,14 @@ export default defineConfig({
         display: 'standalone',
         orientation: 'portrait',
         start_url: '/',
+        // Iconos del tamano correcto (generados con sharp desde Logo.png).
+        // Antes apuntaba al Logo.png 1024x1024 declarandolo como 192/512,
+        // lo cual hacia que Chrome rechazara el manifest y NO disparara
+        // beforeinstallprompt -> no salia el banner nativo de instalacion.
         icons: [
-          { src: 'Logo.png', sizes: '192x192', type: 'image/png' },
-          { src: 'Logo.png', sizes: '512x512', type: 'image/png' },
-          { src: 'Logo.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {

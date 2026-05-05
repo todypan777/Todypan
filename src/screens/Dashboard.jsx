@@ -73,7 +73,10 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
   return (
     <div style={{ paddingBottom: 110 }}>
       {/* Banner + popup de cosas pendientes para el admin */}
-      <PendingBanner onOpenUsers={() => onNav('users')} />
+      <PendingBanner
+        onOpenUsers={() => onNav('users')}
+        onOpenPendientes={() => onNav('pendientes')}
+      />
 
       {/* Alert banner */}
       {showConfirmBanner && (

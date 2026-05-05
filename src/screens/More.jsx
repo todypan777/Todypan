@@ -58,6 +58,15 @@ export default function More({ onOpen }) {
         </svg>
       ),
     },
+    {
+      id: 'pendientes', label: 'Pendientes', desc: 'Solicitudes, gastos y disputas por revisar',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M5 8 Q5 4 10 4 Q15 4 15 8 V12 L17 15 H3 L5 12 Z" stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+          <path d="M8 16 Q8 18 10 18 Q12 18 12 16" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+        </svg>
+      ),
+    },
   ]
 
   async function handleSignOut() {

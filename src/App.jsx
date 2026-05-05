@@ -18,6 +18,7 @@ import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
 import Users from './screens/Users'
+import Pendientes from './screens/Pendientes'
 import Login from './screens/Login'
 import {
   RegistrationForm,
@@ -129,6 +130,9 @@ function AppShell() {
     } else if (target === 'users') {
       setMoreSub('users')
       setTab('more')
+    } else if (target === 'pendientes') {
+      setMoreSub('pendientes')
+      setTab('more')
     } else {
       setTab(target)
     }
@@ -140,7 +144,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users', 'pendientes'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -255,6 +259,14 @@ function AppShell() {
         <Users
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
+        />
+      )
+    } else if (moreSub === 'pendientes') {
+      content = (
+        <Pendientes
+          onBack={() => setMoreSub(null)}
+          onOpenUsers={() => setMoreSub('users')}
+          onOpenProducts={() => setMoreSub('products')}
         />
       )
     } else {

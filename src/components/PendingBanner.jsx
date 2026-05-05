@@ -17,7 +17,7 @@ import { watchPendingExpenses } from '../cashExpenses'
  * La PRIMERA vez que el admin entra a la app en una sesión y hay usuarios
  * pendientes, abre un popup automático (decisión D13).
  */
-export default function PendingBanner({ onOpenUsers }) {
+export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
@@ -107,7 +107,7 @@ export default function PendingBanner({ onOpenUsers }) {
             boxShadow: 'none',
           }}>
             <button
-              onClick={onOpenUsers}
+              onClick={onOpenPendientes || onOpenUsers}
               style={{
                 width: '100%', padding: '14px 16px',
                 display: 'flex', alignItems: 'center', gap: 12,

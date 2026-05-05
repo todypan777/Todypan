@@ -125,6 +125,32 @@ export async function resolveOpeningDispute(sessionId, resolution, note, adminUi
 }
 
 /**
+ * Resuelve una falta de cierre (closingDiscrepancy con type='shortage').
+ * resolution:
+ *   - 'business_loss': el negocio asume la pérdida, no afecta cajera ni fondo
+ *   - 'covered_by_fund': se descuenta del fondo de sobras (admin debe verificar saldo antes)
+ *   - 'cashier_deduction': se le cobra a la cajera (crea entrada en cashierDeductions)
+ *
+ * payload:
+ *   - resolution
+ *   - note? (opcional)
+ *   - reviewedBy (uid admin)
+ *   - deductionId? (id en cashierDeductions, si resolution === 'cashier_deduction')
+ */
+export async function resolveClosingDiscrepancy(sessionId, payload) {
+  await updateDoc(sessionRef(sessionId), {
+    'closingDiscrepancy.status': payload.resolution === 'business_loss' ? 'absorbed'
+                                : payload.resolution === 'covered_by_fund' ? 'fundCovered'
+                                : 'deducted',
+    'closingDiscrepancy.resolution': payload.resolution,
+    'closingDiscrepancy.reviewNote': payload.note || null,
+    'closingDiscrepancy.reviewedBy': payload.reviewedBy,
+    'closingDiscrepancy.reviewedAt': serverTimestamp(),
+    'closingDiscrepancy.deductionId': payload.deductionId || null,
+  })
+}
+
+/**
  * Cierra un turno con cuadre + handover.
  * payload: {
  *   declaredClosingCash, expectedCash, difference, handover,
@@ -186,9 +212,9 @@ export function watchSessionsWithPendingReview(callback) {
 }
 
 /**
- * Calcula el saldo del fondo de sobras a partir de las sesiones cerradas.
- * Para Fase 2: solo suma sobras. En Fase 6 se restarán los retiros del fondo
- * (cuando admin lo use para cubrir una falta).
+ * Calcula el saldo del fondo de sobras a partir de las sesiones cerradas:
+ *  + sobras (closingDiscrepancy.type === 'surplus')
+ *  − faltas cubiertas con fondo (resolution === 'covered_by_fund')
  */
 export function watchSurplusFundBalance(callback) {
   const q = query(sessionsCol(), where('status', '==', 'closed'))
@@ -198,11 +224,16 @@ export function watchSurplusFundBalance(callback) {
       let balance = 0
       snap.docs.forEach(d => {
         const data = d.data()
-        if (data.closingDiscrepancy?.type === 'surplus') {
-          balance += Number(data.closingDiscrepancy.amount) || 0
+        const cd = data.closingDiscrepancy
+        if (!cd) return
+        if (cd.type === 'surplus') {
+          balance += Number(cd.amount) || 0
+        }
+        if (cd.resolution === 'covered_by_fund') {
+          balance -= Number(cd.amount) || 0
         }
       })
-      callback(balance)
+      callback(Math.max(0, balance))
     },
     err => {
       console.error('[cashSessions] watchSurplusFundBalance error:', err)

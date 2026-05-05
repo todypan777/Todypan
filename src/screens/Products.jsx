@@ -12,9 +12,44 @@ function calcProduct(p) {
   const costPerUnit = p.byPackage
     ? (p.unitsPerPackage > 0 ? p.packageCost / p.unitsPerPackage : 0)
     : p.packageCost
-  const profit = p.salePrice - costPerUnit
-  const margin = p.salePrice > 0 ? (profit / p.salePrice) * 100 : 0
-  return { costPerUnit, profit, margin }
+  // Precios por panadería: tomamos los valores definidos
+  const prices = Object.values(p.pricesByBranch || {}).map(Number).filter(n => n > 0)
+  const minPrice = prices.length > 0 ? Math.min(...prices) : 0
+  const maxPrice = prices.length > 0 ? Math.max(...prices) : 0
+  const avgPrice = prices.length > 0 ? prices.reduce((s, n) => s + n, 0) / prices.length : 0
+  // Margen y ganancia se calculan sobre el promedio (referencial)
+  const profit = avgPrice - costPerUnit
+  const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
+  return { costPerUnit, profit, margin, minPrice, maxPrice, avgPrice, prices }
+}
+
+// Lista de "Iglesia: $5.000 · Esquina: $5.500" — solo branches con precio
+function priceBreakdown(p) {
+  const branches = getData().branches || []
+  return branches
+    .map(b => {
+      const v = p.pricesByBranch?.[String(b.id)]
+      return v && Number(v) > 0 ? { name: b.name, price: Number(v) } : null
+    })
+    .filter(Boolean)
+}
+
+// Lista de panaderías que SÍ tienen precio
+function branchesWithPrice(p) {
+  const branches = getData().branches || []
+  return branches.filter(b => {
+    const v = p.pricesByBranch?.[String(b.id)]
+    return v && Number(v) > 0
+  })
+}
+
+// Lista de panaderías que NO tienen precio aún
+function branchesMissingPrice(p) {
+  const branches = getData().branches || []
+  return branches.filter(b => {
+    const v = p.pricesByBranch?.[String(b.id)]
+    return !v || Number(v) <= 0
+  })
 }
 
 function marginColor(m) {
@@ -52,6 +87,66 @@ function MarginBadge({ margin }) {
     }}>
       {margin >= 0 ? '+' : ''}{margin.toFixed(1)}%
     </span>
+  )
+}
+
+// ── Precios por panadería (compacto inline para tabla desktop) ─
+function PricesByBranchInline({ product }) {
+  const breakdown = priceBreakdown(product)
+  const missing = branchesMissingPrice(product)
+  if (breakdown.length === 0) {
+    return (
+      <span style={{ fontSize: 12, color: T.copper[700], fontStyle: 'italic' }}>
+        Sin precios — la cajera los pondrá al usar
+      </span>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+      {breakdown.map(b => (
+        <div key={b.name} style={{ fontSize: 12, fontWeight: 600, color: T.neutral[700] }}>
+          <span style={{ color: T.neutral[500] }}>{b.name}: </span>
+          <span style={{ color: T.neutral[900], fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(b.price)}
+          </span>
+        </div>
+      ))}
+      {missing.length > 0 && (
+        <div style={{ fontSize: 11, color: T.copper[700], fontStyle: 'italic', marginTop: 2 }}>
+          falta en {missing.map(b => b.name).join(', ')}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Precios por panadería (bloque para card móvil) ──────────────
+function PricesByBranchBlock({ product }) {
+  const breakdown = priceBreakdown(product)
+  const missing = branchesMissingPrice(product)
+  if (breakdown.length === 0) {
+    return (
+      <div style={{ fontSize: 12, color: T.copper[700], textAlign: 'center', fontStyle: 'italic' }}>
+        Sin precios — la cajera los pondrá al usar
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {breakdown.map(b => (
+        <div key={b.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
+          <span style={{ color: T.neutral[600], fontWeight: 600 }}>{b.name}</span>
+          <span style={{ color: T.neutral[900], fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(b.price)}
+          </span>
+        </div>
+      ))}
+      {missing.length > 0 && (
+        <div style={{ fontSize: 11, color: T.copper[700], fontStyle: 'italic', marginTop: 2 }}>
+          Falta precio en {missing.map(b => b.name).join(', ')}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -230,8 +325,17 @@ export default function Products({ products, onBack, onRefresh }) {
                       {p.name}
                     </div>
                     <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                      Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
-                      {p.createdByName && ` · por ${p.createdByName}`}
+                      {priceBreakdown(p).map(b => (
+                        <span key={b.name} style={{ marginRight: 8 }}>
+                          {b.name}: <b style={{ color: T.neutral[700] }}>{fmtCOP(b.price)}</b>
+                        </span>
+                      ))}
+                      {priceBreakdown(p).length === 0 && (
+                        <span style={{ fontStyle: 'italic' }}>sin precios todavía</span>
+                      )}
+                      {p.createdByName && (
+                        <div style={{ marginTop: 1 }}>por {p.createdByName}</div>
+                      )}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -443,13 +547,12 @@ export default function Products({ products, onBack, onRefresh }) {
 // ── Vista tabla (desktop) ──────────────────────────────────────
 function ProductTable({ products, onEdit, onDelete }) {
   const cols = [
-    { label: 'Producto',       flex: 2.5 },
-    { label: 'Sucursal',       flex: 1   },
-    { label: 'Costo/unidad',   flex: 1.2 },
-    { label: 'Precio venta',   flex: 1.2 },
-    { label: 'Ganancia/u',     flex: 1.2 },
-    { label: 'Margen',         flex: 1   },
-    { label: '',               flex: 0.7 },
+    { label: 'Producto',          flex: 2.5 },
+    { label: 'Costo/unidad',      flex: 1.2 },
+    { label: 'Precios por panadería', flex: 2.2 },
+    { label: 'Ganancia/u',        flex: 1.2 },
+    { label: 'Margen',            flex: 1   },
+    { label: '',                  flex: 0.7 },
   ]
 
   return (
@@ -507,11 +610,6 @@ function ProductTable({ products, onEdit, onDelete }) {
               </div>
             </div>
 
-            {/* Sucursal */}
-            <div style={{ flex: 1, paddingRight: 8 }}>
-              <BranchTag branch={p.branch}/>
-            </div>
-
             {/* Costo/u */}
             <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
@@ -519,11 +617,9 @@ function ProductTable({ products, onEdit, onDelete }) {
               </span>
             </div>
 
-            {/* Precio venta */}
-            <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
-                {fmtCOP(p.salePrice)}
-              </span>
+            {/* Precios por panaderia */}
+            <div style={{ flex: 2.2, textAlign: 'right', paddingRight: 8 }}>
+              <PricesByBranchInline product={p}/>
             </div>
 
             {/* Ganancia/u */}
@@ -591,7 +687,6 @@ function ProductCards({ products, onEdit, onDelete }) {
                     {p.name}
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center' }}>
-                    <BranchTag branch={p.branch}/>
                     {p.byPackage && (
                       <span style={{ fontSize: 11, color: T.neutral[400] }}>
                         Paq × {p.unitsPerPackage}u
@@ -603,18 +698,21 @@ function ProductCards({ products, onEdit, onDelete }) {
               <MarginBadge margin={p.margin}/>
             </div>
 
-            {/* Fila 2: métricas en grid */}
+            {/* Fila 2: métricas + precios por panadería */}
             <div style={{
-              display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-              gap: 8, background: T.neutral[50], borderRadius: 10, padding: '10px 12px',
+              background: T.neutral[50], borderRadius: 10, padding: '10px 12px',
             }}>
-              <MetricCell label="Costo/u" value={fmtCOP(p.costPerUnit)} color={T.neutral[600]}/>
-              <MetricCell label="Precio" value={fmtCOP(p.salePrice)} color={T.neutral[800]}/>
-              <MetricCell
-                label="Ganancia/u"
-                value={(p.profit >= 0 ? '+' : '') + fmtCOP(p.profit)}
-                color={p.profit >= 0 ? T.ok : T.bad}
-              />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 6 }}>
+                <MetricCell label="Costo/u" value={fmtCOP(p.costPerUnit)} color={T.neutral[600]}/>
+                <MetricCell
+                  label="Ganancia/u"
+                  value={(p.profit >= 0 ? '+' : '') + fmtCOP(p.profit)}
+                  color={p.profit >= 0 ? T.ok : T.bad}
+                />
+              </div>
+              <div style={{ borderTop: `0.5px solid ${T.neutral[200]}`, paddingTop: 8 }}>
+                <PricesByBranchBlock product={p}/>
+              </div>
             </div>
 
             {/* Fila 3: si viene en paquete */}
@@ -669,32 +767,55 @@ function MetricCell({ label, value, color }) {
 
 // ── Formulario agregar / editar ────────────────────────────────
 function ProductForm({ initial, isEdit, onClose, onSave }) {
+  const branches = getData().branches || []
   const [name,            setName]            = useState(initial?.name || '')
   const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? true)
   const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null ? String(initial.packageCost) : '')
   const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null ? String(initial.unitsPerPackage) : '')
-  const [salePrice,       setSalePrice]        = useState(initial?.salePrice != null ? String(initial.salePrice) : '')
-  const [branch,          setBranch]           = useState(initial?.branch ?? 'both')
   const [notes,           setNotes]            = useState(initial?.notes || '')
+  // Precios por panadería: estado como mapa { [branchId]: stringValue }
+  const [priceInputs, setPriceInputs] = useState(() => {
+    const init = {}
+    branches.forEach(b => {
+      const v = initial?.pricesByBranch?.[String(b.id)]
+      init[String(b.id)] = v && Number(v) > 0 ? String(v) : ''
+    })
+    return init
+  })
+
+  function setPriceFor(bid, val) {
+    setPriceInputs(prev => ({ ...prev, [String(bid)]: val }))
+  }
 
   const pc = Number(packageCost) || 0
   const up = Number(unitsPerPackage) || 1
-  const sp = Number(salePrice) || 0
   const costPerUnit = byPackage ? (up > 0 ? pc / up : 0) : pc
-  const profit = sp - costPerUnit
-  const margin = sp > 0 ? (profit / sp) * 100 : 0
 
-  const canSave = name.trim() && pc > 0 && sp > 0 && (!byPackage || up > 0)
+  // Precios numéricos válidos
+  const definedPrices = Object.values(priceInputs).map(Number).filter(n => n > 0)
+  const avgPrice = definedPrices.length > 0
+    ? definedPrices.reduce((s, n) => s + n, 0) / definedPrices.length
+    : 0
+  const profit = avgPrice - costPerUnit
+  const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
+
+  // Solo requiere nombre + costo. Los precios son opcionales (cajera los pone al usar).
+  const canSave = name.trim() && pc > 0 && (!byPackage || up > 0)
 
   function handleSave() {
     if (!canSave) return
+    // Construir pricesByBranch limpio (solo entradas con valor > 0)
+    const pricesByBranch = {}
+    Object.entries(priceInputs).forEach(([bid, val]) => {
+      const num = Number(val)
+      if (num > 0) pricesByBranch[bid] = num
+    })
     const data = {
       name: name.trim(),
       byPackage,
       packageCost: pc,
       unitsPerPackage: byPackage ? up : 1,
-      salePrice: sp,
-      branch,
+      pricesByBranch,
       notes: notes.trim(),
     }
     if (isEdit) {
@@ -778,21 +899,37 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       )}
 
-      {/* Precio de venta */}
+      {/* Precios por panadería */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-          Precio de venta por unidad ($)
+          Precio de venta por panadería ($)
         </div>
-        <input
-          type="number" min="0" value={salePrice}
-          onChange={e => setSalePrice(e.target.value)}
-          placeholder="Ej: 2500"
-          style={inputStyle}
-        />
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginBottom: 8, lineHeight: 1.4 }}>
+          Si dejas alguno vacío, la cajera de esa panadería pondrá el precio la primera vez que lo venda.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {branches.map(b => (
+            <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                flex: 1, fontSize: 13, fontWeight: 600, color: T.neutral[700],
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {b.name}
+              </div>
+              <input
+                type="number" min="0"
+                value={priceInputs[String(b.id)] || ''}
+                onChange={e => setPriceFor(b.id, e.target.value)}
+                placeholder="Precio o vacío"
+                style={{ ...inputStyle, flex: 1, maxWidth: 180 }}
+              />
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Preview de ganancia en tiempo real */}
-      {pc > 0 && sp > 0 && (
+      {pc > 0 && avgPrice > 0 && (
         <div style={{
           marginBottom: 16, padding: '12px 14px', borderRadius: 12,
           background: marginBg(margin),
@@ -828,24 +965,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       )}
 
-      {/* Sucursal */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-          Panadería
-        </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {[{ v: 'both', l: 'Ambas' }, ...getData().branches.map(b => ({ v: b.id, l: b.name }))].map(b => (
-            <button key={b.v} onClick={() => setBranch(b.v)} style={{
-              flex: 1, padding: '9px', borderRadius: 10, border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-              background: branch === b.v ? T.copper[500] : T.neutral[100],
-              color: branch === b.v ? '#fff' : T.neutral[700],
-              transition: 'background 0.15s',
-            }}>{b.l}</button>
-          ))}
-        </div>
-      </div>
-
       {/* Notas opcionales */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
@@ -877,41 +996,60 @@ const inputStyle = {
 
 // ── Modal: Aceptar producto creado por cajera ─────────────────
 function AcceptCashierProductModal({ product, onCancel, onDone }) {
-  const [salePrice, setSalePrice] = useState(String(product.salePrice || ''))
+  const branches = getData().branches || []
+  // Pre-llenar precios con lo que ya tenga el producto cajera
+  const [priceInputs, setPriceInputs] = useState(() => {
+    const init = {}
+    branches.forEach(b => {
+      const v = product?.pricesByBranch?.[String(b.id)]
+      init[String(b.id)] = v && Number(v) > 0 ? String(v) : ''
+    })
+    return init
+  })
   const [byPackage, setByPackage] = useState(false)
   const [packageCost, setPackageCost] = useState('')
   const [unitsPerPackage, setUnitsPerPackage] = useState('')
   const [unitCost, setUnitCost] = useState('')
-  const [branch, setBranch] = useState(product.branch || 'both')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  // Cálculo del costo final por unidad y margen
-  const sale = Number(salePrice) || 0
+  function setPriceFor(bid, val) {
+    setPriceInputs(prev => ({ ...prev, [String(bid)]: val.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '') }))
+  }
+
+  // Costo unitario
   const cost = byPackage
     ? (Number(unitsPerPackage) > 0 ? (Number(packageCost) || 0) / Number(unitsPerPackage) : 0)
     : (Number(unitCost) || 0)
-  const profit = sale - cost
-  const margin = sale > 0 ? (profit / sale) * 100 : 0
 
-  const valid = sale > 0 && (
-    byPackage
-      ? (Number(packageCost) > 0 && Number(unitsPerPackage) > 0)
-      : Number(unitCost) > 0
-  )
+  const definedPrices = Object.values(priceInputs).map(Number).filter(n => n > 0)
+  const avgPrice = definedPrices.length > 0
+    ? definedPrices.reduce((s, n) => s + n, 0) / definedPrices.length
+    : 0
+  const profit = avgPrice - cost
+  const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
+
+  // Solo requiere costo. Los precios son opcionales (pueden quedar para que cajera los ponga).
+  const valid = byPackage
+    ? (Number(packageCost) > 0 && Number(unitsPerPackage) > 0)
+    : Number(unitCost) > 0
 
   async function handleAccept() {
     if (!valid || busy) return
     setBusy(true); setError(null)
     try {
+      const pricesByBranch = {}
+      Object.entries(priceInputs).forEach(([bid, val]) => {
+        const num = Number(val)
+        if (num > 0) pricesByBranch[bid] = num
+      })
       // 1. Crear el producto en /todypan/data.products (catálogo del admin)
       addProduct({
         name: product.name,
-        salePrice: sale,
+        pricesByBranch,
         packageCost: byPackage ? Number(packageCost) : Number(unitCost),
         byPackage,
         unitsPerPackage: byPackage ? Number(unitsPerPackage) : 0,
-        branch,
       })
       // 2. Eliminar el producto cajera (se "promovió")
       await deleteCashierProduct(product.id)
@@ -941,19 +1079,34 @@ function AcceptCashierProductModal({ product, onCancel, onDone }) {
         </div>
       </div>
 
-      {/* Precio de venta */}
-      <label style={fieldLabel()}>Precio de venta</label>
-      <div style={moneyInputWrap()}>
-        <span style={moneyPrefix()}>$</span>
-        <input
-          type="text"
-          inputMode="numeric"
-          value={salePrice === '0' ? '' : salePrice}
-          onChange={e => setSalePrice(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
-          placeholder="0"
-          disabled={busy}
-          style={moneyInput()}
-        />
+      {/* Precios por panadería */}
+      <label style={fieldLabel()}>Precios por panadería</label>
+      <div style={{ fontSize: 11.5, color: T.neutral[500], marginBottom: 8, lineHeight: 1.4 }}>
+        Si dejas alguno vacío, la cajera de esa panadería pondrá el precio la primera vez que lo venda.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+        {branches.map(b => (
+          <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              flex: 1, fontSize: 13, fontWeight: 600, color: T.neutral[700],
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {b.name}
+            </div>
+            <div style={{ ...moneyInputWrap(), flex: 1, maxWidth: 180, marginBottom: 0 }}>
+              <span style={moneyPrefix()}>$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={priceInputs[String(b.id)] || ''}
+                onChange={e => setPriceFor(b.id, e.target.value)}
+                placeholder="0"
+                disabled={busy}
+                style={moneyInput()}
+              />
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Toggle modo de costo */}
@@ -1019,27 +1172,8 @@ function AcceptCashierProductModal({ product, onCancel, onDone }) {
         </>
       )}
 
-      {/* Sucursal */}
-      <label style={fieldLabel()}>Sucursal</label>
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-        {[
-          { id: 'both', label: 'Ambas' },
-          { id: 1, label: 'Iglesia' },
-          { id: 2, label: 'Esquina' },
-        ].map(b => (
-          <button
-            key={b.id}
-            onClick={() => setBranch(b.id)}
-            disabled={busy}
-            style={chipBtn(branch === b.id)}
-          >
-            {b.label}
-          </button>
-        ))}
-      </div>
-
       {/* Resumen de margen */}
-      {valid && (
+      {valid && avgPrice > 0 && (
         <div style={{
           padding: '10px 12px', borderRadius: 10,
           background: T.neutral[50], marginBottom: 14,

@@ -1,6 +1,7 @@
 import { firestoreDb } from './firebase'
 import {
   doc,
+  getDoc,
   collection,
   addDoc,
   updateDoc,
@@ -30,17 +31,20 @@ export function watchCashierProducts(callback) {
 }
 
 /**
- * Crea un producto al vuelo (al hacer una venta) con el precio que la cajera
- * digitó. Queda flagged needsCostReview: true para que el admin lo complete.
+ * Crea un producto al vuelo desde el POS de una cajera. Solo conoce el precio
+ * de SU panadería, así que se guarda como pricesByBranch[branchId] = price.
+ * Otras cajeras en otra panadería verán el producto sin precio y se les pedirá
+ * el suyo la primera vez.
  */
-export async function createCashierProduct({ name, salePrice, createdByUid, createdByName }) {
+export async function createCashierProduct({ name, salePrice, branchId, createdByUid, createdByName }) {
+  const key = String(branchId)
   const data = {
     name: name.trim(),
     normalizedName: name.trim().toLowerCase(),
-    salePrice: Number(salePrice) || 0,
+    pricesByBranch: { [key]: Number(salePrice) || 0 },
     packageCost: 0,           // sin costo aún — admin lo completa
     byPackage: false,
-    branch: 'both',           // por defecto
+    branch: 'both',           // disponible en cualquier panadería que tenga precio
     createdByCashier: true,
     needsCostReview: true,
     createdByUid: createdByUid || null,
@@ -58,24 +62,62 @@ export async function deleteCashierProduct(id) {
 
 /** Solo admin: actualiza precio/costo de un producto cajera. */
 export async function updateCashierProduct(id, updates) {
+  const clean = { ...updates }
+  delete clean.salePrice  // bloquear campo legacy
   await updateDoc(doc(firestoreDb, 'products', id), {
-    ...updates,
+    ...clean,
     needsCostReview: false,  // ya fue revisado
     reviewedAt: serverTimestamp(),
   })
 }
 
 /**
+ * Establece el precio de un producto cajera para una panadería específica.
+ * Lee el doc, modifica el mapa y lo guarda. Si price es 0/null elimina la entrada.
+ */
+export async function setCashierProductPriceForBranch(id, branchId, price) {
+  const ref = doc(firestoreDb, 'products', id)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) return
+  const data = snap.data() || {}
+  const key = String(branchId)
+  const next = { ...(data.pricesByBranch || {}) }
+  const num = Number(price)
+  if (!num || num <= 0) {
+    delete next[key]
+  } else {
+    next[key] = num
+  }
+  await updateDoc(ref, { pricesByBranch: next })
+}
+
+/** Devuelve el precio de un producto en una panadería, o null si no está. */
+export function getProductPrice(product, branchId) {
+  if (!product) return null
+  const key = String(branchId)
+  const v = product.pricesByBranch?.[key]
+  return v && Number(v) > 0 ? Number(v) : null
+}
+
+/** True si el producto tiene precio definido para esa panadería. */
+export function hasProductPrice(product, branchId) {
+  return getProductPrice(product, branchId) !== null
+}
+
+/**
  * Une el catálogo legacy del admin (en /todypan/data.products) con los
  * productos creados por cajeras (en /products/{id}). Devuelve una lista
  * unificada con shape consistente para el buscador.
+ *
+ * Cada item incluye `pricesByBranch` para que el POS pueda decidir si el
+ * producto tiene precio en la panadería activa o si toca preguntarlo.
  */
 export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
   const adminList = adminProducts.map(p => ({
     id: p.id,
     source: 'admin',
     name: p.name,
-    salePrice: Number(p.salePrice) || 0,
+    pricesByBranch: p.pricesByBranch || {},
     branch: p.branch,
     createdByCashier: false,
     needsCostReview: false,
@@ -84,7 +126,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     id: p.id,
     source: 'cashier',
     name: p.name,
-    salePrice: Number(p.salePrice) || 0,
+    pricesByBranch: p.pricesByBranch || {},
     branch: p.branch || 'both',
     createdByCashier: true,
     needsCostReview: !!p.needsCostReview,

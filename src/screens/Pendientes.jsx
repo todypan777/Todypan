@@ -271,7 +271,20 @@ function CashierProductsSection({ products, onOpenProducts }) {
                 {p.name}
               </div>
               <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
+                {(() => {
+                  const branches = getData().branches || []
+                  const items = branches
+                    .map(b => {
+                      const v = p.pricesByBranch?.[String(b.id)]
+                      return v && Number(v) > 0
+                        ? `${b.name}: ${fmtCOP(Number(v))}`
+                        : null
+                    })
+                    .filter(Boolean)
+                  return items.length > 0
+                    ? items.join(' · ')
+                    : <span style={{ fontStyle: 'italic' }}>sin precios todavía</span>
+                })()}
                 {p.createdByName && ` · por ${p.createdByName}`}
               </div>
             </div>

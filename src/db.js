@@ -77,6 +77,17 @@ function migrate(d) {
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
   if (!d.products) d.products = []
+  // Migracion a precios por panaderia (modelo nuevo): se borra salePrice
+  // antiguo asi cada cajera ingresa el precio real la primera vez en su
+  // panaderia. Si un producto YA tiene pricesByBranch, no se toca.
+  if (!d._pricesByBranchMigrated) {
+    d.products = (d.products || []).map(p => {
+      if (p.pricesByBranch && typeof p.pricesByBranch === 'object') return p
+      const { salePrice, ...rest } = p
+      return { ...rest, pricesByBranch: {} }
+    })
+    d._pricesByBranchMigrated = true
+  }
   // Migrar colorKey a branches existentes sin color
   const defaultColors = ['copper', 'sage']
   d.branches = d.branches.map((b, i) => b.colorKey ? b : { ...b, colorKey: defaultColors[i] || 'copper' })
@@ -397,23 +408,67 @@ export function toggleReminderPaid(id) {
 }
 
 // ─── Productos ────────────────────────────────────────────────
+// Modelo: { id, name, pricesByBranch: { [branchId]: number }, packageCost,
+//          byPackage, branch, notes, active }
+// pricesByBranch puede estar vacio: significa que el producto existe en el
+// catalogo pero ninguna cajera ha definido su precio aun. Al usarlo por primera
+// vez en una panaderia se le pide a la cajera que ingrese el precio.
+
 export function getProducts() { return _data.products }
 
 export function addProduct(prod) {
   const id = 'p' + Date.now()
-  _data.products = [..._data.products, { id, active: true, ...prod }]
+  const safe = { ...prod }
+  // Asegurar que pricesByBranch existe como objeto
+  if (!safe.pricesByBranch || typeof safe.pricesByBranch !== 'object') {
+    safe.pricesByBranch = {}
+  }
+  // Eliminar campo legacy salePrice si llegara
+  delete safe.salePrice
+  _data.products = [..._data.products, { id, active: true, ...safe }]
   persist()
   return id
 }
 
 export function updateProduct(id, updates) {
-  _data.products = _data.products.map(p => p.id === id ? { ...p, ...updates } : p)
+  const clean = { ...updates }
+  // Bloquear escritura del campo legacy
+  delete clean.salePrice
+  _data.products = _data.products.map(p => p.id === id ? { ...p, ...clean } : p)
   persist()
 }
 
 export function deleteProduct(id) {
   _data.products = _data.products.filter(p => p.id !== id)
   persist()
+}
+
+/**
+ * Establece el precio de un producto admin para una panaderia especifica.
+ * Si price es null/undefined/0, elimina el precio para esa panaderia.
+ */
+export function setProductPriceForBranch(productId, branchId, price) {
+  const key = String(branchId)
+  _data.products = _data.products.map(p => {
+    if (p.id !== productId) return p
+    const next = { ...(p.pricesByBranch || {}) }
+    const num = Number(price)
+    if (!num || num <= 0) {
+      delete next[key]
+    } else {
+      next[key] = num
+    }
+    return { ...p, pricesByBranch: next }
+  })
+  persist()
+}
+
+/** Devuelve el precio de un producto en una panaderia, o null si no esta definido. */
+export function getProductPriceForBranch(product, branchId) {
+  if (!product) return null
+  const key = String(branchId)
+  const v = product.pricesByBranch?.[key]
+  return v && Number(v) > 0 ? Number(v) : null
 }
 
 // ─── Categorías ───────────────────────────────────────────────

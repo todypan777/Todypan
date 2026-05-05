@@ -973,13 +973,19 @@ function EditSaleModal({ sale, onCancel, onSaved }) {
     setItems(prev => prev.filter(it => it.key !== key))
   }
   function addItem(product) {
+    const price = product.pricesByBranch?.[String(sale.branchId)]
+    if (!price || Number(price) <= 0) {
+      setError(`"${product.name}" no tiene precio definido en esta panadería. Asígnale uno en Productos antes de agregarlo.`)
+      setSearchOpen(false)
+      return
+    }
     setItems(prev => [...prev, {
       key: `added_${Date.now()}`,
       productId: product.id,
       source: product.source,
       name: product.name,
       qty: 1,
-      unitPrice: product.salePrice,
+      unitPrice: Number(price),
     }])
     setSearchOpen(false)
   }
@@ -1151,6 +1157,7 @@ function EditSaleModal({ sale, onCancel, onSaved }) {
             </button>
           ) : (
             <ProductSearch
+              branchId={sale.branchId}
               onPick={addItem}
               onCancel={() => setSearchOpen(false)}
             />
@@ -1232,7 +1239,7 @@ function qtyBtnStyle() {
 }
 
 // Buscador de productos para agregar a venta editada
-function ProductSearch({ onPick, onCancel }) {
+function ProductSearch({ branchId, onPick, onCancel }) {
   const [query, setQuery] = useState('')
   const [cashierProducts, setCashierProducts] = useState([])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
@@ -1278,28 +1285,40 @@ function ProductSearch({ onPick, onCancel }) {
             Sin resultados
           </div>
         ) : (
-          filtered.map((p, i) => (
-            <button
-              key={p.source + '_' + p.id}
-              onClick={() => onPick(p)}
-              style={{
-                width: '100%', padding: '8px 10px',
-                background: 'transparent', border: 'none',
-                borderBottom: i < filtered.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-              }}
-            >
-              <span style={{
-                fontSize: 12.5, color: T.neutral[800], fontWeight: 600,
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                flex: 1,
-              }}>{p.name}</span>
-              <span style={{ fontSize: 12, color: T.neutral[600], fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                {fmtCOP(p.salePrice)}
-              </span>
-            </button>
-          ))
+          filtered.map((p, i) => {
+            const priceHere = Number(p.pricesByBranch?.[String(branchId)]) || 0
+            const noPrice = priceHere <= 0
+            return (
+              <button
+                key={p.source + '_' + p.id}
+                onClick={() => onPick(p)}
+                disabled={noPrice}
+                style={{
+                  width: '100%', padding: '8px 10px',
+                  background: 'transparent', border: 'none',
+                  borderBottom: i < filtered.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                  cursor: noPrice ? 'not-allowed' : 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+                  opacity: noPrice ? 0.5 : 1,
+                }}
+              >
+                <span style={{
+                  fontSize: 12.5, color: T.neutral[800], fontWeight: 600,
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  flex: 1,
+                }}>{p.name}</span>
+                {noPrice ? (
+                  <span style={{ fontSize: 11, color: T.copper[700], fontStyle: 'italic', flexShrink: 0 }}>
+                    sin precio aquí
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 12, color: T.neutral[600], fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                    {fmtCOP(priceHere)}
+                  </span>
+                )}
+              </button>
+            )
+          })
         )}
       </div>
     </div>

@@ -2,8 +2,14 @@ import { useEffect, useMemo, useState, useRef } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
-import { getData } from '../db'
-import { watchCashierProducts, mergeProductCatalogs, createCashierProduct } from '../products'
+import { getData, setProductPriceForBranch } from '../db'
+import {
+  watchCashierProducts,
+  mergeProductCatalogs,
+  createCashierProduct,
+  setCashierProductPriceForBranch,
+  getProductPrice,
+} from '../products'
 import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
 import { createSale } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
@@ -31,6 +37,10 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialName, setCreateInitialName] = useState('')
   const [paymentOpen, setPaymentOpen] = useState(false)
+  // Modal "primera vez": producto que falta precio en la panaderia activa
+  const [missingPriceProduct, setMissingPriceProduct] = useState(null)
+
+  const branchId = session.branchId
 
   const total = cart.reduce((s, it) => s + it.qty * it.unitPrice, 0)
 
@@ -45,7 +55,7 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
   const exactMatch = filtered.some(p => normalizeName(p.name) === normalizeName(query))
   const showCreateOption = query.trim().length >= 2 && !exactMatch
 
-  function addToCart(product) {
+  function addProductToCart(product, unitPrice) {
     setCart(prev => {
       const existing = prev.findIndex(it => it.productId === product.id && it.source === product.source)
       if (existing >= 0) {
@@ -61,11 +71,37 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
           source: product.source,
           name: product.name,
           qty: 1,
-          unitPrice: product.salePrice,
+          unitPrice: Number(unitPrice) || 0,
         },
       ]
     })
     setQuery('')
+  }
+
+  function handleSelectProduct(product) {
+    const price = getProductPrice(product, branchId)
+    if (price !== null) {
+      addProductToCart(product, price)
+    } else {
+      // Primera vez en esta panaderia: pedir precio
+      setMissingPriceProduct(product)
+    }
+  }
+
+  async function handleConfirmFirstTimePrice(price) {
+    const product = missingPriceProduct
+    if (!product || !price || Number(price) <= 0) return
+    const num = Number(price)
+    try {
+      if (product.source === 'admin') {
+        setProductPriceForBranch(product.id, branchId, num)
+      } else if (product.source === 'cashier') {
+        await setCashierProductPriceForBranch(product.id, branchId, num)
+      }
+      addProductToCart(product, num)
+    } finally {
+      setMissingPriceProduct(null)
+    }
   }
 
   function addInlineToCart({ name, salePrice, productId }) {
@@ -149,37 +185,51 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
                 Sin resultados
               </div>
             )}
-            {filtered.map((p, i) => (
-              <button
-                key={p.source + '_' + p.id}
-                onClick={() => addToCart(p)}
-                style={{
-                  width: '100%', padding: '12px 16px',
-                  background: 'transparent', border: 'none',
-                  borderBottom: i < filtered.length - 1 || showCreateOption ? `0.5px solid ${T.neutral[100]}` : 'none',
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 14, fontWeight: 600, color: T.neutral[900],
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {p.name}
+            {filtered.map((p, i) => {
+              const priceHere = getProductPrice(p, branchId)
+              const needsPrice = priceHere === null
+              return (
+                <button
+                  key={p.source + '_' + p.id}
+                  onClick={() => handleSelectProduct(p)}
+                  style={{
+                    width: '100%', padding: '12px 16px',
+                    background: 'transparent', border: 'none',
+                    borderBottom: i < filtered.length - 1 || showCreateOption ? `0.5px solid ${T.neutral[100]}` : 'none',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 14, fontWeight: 600, color: T.neutral[900],
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {p.name}
+                    </div>
+                    {p.needsCostReview && (
+                      <div style={{ fontSize: 10.5, color: T.warn, marginTop: 2 }}>
+                        pendiente de revisión por admin
+                      </div>
+                    )}
                   </div>
-                  {p.needsCostReview && (
-                    <div style={{ fontSize: 10.5, color: T.warn, marginTop: 2 }}>
-                      pendiente de revisión por admin
+                  {needsPrice ? (
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: T.copper[700],
+                      background: T.copper[50], padding: '4px 10px', borderRadius: 999,
+                      letterSpacing: 0.3, flexShrink: 0,
+                    }}>
+                      Poner precio
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                      {fmtCOP(priceHere)}
                     </div>
                   )}
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                  {fmtCOP(p.salePrice)}
-                </div>
-              </button>
-            ))}
+                </button>
+              )
+            })}
             {showCreateOption && (
               <button
                 onClick={() => { setCreateInitialName(query); setCreateOpen(true) }}
@@ -272,11 +322,22 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
           initialName={createInitialName}
           authUser={authUser}
           userDoc={userDoc}
+          branchId={branchId}
+          branchName={session.branchName}
           onCancel={() => setCreateOpen(false)}
           onCreated={({ name, salePrice, productId }) => {
             addInlineToCart({ name, salePrice, productId })
             setCreateOpen(false)
           }}
+        />
+      )}
+
+      {missingPriceProduct && (
+        <FirstTimePriceModal
+          product={missingPriceProduct}
+          branchName={session.branchName}
+          onCancel={() => setMissingPriceProduct(null)}
+          onConfirm={handleConfirmFirstTimePrice}
         />
       )}
 
@@ -421,7 +482,7 @@ function qtyBtn() {
 // ──────────────────────────────────────────────────────────────
 // MODAL: Crear producto al vuelo
 // ──────────────────────────────────────────────────────────────
-function CreateProductModal({ initialName, authUser, userDoc, onCancel, onCreated }) {
+function CreateProductModal({ initialName, authUser, userDoc, branchId, branchName, onCancel, onCreated }) {
   const [name, setName] = useState(initialName || '')
   const [priceStr, setPriceStr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -438,6 +499,7 @@ function CreateProductModal({ initialName, authUser, userDoc, onCancel, onCreate
       const productId = await createCashierProduct({
         name: name.trim(),
         salePrice: Number(priceStr) || 0,
+        branchId,
         createdByUid: authUser.uid,
         createdByName: cashierName,
       })
@@ -456,7 +518,7 @@ function CreateProductModal({ initialName, authUser, userDoc, onCancel, onCreate
           Crear producto
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
-          Quedará disponible para futuras ventas.
+          Quedará en el catálogo. El precio que pongas es solo para <b>{branchName || 'esta panadería'}</b>; otra cajera ingresará el suyo en su panadería.
         </div>
 
         <ModalInput
@@ -468,7 +530,7 @@ function CreateProductModal({ initialName, authUser, userDoc, onCancel, onCreate
         />
 
         <ModalNumberInput
-          label="Precio de venta"
+          label={`Precio en ${branchName || 'esta panadería'}`}
           value={priceStr}
           onChange={setPriceStr}
           disabled={busy}
@@ -490,6 +552,69 @@ function CreateProductModal({ initialName, authUser, userDoc, onCancel, onCreate
             }}
           >
             {busy ? 'Creando...' : 'Crear y agregar'}
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Primera vez vendiendo este producto en esta panadería
+// ──────────────────────────────────────────────────────────────
+function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
+  const [priceStr, setPriceStr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const valid = Number(priceStr) > 0
+
+  async function handleConfirm() {
+    if (!valid || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onConfirm(Number(priceStr))
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos guardar el precio. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          Primera venta de este producto
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16, lineHeight: 1.5 }}>
+          <b style={{ color: T.neutral[800] }}>{product.name}</b> aún no tiene precio en <b style={{ color: T.neutral[800] }}>{branchName || 'esta panadería'}</b>. Pon el precio una sola vez y queda guardado para próximas ventas.
+        </div>
+
+        <ModalNumberInput
+          label={`Precio en ${branchName || 'esta panadería'}`}
+          value={priceStr}
+          onChange={setPriceStr}
+          disabled={busy}
+        />
+
+        {error && <ErrorBox text={error} />}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid || busy}
+            style={{
+              ...btnPrimary(valid && !busy ? T.copper[500] : T.neutral[200]),
+              flex: 1.4,
+              color: valid && !busy ? '#fff' : T.neutral[400],
+              cursor: valid && !busy ? 'pointer' : 'not-allowed',
+              boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            {busy ? 'Guardando...' : 'Guardar y agregar'}
           </button>
         </div>
       </div>

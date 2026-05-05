@@ -18,7 +18,13 @@ import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { compressAndUpload } from '../utils/imagebb'
 import NewSale from './NewSale'
 import OpenTabsBubbles from '../components/OpenTabsBubbles'
+import MissingPricesPanel from '../components/MissingPricesPanel'
 import { watchOpenTabsForSession } from '../openTabs'
+import {
+  watchCashierProducts,
+  mergeProductCatalogs,
+  getProductPrice,
+} from '../products'
 
 // ──────────────────────────────────────────────────────────────
 // Wrapper top-level: decide StartTurn vs ActiveSession
@@ -631,12 +637,23 @@ function ActiveSession({ session, userDoc, authUser }) {
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [showDeductions, setShowDeductions] = useState(false)
+  const [boredomOpen, setBoredomOpen] = useState(false) // panel "¿estás aburrida?"
+  const [cashierProducts, setCashierProducts] = useState([])
   const [sessionSales, setSessionSales] = useState([])
   const [sessionExpenses, setSessionExpenses] = useState([])
   const [openTabsCount, setOpenTabsCount] = useState(0)  // bloquear cierre con tabs abiertas
   const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const branches = getData().branches || []
+
+  useEffect(() => watchCashierProducts(setCashierProducts), [])
+
+  // Productos del catálogo SIN precio en la panadería actual
+  const missingPriceCount = useMemo(() => {
+    const adminProducts = getData().products || []
+    const catalog = mergeProductCatalogs(adminProducts, cashierProducts)
+    return catalog.filter(p => getProductPrice(p, session.branchId) === null).length
+  }, [cashierProducts, session.branchId])
 
   useEffect(() => {
     const unsub = watchSessionSales(session.id, setSessionSales)
@@ -721,6 +738,40 @@ function ActiveSession({ session, userDoc, authUser }) {
         </svg>
         Registrar gasto de caja
       </button>
+
+      {/* Banner sorpresa: aparece solo si hay productos sin precio en esta panaderia.
+          NO revela de qué se trata — la cajera lo descubre al tocar. */}
+      {missingPriceCount > 0 && (
+        <button
+          onClick={() => setBoredomOpen(true)}
+          style={{
+            width: '100%', padding: '14px 16px', borderRadius: 16, marginBottom: 14,
+            background: 'linear-gradient(135deg, #FFE4D2 0%, #FFD0B0 100%)',
+            border: `1.5px solid ${T.copper[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 12,
+            textAlign: 'left',
+            boxShadow: '0 3px 10px rgba(184,122,86,0.15)',
+            transition: 'transform 0.12s',
+          }}
+          onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.98)' }}
+          onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
+          onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
+        >
+          <div style={{ fontSize: 28, lineHeight: 1, flexShrink: 0 }}>🥱</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: T.copper[700], letterSpacing: -0.2 }}>
+              ¿Estás aburrida?
+            </div>
+            <div style={{ fontSize: 11.5, color: T.copper[700], opacity: 0.85, marginTop: 2 }}>
+              Tap para descubrir algo útil que puedes hacer 👀
+            </div>
+          </div>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, color: T.copper[700] }}>
+            <path d="M3 1 L9 7 L3 13" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+      )}
 
       {/* Card de estado activo (sin mostrar monto — control anti-fraude D21) */}
       <Card style={{ marginBottom: 14 }}>
@@ -925,6 +976,16 @@ function ActiveSession({ session, userDoc, authUser }) {
         sessionId={session.id}
         onSelect={tab => setEditingTab(tab)}
       />
+
+      {/* Panel "¿estás aburrida?" — productos sin precio en esta panadería */}
+      {boredomOpen && (
+        <MissingPricesPanel
+          branchId={session.branchId}
+          branchName={session.branchName}
+          branches={branches}
+          onClose={() => setBoredomOpen(false)}
+        />
+      )}
 
       {reportSale && (
         <ReportSaleModal

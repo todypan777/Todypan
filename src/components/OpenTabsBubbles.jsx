@@ -59,14 +59,16 @@ function Bubble({ tab, onClick }) {
         width: 64, height: 64, borderRadius: 999,
         background: hasItems ? T.copper[500] : T.neutral[300],
         color: '#fff',
-        border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        border: '2px solid #fff',
+        cursor: 'pointer', fontFamily: 'inherit',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         boxShadow: hasItems
-          ? '0 4px 14px rgba(184,122,86,0.45), 0 0 0 2px #fff'
-          : '0 2px 8px rgba(0,0,0,0.15), 0 0 0 2px #fff',
+          ? '0 4px 14px rgba(184,122,86,0.45)'
+          : '0 2px 8px rgba(0,0,0,0.15)',
         transition: 'transform 0.12s, box-shadow 0.12s',
         flexShrink: 0,
+        padding: 0,
       }}
       onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.93)' }}
       onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}

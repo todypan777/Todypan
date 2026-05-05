@@ -3,6 +3,11 @@ import { fmtCOP, fmtDate, fmtMonthLabel } from './format'
 import { T } from '../tokens'
 import { getData } from '../db'
 
+// jsPDF.text() lanza "Invalid arguments" si recibe undefined/null.
+// Forzamos siempre string para que cualquier campo vacío del empleado
+// (role, name) no rompa el PDF.
+const s = (v) => (v == null ? '' : String(v))
+
 export function generatePayrollPDF(emp, attendanceEntries, month) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' })
 
@@ -41,15 +46,17 @@ export function generatePayrollPDF(emp, attendanceEntries, month) {
   doc.setTextColor(37, 35, 32)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.text(emp.name, margin + 6, cardY + 12)
+  doc.text(s(emp.name) || 'Empleado', margin + 6, cardY + 12)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   doc.setTextColor(122, 113, 99)
-  doc.text(emp.role, margin + 6, cardY + 20)
+  doc.text(s(emp.role) || 'Sin cargo', margin + 6, cardY + 20)
 
-  const branchName = getData().branches?.find(b => b.id === emp.branch)?.name || 'Panadería'
-  doc.text(branchName, margin + 6, cardY + 28)
+  const branchName = emp.branch === 'both'
+    ? 'Ambas panaderías'
+    : (getData().branches?.find(b => b.id === emp.branch)?.name || 'Panadería')
+  doc.text(s(branchName), margin + 6, cardY + 28)
 
   // Rate info
   doc.setFont('helvetica', 'bold')
@@ -95,7 +102,7 @@ export function generatePayrollPDF(emp, attendanceEntries, month) {
     doc.setTextColor(37, 35, 32)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
-    doc.text(fmtDate(date, { weekday: true }), margin + 4, y + 5)
+    doc.text(s(date ? fmtDate(date, { weekday: true }) : '—'), margin + 4, y + 5)
     doc.text(fmtCOP(emp.rate), margin + 60, y + 5)
     doc.text(a.extras > 0 ? fmtCOP(a.extras) : '—', margin + 100, y + 5)
     doc.text(fmtCOP(rowTotal), pageW - margin - 4, y + 5, { align: 'right' })

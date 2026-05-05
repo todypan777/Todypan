@@ -9,6 +9,7 @@ import {
   where,
   onSnapshot,
   arrayUnion,
+  getDoc,
 } from 'firebase/firestore'
 
 const saleRef = (id) => doc(firestoreDb, 'sales', id)
@@ -93,6 +94,63 @@ export async function flagSale(saleId, { note, byUid, byName }) {
     status: 'flagged',
     notes: arrayUnion(newNote),
   })
+}
+
+/**
+ * Solo admin: marca una venta como eliminada. Si era deuda, ajusta al deudor
+ * (reduce el totalOwed por el monto de la venta).
+ *
+ * Devuelve el resultado del ajuste de deuda si aplica.
+ */
+export async function deleteSaleAsAdmin(saleId, { byUid, reason } = {}) {
+  const ref = saleRef(saleId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Venta no encontrada')
+  const sale = snap.data()
+  if (sale.status === 'deleted') return { alreadyDeleted: true }
+
+  await updateDoc(ref, {
+    status: 'deleted',
+    deletedAt: serverTimestamp(),
+    deletedBy: byUid || null,
+    deleteReason: reason || null,
+  })
+  return { sale }
+}
+
+/**
+ * Solo admin: edita los items de una venta (cantidades, productos).
+ * Recalcula total. Si era deuda, devuelve los datos para que el caller
+ * ajuste el deudor.
+ *
+ * payload: { items, total, byUid, note? }
+ */
+export async function editSaleItems(saleId, payload) {
+  const ref = saleRef(saleId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Venta no encontrada')
+  const sale = snap.data()
+
+  const oldTotal = Number(sale.total) || 0
+  const newTotal = Number(payload.total) || 0
+
+  const editEntry = {
+    by: payload.byUid || null,
+    at: Date.now(),
+    oldTotal,
+    newTotal,
+    note: payload.note || null,
+  }
+
+  await updateDoc(ref, {
+    items: payload.items,
+    total: newTotal,
+    editedAt: serverTimestamp(),
+    editedBy: payload.byUid || null,
+    editHistory: arrayUnion(editEntry),
+  })
+
+  return { oldTotal, newTotal, sale }
 }
 
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */

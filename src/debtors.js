@@ -125,3 +125,40 @@ export async function registerDebtorPayment(debtorId, payload) {
 
   return { newOwed, fullyPaid: newOwed === 0 }
 }
+
+/**
+ * Solo admin: ajusta el totalOwed de un deudor cuando se edita o elimina
+ * una venta a crédito. delta = newAmount - oldAmount.
+ *  - delta negativo: deudor debe menos (clamp a 0)
+ *  - delta positivo: deudor debe más
+ */
+export async function adjustDebtorForSaleChange(debtorId, { saleId, oldAmount, newAmount, byUid, reason }) {
+  const ref = debtorRef(debtorId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) return null
+  const debtor = snap.data()
+
+  const delta = (Number(newAmount) || 0) - (Number(oldAmount) || 0)
+  const newOwed = Math.max(0, (Number(debtor.totalOwed) || 0) + delta)
+
+  const adjustEntry = {
+    type: 'adjustment',
+    saleId: saleId || null,
+    delta,
+    oldAmount: Number(oldAmount) || 0,
+    newAmount: Number(newAmount) || 0,
+    reason: reason || (newAmount === 0 ? 'venta eliminada' : 'venta editada'),
+    registeredBy: byUid || null,
+    date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }),
+    createdAt: Date.now(),
+  }
+
+  await updateDoc(ref, {
+    totalOwed: newOwed,
+    lastUpdate: serverTimestamp(),
+    history: arrayUnion(adjustEntry),
+    status: newOwed === 0 ? 'paid' : 'active',
+  })
+
+  return { newOwed, delta }
+}

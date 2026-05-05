@@ -620,7 +620,7 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
       // Crear venta
       const saleId = await createSale(payload)
 
-      // Si es deuda, registrar en debtors
+      // Si es deuda, registrar en debtors y guardar debtorId en la sale
       if (method === 'deuda') {
         const debtorId = await addDebtSale(debtors, {
           name: debtorName.trim(),
@@ -628,8 +628,14 @@ function PaymentModal({ session, authUser, userDoc, cart, total, onCancel, onCon
           saleId,
           date: today,
         })
-        // Idealmente actualizaríamos la sale con debtorId; lo dejamos para refactor
-        // futuro. Ya tenemos debtorName en la sale para identificar.
+        // Backfill: agregar debtorId a la sale para futuras ediciones del admin
+        try {
+          const { doc, updateDoc } = await import('firebase/firestore')
+          const { firestoreDb } = await import('../firebase')
+          await updateDoc(doc(firestoreDb, 'sales', saleId), { debtorId })
+        } catch (err) {
+          console.warn('No se pudo backfill debtorId en venta:', err)
+        }
       }
 
       onConfirmed()

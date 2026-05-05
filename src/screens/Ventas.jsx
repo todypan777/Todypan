@@ -4,9 +4,12 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card, Chip } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
-import { watchAllSales } from '../sales'
+import { watchAllSales, deleteSaleAsAdmin, editSaleItems } from '../sales'
 import { getData } from '../db'
 import { watchAllUsers } from '../users'
+import { useAuth } from '../context/AuthCtx'
+import { watchDebtors, normalizeName, adjustDebtorForSaleChange } from '../debtors'
+import { mergeProductCatalogs, watchCashierProducts } from '../products'
 
 const METHODS = [
   { id: 'efectivo',  label: 'Efectivo',  icon: '💵' },
@@ -125,6 +128,7 @@ export default function Ventas({ onBack }) {
           sale={detail}
           branches={branches}
           onClose={() => setDetail(null)}
+          onUpdated={() => setDetail(null)}
         />
       )}
     </div>
@@ -483,12 +487,37 @@ function SalesList({ sales, branches, onClick }) {
 // ──────────────────────────────────────────────────────────────
 // Modal de detalle
 // ──────────────────────────────────────────────────────────────
-function SaleDetailModal({ sale, branches, onClose }) {
+function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing, setEditing] = useState(false)
   const branch = branches.find(b => String(b.id) === String(sale.branchId))
   const time = sale.createdAt?.toDate?.()
   const timeStr = time
     ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
     : '—'
+
+  const isDeleted = (sale.status || 'active') === 'deleted'
+  const wasEdited = !!sale.editedAt
+
+  if (editing) {
+    return (
+      <EditSaleModal
+        sale={sale}
+        onCancel={() => setEditing(false)}
+        onSaved={() => { setEditing(false); onUpdated?.() }}
+      />
+    )
+  }
+
+  if (confirmDelete) {
+    return (
+      <DeleteSaleModal
+        sale={sale}
+        onCancel={() => setConfirmDelete(false)}
+        onDeleted={() => { setConfirmDelete(false); onUpdated?.() }}
+      />
+    )
+  }
 
   return (
     <div onClick={onClose} style={{
@@ -634,8 +663,57 @@ function SaleDetailModal({ sale, branches, onClose }) {
           </div>
         )}
 
-        {/* Cerrar */}
-        <div style={{ padding: '8px 22px 22px' }}>
+        {/* Si fue editada, mostrar info */}
+        {wasEdited && (
+          <div style={{
+            margin: '0 22px 12px',
+            padding: '8px 12px', borderRadius: 10,
+            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            fontSize: 11.5, color: T.copper[700], fontWeight: 600,
+          }}>
+            ✏ Esta venta fue editada por el admin
+            {sale.editedAt?.toDate && ` el ${sale.editedAt.toDate().toLocaleDateString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`}
+          </div>
+        )}
+
+        {/* Acciones admin */}
+        <div style={{ padding: '0 22px 22px' }}>
+          {!isDeleted && (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+              <button
+                onClick={() => setEditing(true)}
+                style={{
+                  flex: 1, padding: '11px', borderRadius: 12,
+                  background: '#fff', color: T.copper[700],
+                  border: `1.5px solid ${T.copper[300]}`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M11 3 L13 5 L6 12 L3 13 L4 10 Z" stroke={T.copper[700]} strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
+                </svg>
+                Editar
+              </button>
+              <button
+                onClick={() => setConfirmDelete(true)}
+                style={{
+                  flex: 1, padding: '11px', borderRadius: 12,
+                  background: '#fff', color: T.bad,
+                  border: `1.5px solid ${T.bad}55`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                  <path d="M3 4 H11 M5 4 V2 H9 V4 M4 4 V12 H10 V4" stroke={T.bad} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Eliminar
+              </button>
+            </div>
+          )}
           <button onClick={onClose} style={{
             width: '100%', padding: '12px', borderRadius: 12,
             background: T.neutral[100], color: T.neutral[700],
@@ -644,9 +722,11 @@ function SaleDetailModal({ sale, branches, onClose }) {
           }}>
             Cerrar
           </button>
-          <div style={{ fontSize: 11, color: T.neutral[400], textAlign: 'center', marginTop: 10 }}>
-            Para resolver una venta marcada, ve a la pestaña <b>Pendientes</b>.
-          </div>
+          {!isDeleted && (
+            <div style={{ fontSize: 11, color: T.neutral[400], textAlign: 'center', marginTop: 10 }}>
+              Para venta marcada por la cajera, también puedes ir a <b>Pendientes</b>.
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -733,4 +813,495 @@ function miniBtn() {
     border: 'none', cursor: 'pointer', fontFamily: 'inherit',
     fontSize: 11.5, fontWeight: 700,
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal: Eliminar venta (con ajuste de deuda si aplica)
+// ──────────────────────────────────────────────────────────────
+function DeleteSaleModal({ sale, onCancel, onDeleted }) {
+  const { authUser } = useAuth()
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleDelete() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      // Eliminar la venta
+      await deleteSaleAsAdmin(sale.id, { byUid: authUser.uid, reason: reason.trim() || null })
+
+      // Si era deuda, restar del totalOwed del deudor
+      if (sale.paymentMethod === 'deuda' && sale.debtorId) {
+        await adjustDebtorForSaleChange(sale.debtorId, {
+          saleId: sale.id,
+          oldAmount: sale.total,
+          newAmount: 0,
+          byUid: authUser.uid,
+          reason: 'venta eliminada por admin',
+        })
+      } else if (sale.paymentMethod === 'deuda' && sale.debtorName) {
+        // Fallback para ventas viejas sin debtorId: buscar por nombre
+        try {
+          const { collection, getDocs, query, where } = await import('firebase/firestore')
+          const { firestoreDb } = await import('../firebase')
+          const q = query(
+            collection(firestoreDb, 'debtors'),
+            where('normalizedName', '==', normalizeName(sale.debtorName))
+          )
+          const snap = await getDocs(q)
+          if (!snap.empty) {
+            await adjustDebtorForSaleChange(snap.docs[0].id, {
+              saleId: sale.id,
+              oldAmount: sale.total,
+              newAmount: 0,
+              byUid: authUser.uid,
+              reason: 'venta eliminada por admin',
+            })
+          }
+        } catch (err) {
+          console.warn('No se pudo ajustar deudor por nombre:', err)
+        }
+      }
+
+      onDeleted()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos eliminar la venta.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div onClick={busy ? undefined : onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 380,
+        background: '#fff', borderRadius: 22,
+        padding: '24px 22px 22px',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+      }}>
+        <div style={{
+          width: 56, height: 56, borderRadius: 999, background: '#FBE9E5',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 14px',
+        }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+            <path d="M5 6 H19 M9 6 V4 H15 V6 M7 6 V20 H17 V6" stroke={T.bad} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], textAlign: 'center', marginBottom: 6 }}>
+          Eliminar venta
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[600], textAlign: 'center', marginBottom: 14, lineHeight: 1.5 }}>
+          La venta de <b>{fmtCOP(sale.total)}</b> de {sale.cashierName} se marcará como eliminada y NO contará en el balance.
+          {sale.paymentMethod === 'deuda' && (
+            <><br/>El monto se descontará de la deuda de <b>{sale.debtorName}</b>.</>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="Razón (opcional)..."
+            rows={2}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '10px 12px', borderRadius: 12,
+              border: `1px solid ${T.neutral[200]}`, background: '#fff',
+              fontFamily: 'inherit', fontSize: 13, color: T.neutral[800],
+              outline: 'none', resize: 'vertical', minHeight: 50,
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
+
+        {error && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 10, marginBottom: 10,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+          }}>{error}</div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} disabled={busy} style={{
+            flex: 1, padding: 12, borderRadius: 12, border: 'none',
+            background: T.neutral[100], color: T.neutral[700],
+            fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+          }}>Cancelar</button>
+          <button onClick={handleDelete} disabled={busy} style={{
+            flex: 1, padding: 12, borderRadius: 12, border: 'none',
+            background: T.bad, color: '#fff',
+            fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            opacity: busy ? 0.7 : 1,
+          }}>
+            {busy ? 'Eliminando...' : 'Eliminar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal: Editar items de venta
+// ──────────────────────────────────────────────────────────────
+function EditSaleModal({ sale, onCancel, onSaved }) {
+  const { authUser } = useAuth()
+  const [items, setItems] = useState(
+    (sale.items || []).map((it, i) => ({ ...it, key: `existing_${i}_${Date.now()}` }))
+  )
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const total = items.reduce((s, it) => s + (it.qty * it.unitPrice), 0)
+
+  function updateQty(key, delta) {
+    setItems(prev => prev
+      .map(it => it.key === key ? { ...it, qty: Math.max(0, (it.qty || 0) + delta) } : it)
+      .filter(it => it.qty > 0)
+    )
+  }
+  function removeItem(key) {
+    setItems(prev => prev.filter(it => it.key !== key))
+  }
+  function addItem(product) {
+    setItems(prev => [...prev, {
+      key: `added_${Date.now()}`,
+      productId: product.id,
+      source: product.source,
+      name: product.name,
+      qty: 1,
+      unitPrice: product.salePrice,
+    }])
+    setSearchOpen(false)
+  }
+
+  async function handleSave() {
+    if (items.length === 0) {
+      setError('La venta debe tener al menos un producto.')
+      return
+    }
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      const cleanItems = items.map(it => ({
+        productId: it.productId,
+        source: it.source,
+        name: it.name,
+        qty: it.qty,
+        unitPrice: it.unitPrice,
+        subtotal: it.qty * it.unitPrice,
+      }))
+
+      await editSaleItems(sale.id, {
+        items: cleanItems,
+        total,
+        byUid: authUser.uid,
+      })
+
+      // Si era deuda y cambió el total, ajustar deudor
+      if (sale.paymentMethod === 'deuda' && total !== sale.total) {
+        if (sale.debtorId) {
+          await adjustDebtorForSaleChange(sale.debtorId, {
+            saleId: sale.id,
+            oldAmount: sale.total,
+            newAmount: total,
+            byUid: authUser.uid,
+            reason: 'venta editada por admin',
+          })
+        } else if (sale.debtorName) {
+          try {
+            const { collection, getDocs, query, where } = await import('firebase/firestore')
+            const { firestoreDb } = await import('../firebase')
+            const q = query(
+              collection(firestoreDb, 'debtors'),
+              where('normalizedName', '==', normalizeName(sale.debtorName))
+            )
+            const snap = await getDocs(q)
+            if (!snap.empty) {
+              await adjustDebtorForSaleChange(snap.docs[0].id, {
+                saleId: sale.id,
+                oldAmount: sale.total,
+                newAmount: total,
+                byUid: authUser.uid,
+                reason: 'venta editada por admin',
+              })
+            }
+          } catch (err) {
+            console.warn('No se pudo ajustar deudor:', err)
+          }
+        }
+      }
+
+      onSaved()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos guardar los cambios.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div onClick={busy ? undefined : onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 20,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 480,
+        background: '#fff', borderRadius: 22,
+        boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
+        maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+      }}>
+        <div style={{ padding: '20px 22px 12px', borderBottom: `1px solid ${T.neutral[100]}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+            Editar venta
+          </div>
+          <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4 }}>
+            {sale.cashierName} · Original: {fmtCOP(sale.total)}
+          </div>
+        </div>
+
+        {/* Lista de items */}
+        <div style={{ padding: '12px 22px', flex: 1, overflowY: 'auto' }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 }}>
+            Productos
+          </div>
+
+          {items.length === 0 ? (
+            <div style={{
+              padding: '24px 12px', textAlign: 'center',
+              background: T.neutral[50], borderRadius: 12,
+              fontSize: 13, color: T.neutral[500], marginBottom: 10,
+            }}>
+              Sin productos. Agrega al menos uno.
+            </div>
+          ) : (
+            <div style={{
+              background: T.neutral[50], borderRadius: 12,
+              padding: '4px 0', marginBottom: 10,
+            }}>
+              {items.map((it, i) => (
+                <div key={it.key} style={{
+                  padding: '10px 12px',
+                  borderBottom: i < items.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: 600, color: T.neutral[900],
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>{it.name}</div>
+                    <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
+                      {fmtCOP(it.unitPrice)} c/u
+                    </div>
+                  </div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 0,
+                    background: '#fff', borderRadius: 999, padding: 2,
+                    border: `1px solid ${T.neutral[200]}`,
+                  }}>
+                    <button onClick={() => updateQty(it.key, -1)} style={qtyBtnStyle()}>−</button>
+                    <span style={{
+                      minWidth: 22, textAlign: 'center', fontSize: 13, fontWeight: 700,
+                      color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+                    }}>{it.qty}</span>
+                    <button onClick={() => updateQty(it.key, +1)} style={qtyBtnStyle()}>+</button>
+                  </div>
+                  <div style={{
+                    minWidth: 60, textAlign: 'right',
+                    fontSize: 13, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+                  }}>{fmtCOP(it.qty * it.unitPrice)}</div>
+                  <button onClick={() => removeItem(it.key)} style={{
+                    width: 28, height: 28, borderRadius: 999,
+                    background: 'transparent', border: 'none',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                      <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.neutral[400]} strokeWidth="1.6" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Buscador para agregar productos */}
+          {!searchOpen ? (
+            <button
+              onClick={() => setSearchOpen(true)}
+              style={{
+                width: '100%', padding: '11px', borderRadius: 12,
+                background: '#fff', color: T.copper[700],
+                border: `1.5px dashed ${T.copper[300]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              + Agregar producto
+            </button>
+          ) : (
+            <ProductSearch
+              onPick={addItem}
+              onCancel={() => setSearchOpen(false)}
+            />
+          )}
+
+          {/* Avisos */}
+          {sale.paymentMethod === 'deuda' && total !== sale.total && (
+            <div style={{
+              marginTop: 14, padding: '10px 12px', borderRadius: 10,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 12.5, color: T.warn, fontWeight: 500, lineHeight: 1.5,
+            }}>
+              ⚠ Esta era una venta a crédito. La deuda de <b>{sale.debtorName}</b> se ajustará en {fmtCOP(Math.abs(total - sale.total))} ({total > sale.total ? 'aumenta' : 'disminuye'}).
+            </div>
+          )}
+
+          {error && (
+            <div style={{
+              marginTop: 10, padding: '10px 12px', borderRadius: 10,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+              fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+            }}>{error}</div>
+          )}
+        </div>
+
+        {/* Footer con total + botones */}
+        <div style={{
+          padding: '14px 22px', borderTop: `1px solid ${T.neutral[100]}`,
+          background: '#fff', borderRadius: '0 0 22px 22px',
+        }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            marginBottom: 12,
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.neutral[700] }}>Nuevo total</span>
+            <span style={{
+              fontSize: 22, fontWeight: 800, color: T.neutral[900],
+              fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4,
+            }}>
+              {fmtCOP(total)}
+              {total !== sale.total && (
+                <span style={{
+                  fontSize: 12, fontWeight: 600, marginLeft: 8,
+                  color: total > sale.total ? T.bad : T.ok,
+                }}>
+                  {total > sale.total ? '+' : '−'}{fmtCOP(Math.abs(total - sale.total))}
+                </span>
+              )}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={onCancel} disabled={busy} style={{
+              flex: 1, padding: 12, borderRadius: 12, border: 'none',
+              background: T.neutral[100], color: T.neutral[700],
+              fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            }}>Cancelar</button>
+            <button onClick={handleSave} disabled={busy || items.length === 0} style={{
+              flex: 1.4, padding: 12, borderRadius: 12, border: 'none',
+              background: items.length === 0 ? T.neutral[200] : T.copper[500], color: '#fff',
+              fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              opacity: busy ? 0.7 : 1,
+            }}>
+              {busy ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function qtyBtnStyle() {
+  return {
+    width: 24, height: 24, borderRadius: 999,
+    background: 'transparent', border: 'none',
+    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 14, fontWeight: 700, color: T.neutral[700], fontFamily: 'inherit',
+  }
+}
+
+// Buscador de productos para agregar a venta editada
+function ProductSearch({ onPick, onCancel }) {
+  const [query, setQuery] = useState('')
+  const [cashierProducts, setCashierProducts] = useState([])
+  useEffect(() => watchCashierProducts(setCashierProducts), [])
+  const adminProducts = getData().products || []
+  const catalog = useMemo(
+    () => mergeProductCatalogs(adminProducts, cashierProducts),
+    [adminProducts, cashierProducts],
+  )
+  const filtered = useMemo(() => {
+    if (!query.trim()) return catalog.slice(0, 10)
+    const q = normalizeName(query)
+    return catalog.filter(p => normalizeName(p.name).includes(q)).slice(0, 20)
+  }, [catalog, query])
+
+  return (
+    <div style={{
+      border: `1.5px solid ${T.copper[300]}`, borderRadius: 12,
+      background: '#fff', padding: 8, marginBottom: 4,
+    }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
+        <input
+          type="text"
+          autoFocus
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Buscar producto..."
+          style={{
+            flex: 1, padding: '8px 12px', borderRadius: 10,
+            border: `1px solid ${T.neutral[200]}`,
+            fontFamily: 'inherit', fontSize: 13, outline: 'none',
+          }}
+        />
+        <button onClick={onCancel} style={{
+          padding: '7px 12px', borderRadius: 10,
+          background: T.neutral[100], color: T.neutral[700],
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 12, fontWeight: 700,
+        }}>Cancelar</button>
+      </div>
+      <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: '12px', textAlign: 'center', color: T.neutral[500], fontSize: 12 }}>
+            Sin resultados
+          </div>
+        ) : (
+          filtered.map((p, i) => (
+            <button
+              key={p.source + '_' + p.id}
+              onClick={() => onPick(p)}
+              style={{
+                width: '100%', padding: '8px 10px',
+                background: 'transparent', border: 'none',
+                borderBottom: i < filtered.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}
+            >
+              <span style={{
+                fontSize: 12.5, color: T.neutral[800], fontWeight: 600,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                flex: 1,
+              }}>{p.name}</span>
+              <span style={{ fontSize: 12, color: T.neutral[600], fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                {fmtCOP(p.salePrice)}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  )
 }

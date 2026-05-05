@@ -13,11 +13,11 @@ import {
   approveSessionClose,
 } from '../cashSessions'
 import {
-  watchPendingExpenses,
+  watchSessionExpenses,
   approveCashExpense,
   rejectCashExpense,
 } from '../cashExpenses'
-import { watchAllSales } from '../sales'
+import { watchAllSales, watchSessionSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
 import { watchCashierProducts, deleteCashierProduct } from '../products'
 import { addMovement, getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid } from '../db'
@@ -30,7 +30,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [pendingUsers, setPendingUsers] = useState([])
   const [allUsers, setAllUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
-  const [pendingExpenses, setPendingExpenses] = useState([])
   const [allSales, setAllSales] = useState([])
   const [cashierProducts, setCashierProducts] = useState([])
 
@@ -39,7 +38,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     setPendingUsers(list.filter(u => u.status === 'pending'))
   }), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchPendingExpenses(setPendingExpenses), [])
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
@@ -81,7 +79,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     openingDisputes.length +
     pendingCloses.length +
     orphanShortages.length +
-    pendingExpenses.length +
     flaggedSales.length +
     cashierProducts.length +
     overdueReminders.length +
@@ -210,10 +207,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
           adminUid={authUser.uid}
           allUsers={allUsers}
         />
-      )}
-
-      {pendingExpenses.length > 0 && (
-        <CashExpensesSection expenses={pendingExpenses} adminUid={authUser.uid} />
       )}
 
       {flaggedSales.length > 0 && (
@@ -590,58 +583,131 @@ function PendingClosesSection({ sessions, adminUid, allUsers }) {
 }
 
 function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }) {
-  const cd = session.closingDiscrepancy
-  const hasShortage = cd?.type === 'shortage'
-  const hasSurplus = cd?.type === 'surplus'
-  const amount = cd?.amount || 0
+  // Cargar ventas y gastos del turno en vivo
+  const [sales, setSales] = useState([])
+  const [expenses, setExpenses] = useState([])
+  useEffect(() => watchSessionSales(session.id, setSales), [session.id])
+  useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
 
-  const [resolution, setResolution] = useState(null)
+  // Decisiones tentativas del admin sobre los gastos pendientes:
+  //   { [expenseId]: 'approve' | 'reject' }
+  // Se aplican al confirmar el cierre.
+  const [expenseDecisions, setExpenseDecisions] = useState({})
+
+  const [resolution, setResolution] = useState(null) // para shortage
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  // Si es exacto o sobra, no hay decisión que tomar
-  const needsResolution = hasShortage
-  const canConfirm = needsResolution ? !!resolution && !busy : !busy
+  // ── Cálculos en vivo ──
+  const activeSales = useMemo(
+    () => sales.filter(s => (s.status || 'active') !== 'deleted'),
+    [sales]
+  )
+  const salesByMethod = useMemo(() => {
+    const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0 }
+    activeSales.forEach(s => {
+      const m = s.paymentMethod || 'efectivo'
+      acc[m] = (acc[m] || 0) + (Number(s.total) || 0)
+    })
+    return acc
+  }, [activeSales])
+  const totalSales = activeSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0)
+
+  // Estado efectivo de cada gasto considerando decisiones tentativas
+  function effectiveStatus(exp) {
+    if (exp.status === 'approved' || exp.status === 'rejected') return exp.status
+    const dec = expenseDecisions[exp.id]
+    if (dec === 'approve') return 'approved'
+    if (dec === 'reject') return 'rejected'
+    return 'pending'
+  }
+  const approvedExpenseTotal = expenses.reduce((acc, e) =>
+    effectiveStatus(e) === 'approved' ? acc + (Number(e.amount) || 0) : acc, 0
+  )
+  const pendingExpensesCount = expenses.filter(e => effectiveStatus(e) === 'pending').length
+
+  // EXPECTED en caja = apertura + ventas en EFECTIVO − gastos aprobados
+  const openingFloat = Number(session.openingFloat) || 0
+  const declared = Number(session.declaredClosingCash) || 0
+  const expectedCash = openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal
+  const difference = declared - expectedCash
+  const hasShortage = difference < 0
+  const hasSurplus = difference > 0
+  const isExact = difference === 0
+
+  function setDecision(expenseId, decision) {
+    setExpenseDecisions(prev => ({ ...prev, [expenseId]: decision }))
+  }
+
+  // Bloqueos para confirmar
+  const canConfirm = !busy
+    && pendingExpensesCount === 0   // no debe quedar ningún gasto sin decidir
+    && (!hasShortage || !!resolution) // si hay falta, resolution requerida
 
   async function handleApprove() {
     if (!canConfirm) return
     setBusy(true); setError(null)
     try {
+      // 1. Aplicar decisiones de gastos pendientes (las que el admin tomó en este modal)
+      for (const exp of expenses) {
+        if (exp.status !== 'pending') continue
+        const dec = expenseDecisions[exp.id]
+        if (dec === 'approve') {
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          const movementId = addMovement({
+            type: 'expense',
+            amount: exp.amount,
+            date: today,
+            note: exp.description,
+            cat: 'otros_prov',
+            branch: exp.branchId || 'both',
+            origin: 'caja',
+            sessionId: exp.sessionId || null,
+            cashierName: exp.cashierName,
+          })
+          await approveCashExpense(exp.id, { reviewedBy: adminUid, movementId })
+        } else if (dec === 'reject') {
+          await rejectCashExpense(exp.id, { reviewedBy: adminUid, reviewNote: null })
+        }
+      }
+
+      // 2. Si hay falta a descontar a la cajera, crear la deduction
       let deductionId = null
-      if (needsResolution && resolution === 'cashier_deduction') {
+      if (hasShortage && resolution === 'cashier_deduction') {
         const cashierUser = (allUsers || []).find(u => u.uid === session.cashierUid)
         const employeeId = cashierUser?.linkedEmployeeId || null
         deductionId = await createDeduction({
           cashierUid: session.cashierUid,
           cashierName: session.cashierName,
           employeeId,
-          amount,
+          amount: Math.abs(difference),
           reason: 'cash_shortage',
           sessionId: session.id,
           createdBy: adminUid,
         })
       }
 
+      // 3. Aprobar el cierre con el expectedCash calculado
       await approveSessionClose(session.id, {
         reviewedBy: adminUid,
+        expectedCash,
         approveNote: note.trim() || null,
-        resolution: needsResolution ? resolution : null,
+        resolution: hasShortage ? resolution : null,
         deductionId,
         session,
       })
       onResolved()
     } catch (err) {
       console.error(err)
-      setError('No pudimos aprobar el cierre.')
+      setError('No pudimos aprobar el cierre. Intenta de nuevo.')
       setBusy(false)
     }
   }
 
-  // Hora apertura/cierre
   const opened = session.openedAt?.toDate?.()
   const closed = session.closedAt?.toDate?.()
-  const fmtTime = (d) => d ? d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+  const fmtTime = (d) => d ? d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' }) : '—'
 
   return (
     <ModalOverlay onClose={busy ? undefined : onCancel}>
@@ -651,24 +717,66 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
           {session.cashierName} · {session.branchName || 'Sin nombre'} · {fmtTime(opened)} → {fmtTime(closed)}
         </ModalSub>
 
-        {/* Desglose */}
+        {/* Apertura */}
+        <SectionLabel>Apertura</SectionLabel>
+        <Row label="Float inicial" value={fmtCOP(openingFloat)} />
+
+        {/* Ventas del turno por método */}
+        <SectionLabel>Ventas del turno · {fmtCOP(totalSales)}</SectionLabel>
+        <div style={{
+          padding: '10px 14px', borderRadius: 12,
+          background: T.neutral[50], marginBottom: 14,
+        }}>
+          <Row label="Efectivo (a caja)" value={fmtCOP(salesByMethod.efectivo || 0)} />
+          <Row label="Nequi" value={fmtCOP(salesByMethod.nequi || 0)} muted />
+          <Row label="Daviplata" value={fmtCOP(salesByMethod.daviplata || 0)} muted />
+          <Row label="Deuda" value={fmtCOP(salesByMethod.deuda || 0)} muted />
+        </div>
+
+        {/* Gastos del turno */}
+        <SectionLabel>
+          Gastos del turno {expenses.length > 0 && `· ${expenses.length}`}
+          {pendingExpensesCount > 0 && (
+            <span style={{ color: T.warn, marginLeft: 6 }}>
+              ({pendingExpensesCount} sin decidir)
+            </span>
+          )}
+        </SectionLabel>
+        {expenses.length === 0 ? (
+          <div style={{
+            padding: '10px 14px', borderRadius: 12, background: T.neutral[50],
+            fontSize: 12, color: T.neutral[500], marginBottom: 14, textAlign: 'center',
+          }}>
+            Sin gastos en este turno
+          </div>
+        ) : (
+          <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {expenses.map(e => (
+              <ExpenseRow
+                key={e.id}
+                expense={e}
+                effectiveStatus={effectiveStatus(e)}
+                onApprove={() => setDecision(e.id, 'approve')}
+                onReject={() => setDecision(e.id, 'reject')}
+                disabled={busy}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Cuadre */}
+        <SectionLabel>Cuadre de caja</SectionLabel>
         <div style={{
           padding: '14px 16px', borderRadius: 12,
           background: T.neutral[50], marginBottom: 12,
         }}>
-          <Row label="Apertura" value={fmtCOP(session.openingFloat || 0)} />
-          <Row label="Esperado en caja" value={fmtCOP(session.expectedCash || 0)} />
-          <Row label="Declarado por la cajera" value={fmtCOP(session.declaredClosingCash || 0)} />
-          {hasShortage && (
-            <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
-              <Row label="FALTA" value={fmtCOP(amount)} highlight />
-            </div>
-          )}
-          {hasSurplus && (
-            <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
-              <Row label="SOBRA" value={fmtCOP(amount)} highlight tone="ok" />
-            </div>
-          )}
+          <Row label="Esperado en caja" value={fmtCOP(expectedCash)} />
+          <Row label="Declarado por la cajera" value={fmtCOP(declared)} />
+          <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
+            {isExact && <Row label="✓ CUADRE EXACTO" value={fmtCOP(0)} highlight tone="ok" />}
+            {hasSurplus && <Row label="SOBRA" value={fmtCOP(Math.abs(difference))} highlight tone="ok" />}
+            {hasShortage && <Row label="FALTA" value={fmtCOP(Math.abs(difference))} highlight />}
+          </div>
         </div>
 
         {/* Handover info */}
@@ -688,22 +796,22 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
         )}
 
         {/* Nota de cajera */}
-        {(session.closingNote || cd?.note) && (
+        {session.closingNote && (
           <div style={{
             padding: '10px 12px', borderRadius: 10,
             background: '#FFF7E6', border: `1px solid #F4E0BC`,
             fontSize: 12.5, color: T.neutral[700], fontStyle: 'italic',
             marginBottom: 12, lineHeight: 1.5,
           }}>
-            <b style={{ fontStyle: 'normal', color: T.warn }}>Nota de la cajera:</b> "{cd?.note || session.closingNote}"
+            <b style={{ fontStyle: 'normal', color: T.warn }}>Nota de la cajera:</b> "{session.closingNote}"
           </div>
         )}
 
-        {/* Si es shortage: pide resolución */}
+        {/* Si hay FALTA: pide resolución */}
         {hasShortage && (
           <>
             <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], marginBottom: 8 }}>
-              ¿Qué hacer con la falta?
+              ¿Qué hacer con la falta de {fmtCOP(Math.abs(difference))}?
             </div>
             <RadioOption
               selected={resolution === 'business_loss'}
@@ -715,26 +823,34 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
               selected={resolution === 'cashier_deduction'}
               onClick={() => setResolution('cashier_deduction')}
               title="Descontar a la cajera"
-              subtitle={`Se restará ${fmtCOP(amount)} del próximo pago de ${session.cashierName}.`}
+              subtitle={`Se restará ${fmtCOP(Math.abs(difference))} del próximo pago de ${session.cashierName}.`}
             />
           </>
         )}
 
-        {/* Si es exacto o sobra: solo aprobar */}
-        {!hasShortage && (
+        {/* Si hay SOBRA */}
+        {hasSurplus && (
           <div style={{
             padding: '12px 14px', borderRadius: 12,
             background: '#E8F4E8', border: `1px solid #C2DDC1`,
             fontSize: 12.5, color: T.ok, fontWeight: 600, lineHeight: 1.5,
             marginBottom: 12,
           }}>
-            {hasSurplus
-              ? `Al aprobar, se registrará un ingreso de ${fmtCOP(amount)} con la nota "Sobra de cierre" y la panadería quedará libre.`
-              : 'Al aprobar, la panadería quedará libre para nuevo turno.'}
+            Al aprobar, se registrará un ingreso de {fmtCOP(Math.abs(difference))} como "Sobra de cierre".
           </div>
         )}
 
         <NoteInput value={note} onChange={setNote} placeholder="Nota interna (opcional)" disabled={busy} />
+
+        {pendingExpensesCount > 0 && (
+          <div style={{
+            margin: '0 0 10px', padding: '10px 12px', borderRadius: 10,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`, color: T.warn,
+            fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+          }}>
+            Decide aprobar o rechazar todos los gastos antes de cerrar.
+          </div>
+        )}
 
         {error && <ErrorBox>{error}</ErrorBox>}
 
@@ -747,6 +863,108 @@ function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }
         />
       </ModalCard>
     </ModalOverlay>
+  )
+}
+
+// Pequeño label para secciones del modal
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 700, color: T.neutral[500],
+      textTransform: 'uppercase', letterSpacing: 0.5,
+      marginBottom: 6, marginTop: 4,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+// Fila de gasto con botones aprobar/rechazar inline
+function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled }) {
+  const isApproved = effectiveStatus === 'approved'
+  const isRejected = effectiveStatus === 'rejected'
+  const isPending = effectiveStatus === 'pending'
+  const wasFinal = expense.status === 'approved' || expense.status === 'rejected'
+
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 10,
+      background: isApproved ? '#E8F4E8' : isRejected ? '#FBE9E5' : T.neutral[50],
+      border: `1px solid ${isApproved ? '#C2DDC1' : isRejected ? '#F0C8BE' : T.neutral[100]}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {expense.description}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+          {fmtCOP(expense.amount)}
+          {expense.photoUrl && (
+            <a href={expense.photoUrl} target="_blank" rel="noreferrer" style={{
+              marginLeft: 8, color: T.copper[600], fontWeight: 600,
+              textDecoration: 'underline', fontSize: 11,
+            }}>
+              📎 ver foto
+            </a>
+          )}
+        </div>
+      </div>
+      {isPending && (
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={onReject} disabled={disabled} style={{
+            padding: '6px 10px', borderRadius: 8,
+            background: 'transparent', color: T.bad,
+            border: `1px solid ${T.bad}55`,
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Rechazar
+          </button>
+          <button onClick={onApprove} disabled={disabled} style={{
+            padding: '6px 10px', borderRadius: 8,
+            background: T.ok, color: '#fff',
+            border: 'none',
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Aprobar
+          </button>
+        </div>
+      )}
+      {isApproved && !wasFinal && (
+        <span style={{
+          padding: '4px 9px', borderRadius: 999,
+          background: T.ok, color: '#fff',
+          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          ✓ Aprobado
+        </span>
+      )}
+      {isRejected && !wasFinal && (
+        <span style={{
+          padding: '4px 9px', borderRadius: 999,
+          background: T.bad, color: '#fff',
+          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          ✗ Rechazado
+        </span>
+      )}
+      {wasFinal && (
+        <span style={{
+          padding: '4px 9px', borderRadius: 999,
+          background: T.neutral[100], color: T.neutral[600],
+          fontSize: 10.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          {isApproved ? 'Aprobado antes' : 'Rechazado antes'}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -899,159 +1117,6 @@ function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolve
 }
 
 // ──────────────────────────────────────────────────────────────
-// Gastos de caja pendientes
-// ──────────────────────────────────────────────────────────────
-function CashExpensesSection({ expenses, adminUid }) {
-  const [reviewing, setReviewing] = useState(null)
-  return (
-    <>
-      <Section title="Gastos de caja" count={expenses.length} tone="warn">
-        {expenses.map((e, i) => (
-          <div key={e.id} style={{
-            padding: '12px 14px',
-            borderBottom: i < expenses.length - 1 ? `0.5px solid ${T.warn}33` : 'none',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {e.description}
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                {e.cashierName} · {e.branchName || 'Sin nombre'}
-              </div>
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-              {fmtCOP(e.amount)}
-            </div>
-            <button onClick={() => setReviewing(e)} style={btnSmall(T.warn)}>
-              Revisar
-            </button>
-          </div>
-        ))}
-      </Section>
-
-      {reviewing && (
-        <CashExpenseModal
-          expense={reviewing}
-          adminUid={adminUid}
-          onCancel={() => setReviewing(null)}
-          onResolved={() => setReviewing(null)}
-        />
-      )}
-    </>
-  )
-}
-
-function CashExpenseModal({ expense, adminUid, onCancel, onResolved }) {
-  const [action, setAction] = useState(null) // 'approve' | 'reject'
-  const [note, setNote] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
-
-  async function handleConfirm() {
-    if (!action || busy) return
-    setBusy(true); setError(null)
-    try {
-      if (action === 'approve') {
-        // Crear movement de tipo gasto + aprobar el cashExpense con su id
-        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
-        const movementId = addMovement({
-          type: 'expense',
-          amount: expense.amount,
-          date: today,
-          note: expense.description,
-          cat: 'otros_prov',                 // categoría por defecto; admin la puede ajustar después
-          branch: expense.branchId || 'both',
-          origin: 'caja',
-          sessionId: expense.sessionId || null,
-          cashierName: expense.cashierName,
-        })
-        await approveCashExpense(expense.id, { reviewedBy: adminUid, movementId })
-      } else {
-        if (note.trim().length < 5) {
-          setError('Escribe al menos 5 caracteres explicando el rechazo.')
-          setBusy(false)
-          return
-        }
-        await rejectCashExpense(expense.id, { reviewedBy: adminUid, reviewNote: note.trim() })
-      }
-      onResolved()
-    } catch (err) {
-      console.error(err)
-      setError('No pudimos guardar la decisión.')
-      setBusy(false)
-    }
-  }
-
-  return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
-      <ModalCard>
-        <ModalTitle>Gasto de caja</ModalTitle>
-        <ModalSub>
-          {expense.cashierName} · {expense.branchName || 'Sin nombre'}
-        </ModalSub>
-
-        <div style={{
-          padding: '14px', borderRadius: 12, background: T.neutral[50],
-          marginBottom: 14,
-        }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: T.neutral[900], marginBottom: 4 }}>
-            {expense.description}
-          </div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
-            {fmtCOP(expense.amount)}
-          </div>
-          {expense.photoUrl && (
-            <a href={expense.photoUrl} target="_blank" rel="noreferrer" style={{
-              display: 'inline-block', marginTop: 8,
-              fontSize: 12, color: T.copper[600], textDecoration: 'underline', fontWeight: 600,
-            }}>
-              📎 Ver foto del recibo
-            </a>
-          )}
-        </div>
-
-        <RadioOption
-          selected={action === 'approve'}
-          onClick={() => setAction('approve')}
-          title="Aprobar"
-          subtitle="Se crea un movimiento de gasto que aparece en Reportes."
-        />
-        <RadioOption
-          selected={action === 'reject'}
-          onClick={() => setAction('reject')}
-          title="Rechazar"
-          subtitle="La cajera ve la nota explicativa. La plata salió igual; tú decides cómo manejarlo offline."
-        />
-
-        {action === 'reject' && (
-          <NoteInput
-            value={note}
-            onChange={setNote}
-            placeholder="Explica por qué rechazas (mínimo 5 caracteres)..."
-            disabled={busy}
-            required
-          />
-        )}
-
-        {error && <ErrorBox>{error}</ErrorBox>}
-
-        <ModalActions
-          onCancel={onCancel}
-          onConfirm={handleConfirm}
-          confirmLabel={busy ? 'Guardando...' : (action === 'approve' ? 'Aprobar' : action === 'reject' ? 'Rechazar' : 'Confirmar')}
-          confirmDisabled={!action || busy}
-          confirmColor={action === 'reject' ? T.bad : T.ok}
-        />
-      </ModalCard>
-    </ModalOverlay>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────
 // Ventas marcadas (flagged)
 // ──────────────────────────────────────────────────────────────
 function FlaggedSalesSection({ sales, adminUid }) {
@@ -1194,8 +1259,10 @@ function btnSmall(color) {
   }
 }
 
-function Row({ label, value, highlight, tone }) {
+function Row({ label, value, highlight, tone, muted }) {
   const highlightColor = tone === 'ok' ? T.ok : T.bad
+  const labelColor = highlight ? highlightColor : (muted ? T.neutral[400] : T.neutral[600])
+  const valueColor = highlight ? highlightColor : (muted ? T.neutral[500] : T.neutral[900])
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
@@ -1203,7 +1270,7 @@ function Row({ label, value, highlight, tone }) {
     }}>
       <span style={{
         fontSize: highlight ? 11.5 : 12.5,
-        color: highlight ? highlightColor : T.neutral[600],
+        color: labelColor,
         fontWeight: highlight ? 700 : 500,
         letterSpacing: highlight ? 0.5 : 0,
         textTransform: highlight ? 'uppercase' : 'none',
@@ -1212,7 +1279,7 @@ function Row({ label, value, highlight, tone }) {
       </span>
       <span style={{
         fontSize: highlight ? 16 : 14, fontWeight: highlight ? 800 : 600,
-        color: highlight ? highlightColor : T.neutral[900],
+        color: valueColor,
         fontVariantNumeric: 'tabular-nums',
       }}>
         {value}

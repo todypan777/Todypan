@@ -1492,12 +1492,10 @@ function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
 // MODAL: Cerrar turno (cuadre + handover)
 // ──────────────────────────────────────────────────────────────
 function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
-  // Fase 2: aún no hay ventas/gastos. expectedCash = openingFloat.
-  // ⚠ Este valor NUNCA se muestra a la cajera. Solo se calcula internamente
-  // y se reporta al admin si hay diferencia. La cajera declara a ciegas
-  // lo que tiene físicamente (control anti-fraude).
-  const expectedCash = session.openingFloat || 0
-
+  // ⚠ ANTI-FRAUDE: la cajera NO ve "esperado" ni "diferencia". Solo declara
+  // a ciegas lo que tiene físicamente. El admin recibe el cuadre con el
+  // desglose real (ventas + gastos) y aprueba/rechaza gastos pendientes
+  // ahí mismo, calculando expected en vivo.
   const [declaredStr, setDeclaredStr] = useState('')
   const [closingNote, setClosingNote] = useState('')
   const [handoverType, setHandoverType] = useState('admin') // 'admin' | 'cashier'
@@ -1508,9 +1506,6 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
   const [step, setStep] = useState('count') // count → handover
 
   const declared = Number(declaredStr) || 0
-  const difference = declared - expectedCash
-  const hasShortage = difference < 0
-  const hasSurplus = difference > 0
 
   useEffect(() => {
     const unsub = watchAllUsers(list => {
@@ -1533,7 +1528,6 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
     setBusy(true)
     setError(null)
     try {
-      // El monto entregado siempre es lo que la cajera declara tener.
       const handover =
         handoverType === 'admin'
           ? { type: 'admin', toName: 'Jhonatan Miranda', amount: declared }
@@ -1544,33 +1538,13 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               amount: declared,
             }
 
-      // Si hay diferencia, construimos el closingDiscrepancy:
-      // - sobra: status 'resolved' (se absorbe en el fondo automáticamente)
-      // - falta: status 'pending' (admin decide en Pendientes)
-      let closingDiscrepancy = null
-      if (hasSurplus) {
-        closingDiscrepancy = {
-          type: 'surplus',
-          amount: Math.abs(difference),
-          status: 'resolved',
-          note: closingNote.trim() || null,
-        }
-      } else if (hasShortage) {
-        closingDiscrepancy = {
-          type: 'shortage',
-          amount: Math.abs(difference),
-          status: 'pending',
-          note: closingNote.trim() || null,
-        }
-      }
-
+      // El cierre desde la cajera SOLO manda lo declarado y a quién entrega.
+      // El expectedCash, difference y closingDiscrepancy los calcula el admin
+      // al aprobar el cierre (con desglose real de ventas y gastos del turno).
       await closeSession(session.id, {
         declaredClosingCash: declared,
-        expectedCash,
-        difference,
         handover,
         closingNote: closingNote.trim() || null,
-        closingDiscrepancy,
       })
       onClosed()
     } catch (err) {

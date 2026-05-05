@@ -172,48 +172,54 @@ export async function resolveClosingDiscrepancy(sessionId, payload) {
  *   status: 'pending' siempre al cerrar (admin resuelve junto con el cierre)
  */
 export async function closeSession(sessionId, payload) {
+  // Cierre desde la cajera: solo persiste lo declarado y a quien entrega.
+  // El expectedCash, difference y closingDiscrepancy los calcula el admin
+  // al aprobar (en ApproveCloseModal con desglose real de ventas y gastos).
   const data = {
     declaredClosingCash: Number(payload.declaredClosingCash) || 0,
-    expectedCash: Number(payload.expectedCash) || 0,
-    difference: Number(payload.difference) || 0,
     handover: payload.handover,
     closedAt: serverTimestamp(),
-    status: 'pending_close',  // ← antes era 'closed'
+    status: 'pending_close',
   }
   if (payload.closingNote) {
     data.closingNote = payload.closingNote
-  }
-  if (payload.closingDiscrepancy) {
-    data.closingDiscrepancy = {
-      type: payload.closingDiscrepancy.type,
-      amount: Number(payload.closingDiscrepancy.amount) || 0,
-      status: 'pending',  // siempre pending hasta que admin apruebe
-      note: payload.closingDiscrepancy.note || null,
-      reportedAt: serverTimestamp(),
-    }
   }
   await updateDoc(sessionRef(sessionId), data)
 }
 
 /**
- * Solo admin: aprueba el cierre de un turno (y opcionalmente resuelve la
- * discrepancia si aplica). Esta acción libera la panadería para nueva apertura.
+ * Solo admin: aprueba el cierre de un turno. El admin calcula expectedCash
+ * en vivo (con desglose real de ventas + gastos del turno) y lo manda aquí.
  *
- * Si el cierre tiene una sobra (closingDiscrepancy.type === 'surplus'),
- * además se crea automáticamente un movimiento de ingreso (cat: 'sobra_caja')
- * por el monto excedente.
+ * Esta función:
+ *  - Persiste expectedCash y difference calculados por el admin.
+ *  - Crea closingDiscrepancy si hay diferencia (sobra o falta).
+ *  - Si hay SOBRA: crea automáticamente un movimiento de ingreso
+ *    (cat: 'sobra_caja') por el monto excedente.
+ *  - Si hay FALTA con resolution='cashier_deduction': el caller debe
+ *    crear la deduction antes y pasar deductionId.
+ *  - Cambia status a 'closed' (libera la panadería para nuevo turno).
  *
- * payload (todos opcionales según el caso):
- *   - reviewedBy: uid del admin
- *   - approveNote?: nota interna
- *   - resolution?: 'business_loss' | 'cashier_deduction'
- *                  (solo si hay closingDiscrepancy.type === 'shortage')
+ * payload:
+ *   - reviewedBy: uid del admin (requerido)
+ *   - expectedCash: number calculado por el admin (apertura + ventas efectivo - gastos aprobados)
+ *   - approveNote?: nota interna del admin
+ *   - resolution?: 'business_loss' | 'cashier_deduction' (solo si hay falta)
  *   - deductionId?: id en cashierDeductions (si resolution === 'cashier_deduction')
- *   - session?: el doc completo de la sesión (necesario para registrar el movimiento de sobra)
+ *   - session: el doc de la sesión (necesario para movimientos / nombres)
  */
 export async function approveSessionClose(sessionId, payload = {}) {
+  const session = payload.session || {}
+  const expectedCash = Number(payload.expectedCash) || 0
+  const declared = Number(session.declaredClosingCash) || 0
+  const difference = declared - expectedCash
+  const isSurplus = difference > 0
+  const isShortage = difference < 0
+
   const data = {
     status: 'closed',
+    expectedCash,
+    difference,
     closeApprovedAt: serverTimestamp(),
     closeApprovedBy: payload.reviewedBy || null,
   }
@@ -221,40 +227,39 @@ export async function approveSessionClose(sessionId, payload = {}) {
     data.closeApproveNote = payload.approveNote
   }
 
-  const session = payload.session
-  const cd = session?.closingDiscrepancy
-  const isSurplus = cd?.type === 'surplus'
-
-  if (payload.resolution) {
-    // Resolución de FALTA (shortage)
-    data['closingDiscrepancy.status'] =
-      payload.resolution === 'business_loss' ? 'absorbed'
-      : payload.resolution === 'cashier_deduction' ? 'deducted'
-      : 'resolved'
-    data['closingDiscrepancy.resolution'] = payload.resolution
-    data['closingDiscrepancy.reviewedBy'] = payload.reviewedBy || null
-    data['closingDiscrepancy.reviewedAt'] = serverTimestamp()
-    if (payload.deductionId) {
-      data['closingDiscrepancy.deductionId'] = payload.deductionId
+  // Construir closingDiscrepancy según el resultado del cuadre
+  if (isSurplus) {
+    data.closingDiscrepancy = {
+      type: 'surplus',
+      amount: Math.abs(difference),
+      status: 'resolved_as_income',
+      reviewedBy: payload.reviewedBy || null,
+      reviewedAt: serverTimestamp(),
     }
-    if (payload.approveNote) {
-      data['closingDiscrepancy.reviewNote'] = payload.approveNote
+  } else if (isShortage) {
+    if (!payload.resolution) {
+      throw new Error('Se requiere resolution (business_loss | cashier_deduction) para aprobar un cierre con FALTA')
     }
-  } else if (cd) {
-    // Cierre con discrepancia sin resolution explícita (sobra o exacto con flag).
-    // En el caso de sobra: se registra como ingreso y queda 'resolved'.
-    data['closingDiscrepancy.status'] = isSurplus ? 'resolved_as_income' : 'resolved'
-    data['closingDiscrepancy.reviewedAt'] = serverTimestamp()
-    data['closingDiscrepancy.reviewedBy'] = payload.reviewedBy || null
+    data.closingDiscrepancy = {
+      type: 'shortage',
+      amount: Math.abs(difference),
+      status: payload.resolution === 'business_loss' ? 'absorbed' : 'deducted',
+      resolution: payload.resolution,
+      reviewedBy: payload.reviewedBy || null,
+      reviewedAt: serverTimestamp(),
+      reviewNote: payload.approveNote || null,
+      deductionId: payload.deductionId || null,
+    }
   }
+  // Si difference === 0: cuadre exacto, no se crea closingDiscrepancy.
 
-  // Si hay sobra, crear movimiento de ingreso (cat: 'sobra_caja') antes de aprobar
+  // Si hay SOBRA, crear movimiento de ingreso "Sobra de cierre"
   let surplusMovementId = null
-  if (isSurplus && session) {
+  if (isSurplus) {
     try {
       surplusMovementId = addMovement({
         type: 'income',
-        amount: Number(cd.amount) || 0,
+        amount: Math.abs(difference),
         date: getBogotaDateStr(),
         cat: 'sobra_caja',
         branch: session.branchId || 'both',
@@ -263,14 +268,14 @@ export async function approveSessionClose(sessionId, payload = {}) {
         cashierName: session.cashierName,
         note: `Sobra de cierre · ${session.cashierName || 'cajera'}${session.branchName ? ' · ' + session.branchName : ''}`,
       })
-      data['closingDiscrepancy.surplusMovementId'] = surplusMovementId
+      data.closingDiscrepancy.surplusMovementId = surplusMovementId
     } catch (e) {
       console.warn('[cashSessions] No se pudo registrar el movimiento de sobra:', e)
     }
   }
 
   await updateDoc(sessionRef(sessionId), data)
-  return { surplusMovementId }
+  return { surplusMovementId, difference, expectedCash }
 }
 
 /**

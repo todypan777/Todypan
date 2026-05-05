@@ -25,7 +25,7 @@ import { compressAndUpload } from '../utils/imagebb'
  *  6. Confirmar → guarda venta en Firestore
  */
 export default function NewSale({ session, authUser, userDoc, onCancel, onSaved }) {
-  const cashierProducts = useCashierProducts()
+  const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
     () => mergeProductCatalogs(adminProducts, cashierProducts),
@@ -167,13 +167,34 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
         </div>
       </div>
 
-      {/* Buscador */}
+      {/* Buscador + boton refresh catalogo */}
       <div style={{ padding: '14px 18px 6px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
-        <SearchInput
-          value={query}
-          onChange={setQuery}
-          placeholder="Buscar producto..."
-        />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+          <div style={{ flex: 1 }}>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder="Buscar producto..."
+            />
+          </div>
+          <button
+            onClick={refreshCashierProducts}
+            title="Actualizar lista de productos"
+            style={{
+              width: 46, flexShrink: 0,
+              background: '#fff', border: `1.5px solid ${T.neutral[200]}`,
+              borderRadius: 14, cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: T.copper[600],
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+              <path d="M16 4 V8 H12" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M4 16 V12 H8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M5.5 8 A6 6 0 0 1 15 5 L16 8 M14.5 12 A6 6 0 0 1 5 15 L4 12" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
 
         {/* Resultados de búsqueda */}
         {query.trim().length > 0 && (
@@ -357,11 +378,33 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
 
 function useCashierProducts() {
   const [list, setList] = useState([])
+  // Token que cambia para forzar reset del listener (al volver del background
+  // o cuando la cajera toca el boton refresh).
+  const [resubToken, setResubToken] = useState(0)
+
   useEffect(() => {
     const unsub = watchCashierProducts(setList)
     return unsub
+  }, [resubToken])
+
+  // Cuando la app vuelve a primer plano, reabrir el listener para
+  // recuperar productos que pudieron crearse mientras estaba en background.
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState === 'visible') {
+        setResubToken(t => t + 1)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [])
-  return list
+
+  const refresh = () => setResubToken(t => t + 1)
+  return [list, refresh]
 }
 
 function SearchInput({ value, onChange, placeholder }) {

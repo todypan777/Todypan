@@ -4,7 +4,6 @@ import { Card, UserAvatar } from './Atoms'
 import { fmtCOP } from '../utils/format'
 import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
-import { watchPendingExpenses } from '../cashExpenses'
 import { watchAllSales } from '../sales'
 import { watchCashierProducts } from '../products'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
@@ -24,7 +23,6 @@ import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
 export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
-  const [pendingExpenses, setPendingExpenses] = useState([])
   const [allSales, setAllSales] = useState([])
   const [cashierProducts, setCashierProducts] = useState([])
 
@@ -36,7 +34,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
 
   useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchPendingExpenses(setPendingExpenses), [])
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
@@ -74,7 +71,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     pendingCloses.length +
     openingDisputes.length +
     orphanShortages.length +
-    pendingExpenses.length +
     flaggedSales.length +
     cashierProducts.length +
     overdueReminders.length +

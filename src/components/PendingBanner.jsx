@@ -4,14 +4,13 @@ import { Card, UserAvatar } from './Atoms'
 import { fmtCOP } from '../utils/format'
 import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
-import { watchPendingExpenses } from '../cashExpenses'
 
 /**
  * Banner en Dashboard que muestra todo lo que el admin tiene pendiente:
  * - Usuarios esperando aprobación
  * - Disputas de apertura de caja (Fase 2)
  * - Faltas de cierre de caja (Fase 2)
- * - (Más adelante) gastos de caja pendientes, solicitudes de edición, etc.
+ * - (Más adelante) solicitudes de edición, etc.
  *
  * La PRIMERA vez que el admin entra a la app en una sesión y hay usuarios
  * pendientes, abre un popup automático (decisión D13).
@@ -19,7 +18,6 @@ import { watchPendingExpenses } from '../cashExpenses'
 export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
-  const [pendingExpenses, setPendingExpenses] = useState([])
   const [showPopup, setShowPopup] = useState(false)
   const [popupShown, setPopupShown] = useState(false)
   const [closesPopup, setClosesPopup] = useState(null)  // sesiones nuevas a mostrar
@@ -62,11 +60,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
     }
   }, [pendingSessions])
 
-  useEffect(() => {
-    const unsub = watchPendingExpenses(setPendingExpenses)
-    return unsub
-  }, [])
-
   // Separamos disputas de apertura de faltas de cierre
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
   const closingShortages = pendingSessions.filter(s =>
@@ -76,8 +69,7 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const total =
     pendingUsers.length +
     openingDisputes.length +
-    closingShortages.length +
-    pendingExpenses.length
+    closingShortages.length
 
   const subtitleParts = []
   if (pendingUsers.length > 0) {
@@ -101,14 +93,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
         : `${closingShortages.length} faltas de cierre`
     )
   }
-  if (pendingExpenses.length > 0) {
-    subtitleParts.push(
-      pendingExpenses.length === 1
-        ? '1 gasto de caja'
-        : `${pendingExpenses.length} gastos de caja`
-    )
-  }
-
   // Si no hay nada pendiente, no renderizamos nada
   if (total === 0) return null
 
@@ -183,19 +167,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
             </DetailBox>
           )}
 
-          {pendingExpenses.length > 0 && (
-            <DetailBox title="Gastos de caja pendientes de aprobar" tone="warn">
-              {pendingExpenses.map(e => (
-                <div key={e.id} style={{ marginTop: 4, fontWeight: 500 }}>
-                  <b>{e.cashierName}</b> registró <b>{fmtMoney(e.amount)}</b> · {e.description}
-                  {e.photoUrl && (
-                    <span> · <a href={e.photoUrl} target="_blank" rel="noreferrer" style={{ color: T.copper[700], textDecoration: 'underline' }}>ver foto</a></span>
-                  )}
-                </div>
-              ))}
-              <FaseFootnote />
-            </DetailBox>
-          )}
         </div>
       )}
 

@@ -362,15 +362,18 @@ function Section({ title, count, tone = 'copper', actionLabel, onAction, childre
   return (
     <div style={{ padding: '0 16px 10px' }}>
       <Card padding={0} style={{ background: tn.bg, border: `1px solid ${tn.border}`, boxShadow: 'none', overflow: 'hidden' }}>
-        {/* Header clickeable */}
-        <button
+        {/* Header clickeable (div role=button para permitir botones internos) */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setOpen(o => !o)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}
           style={{
             width: '100%', padding: '14px 16px',
-            background: 'transparent', border: 'none',
             cursor: 'pointer', fontFamily: 'inherit',
             display: 'flex', alignItems: 'center', gap: 12,
             textAlign: 'left',
+            userSelect: 'none',
           }}
         >
           <div style={{
@@ -410,7 +413,7 @@ function Section({ title, count, tone = 'copper', actionLabel, onAction, childre
           >
             <path d="M3 5 L7 9 L11 5" stroke={tn.text} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-        </button>
+        </div>
 
         {/* Cuerpo */}
         {open && (

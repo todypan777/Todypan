@@ -32,7 +32,7 @@ import {
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
-export default function NewSale({ session, authUser, userDoc, tab, intent, onCancel, onSaved }) {
+export default function NewSale({ session, authUser, userDoc, tab, onCancel, onSaved }) {
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
@@ -42,9 +42,6 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
 
   // Modo "edit tab": precargar items del tab y mostrar número editable
   const isTabMode = !!tab
-  // Intent "tab": la cajera abrió "Nueva mesa" desde el home (no es tab existente todavía,
-  // pero queremos que el flujo apunte a guardar como mesa al final).
-  const isNewTabIntent = intent === 'tab' && !isTabMode
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState(() => tab?.items ? [...tab.items] : [])
   const [tableNumber, setTableNumber] = useState(tab?.tableNumber || null)
@@ -55,8 +52,6 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
   const [missingPriceProduct, setMissingPriceProduct] = useState(null)
   // Modal "convertir en mesa" (modo venta nueva)
   const [convertOpen, setConvertOpen] = useState(false)
-  // Modal de confirmación al eliminar tab existente
-  const [confirmDeleteTab, setConfirmDeleteTab] = useState(false)
 
   // Listener de tabs abiertas para validar números duplicados
   const [openTabs, setOpenTabs] = useState([])
@@ -214,17 +209,20 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
     }
   }
 
-  // Eliminar tab (sin cobrar) — solo en modo tab
-  async function handleDeleteTab() {
-    if (!isTabMode) return
-    try {
-      await deleteOpenTab(tab.id)
-    } catch (err) {
-      console.error('[NewSale] no se pudo eliminar la mesa:', err)
+  // Auto-cleanup: si está editando una mesa y la deja vacía, eliminar la mesa
+  // y cerrar el modal. La cajera elimina mesa quitando todos los items.
+  useEffect(() => {
+    if (isTabMode && cart.length === 0) {
+      let cancelled = false
+      ;(async () => {
+        try { await deleteOpenTab(tab.id) } catch (err) {
+          console.warn('[NewSale] no se pudo eliminar mesa vacia:', err)
+        }
+        if (!cancelled) onCancel()
+      })()
+      return () => { cancelled = true }
     }
-    setConfirmDeleteTab(false)
-    onCancel()
-  }
+  }, [isTabMode, cart.length, tab?.id])
 
   // Cambio de número de mesa (solo en modo tab) — valida duplicados
   async function handleChangeTableNumber(newNumber) {
@@ -292,10 +290,10 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-              {isTabMode ? `Mesa ${tableNumber}` : (isNewTabIntent ? 'Nueva mesa' : 'Nueva venta')}
+              {isTabMode ? `Mesa ${tableNumber}` : 'Nueva venta'}
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
-              {isNewTabIntent ? 'Agrega productos y luego guárdala' : (session.branchName || 'Panadería')}
+              {session.branchName || 'Panadería'}
             </div>
           </div>
           {isTabMode && (
@@ -460,79 +458,37 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
                 {fmtCOP(total)}
               </span>
             </div>
-            {/* Acción principal: depende del intent */}
-            {isNewTabIntent ? (
-              <>
-                <button
-                  onClick={() => setConvertOpen(true)}
-                  style={{
-                    width: '100%', padding: '15px', borderRadius: 16,
-                    background: T.copper[500], color: '#fff',
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: 15.5, fontWeight: 700,
-                    boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  }}
-                >
-                  Guardar como mesa
-                </button>
-                <button
-                  onClick={() => setPaymentOpen(true)}
-                  style={{
-                    width: '100%', marginTop: 10, padding: '13px',
-                    background: 'transparent', color: T.neutral[600],
-                    border: `1.5px solid ${T.neutral[200]}`, borderRadius: 14,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: 13.5, fontWeight: 600,
-                  }}
-                >
-                  O cobrar ahora {fmtCOP(total)}
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  onClick={() => setPaymentOpen(true)}
-                  style={{
-                    width: '100%', padding: '15px', borderRadius: 16,
-                    background: T.copper[500], color: '#fff',
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: 15.5, fontWeight: 700,
-                    boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
-                  }}
-                >
-                  Cobrar {fmtCOP(total)}
-                </button>
-                {!isTabMode && (
-                  <button
-                    onClick={() => setConvertOpen(true)}
-                    style={{
-                      width: '100%', marginTop: 10, padding: '13px',
-                      background: 'transparent', color: T.neutral[700],
-                      border: `1.5px solid ${T.neutral[300]}`, borderRadius: 14,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      fontSize: 13.5, fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    }}
-                  >
-                    O guardar como mesa
-                  </button>
-                )}
-                {isTabMode && (
-                  <button
-                    onClick={() => setConfirmDeleteTab(true)}
-                    style={{
-                      width: '100%', marginTop: 10, padding: '12px',
-                      background: 'transparent', color: T.bad,
-                      border: `1.5px solid ${T.bad}55`, borderRadius: 14,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      fontSize: 13.5, fontWeight: 700,
-                    }}
-                  >
-                    Eliminar mesa
-                  </button>
-                )}
-              </>
+            <button
+              onClick={() => setPaymentOpen(true)}
+              style={{
+                width: '100%', padding: '15px', borderRadius: 16,
+                background: T.copper[500], color: '#fff',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 15.5, fontWeight: 700,
+                boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+              }}
+            >
+              Cobrar {fmtCOP(total)}
+            </button>
+            {!isTabMode && (
+              <button
+                onClick={() => setConvertOpen(true)}
+                style={{
+                  width: '100%', marginTop: 10, padding: '14px',
+                  background: T.neutral[900], color: '#fff',
+                  border: 'none', borderRadius: 16,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 14.5, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  boxShadow: '0 3px 12px rgba(0,0,0,0.18)',
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                  <circle cx="9" cy="9" r="7" stroke="#fff" strokeWidth="1.6" fill="none"/>
+                  <path d="M9 5 V9 L11.5 11" stroke="#fff" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
+                </svg>
+                Enviar a mesa
+              </button>
             )}
             {/* En modo mesa: botón secundario "Eliminar mesa" */}
             {isTabMode && (
@@ -597,14 +553,6 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
         />
       )}
 
-      {confirmDeleteTab && (
-        <ConfirmDeleteTabModal
-          tableNumber={tableNumber}
-          itemsCount={cart.length}
-          onCancel={() => setConfirmDeleteTab(false)}
-          onConfirm={handleDeleteTab}
-        />
-      )}
     </div>
   )
 }
@@ -907,37 +855,6 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
             }}
           >
             {busy ? 'Creando...' : 'Crear mesa'}
-          </button>
-        </div>
-      </div>
-    </ModalOverlay>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────
-// MODAL: Confirmar eliminar mesa (con productos)
-// ──────────────────────────────────────────────────────────────
-function ConfirmDeleteTabModal({ tableNumber, itemsCount, onCancel, onConfirm }) {
-  return (
-    <ModalOverlay onClose={onCancel}>
-      <div onClick={e => e.stopPropagation()} style={modalCard()}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
-          ¿Eliminar Mesa {tableNumber}?
-        </div>
-        <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5 }}>
-          Esta mesa tiene <b>{itemsCount} producto{itemsCount === 1 ? '' : 's'}</b> sin cobrar. Si la eliminas, no se registrará la venta y los productos se pierden.
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
-          <button
-            onClick={onConfirm}
-            style={{
-              ...btnPrimary(T.bad),
-              flex: 1.4, color: '#fff',
-              boxShadow: `0 3px 10px ${T.bad}44`,
-            }}
-          >
-            Sí, eliminar
           </button>
         </div>
       </div>

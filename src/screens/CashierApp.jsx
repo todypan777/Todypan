@@ -628,7 +628,6 @@ function ErrorBox({ text }) {
 function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
   const [newSaleOpen, setNewSaleOpen] = useState(false)
-  const [newSaleIntent, setNewSaleIntent] = useState(null) // 'sale' | 'tab'
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [showDeductions, setShowDeductions] = useState(false)
@@ -684,44 +683,25 @@ function ActiveSession({ session, userDoc, authUser }) {
         Iniciado {openedDay} a las {openedTime}
       </div>
 
-      {/* Botones principales: Nueva venta + Nueva mesa */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-        <button
-          onClick={() => { setNewSaleIntent('sale'); setNewSaleOpen(true) }}
-          style={{
-            flex: 2, padding: '20px 12px', borderRadius: 18,
-            background: T.copper[500], color: '#fff',
-            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 16, fontWeight: 800, letterSpacing: -0.2,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-            boxShadow: '0 6px 18px rgba(184,122,86,0.4)',
-          }}
-        >
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <circle cx="11" cy="11" r="9" stroke="#fff" strokeWidth="2" fill="none"/>
-            <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
-          </svg>
-          Nueva venta
-        </button>
-        <button
-          onClick={() => { setNewSaleIntent('tab'); setNewSaleOpen(true) }}
-          title="Crea una nueva mesa: agrega productos y guárdala como burbuja"
-          style={{
-            flex: 1, padding: '20px 8px', borderRadius: 18,
-            background: T.neutral[900], color: '#fff',
-            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 14, fontWeight: 800, letterSpacing: -0.2,
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,
-            boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
-          }}
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="8" stroke="#fff" strokeWidth="1.8" fill="none"/>
-            <path d="M10 6 V14 M6 10 H14" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          <span style={{ fontSize: 13.5 }}>Mesa</span>
-        </button>
-      </div>
+      {/* Botón principal: Nueva venta (las mesas se crean desde aquí al agregar items) */}
+      <button
+        onClick={() => setNewSaleOpen(true)}
+        style={{
+          width: '100%', padding: '20px', borderRadius: 18,
+          background: T.copper[500], color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 17, fontWeight: 800, letterSpacing: -0.2,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+          boxShadow: '0 6px 18px rgba(184,122,86,0.4)',
+          marginBottom: 10,
+        }}
+      >
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="9" stroke="#fff" strokeWidth="2" fill="none"/>
+          <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
+        </svg>
+        Nueva venta
+      </button>
 
       {/* Botón secundario: Gasto de caja */}
       <button
@@ -918,9 +898,8 @@ function ActiveSession({ session, userDoc, authUser }) {
             session={session}
             authUser={authUser}
             userDoc={userDoc}
-            intent={newSaleIntent}
-            onCancel={() => { setNewSaleOpen(false); setNewSaleIntent(null) }}
-            onSaved={() => { setNewSaleOpen(false); setNewSaleIntent(null) }}
+            onCancel={() => setNewSaleOpen(false)}
+            onSaved={() => setNewSaleOpen(false)}
           />
         </div>
       )}

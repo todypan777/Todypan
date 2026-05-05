@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
-import { Card, TodyMark, UserAvatar } from '../components/Atoms'
+import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
 import { signOut } from '../auth'
 import { getData } from '../db'
@@ -85,7 +85,11 @@ function CashierTopBar({ authUser, userDoc }) {
       borderBottom: `1px solid ${T.neutral[100]}`,
       position: 'sticky', top: 0, zIndex: 20,
     }}>
-      <TodyMark size={26} color={T.copper[500]} />
+      <img
+        src="/Logo.png"
+        alt="Infinity Eventos"
+        style={{ width: 32, height: 32, objectFit: 'contain', flexShrink: 0 }}
+      />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
           TodyPan

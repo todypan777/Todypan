@@ -13,8 +13,8 @@ export default function InstallPrompt() {
       window.navigator.standalone === true
     if (isStandalone) return
 
-    // El usuario ya lo descartó esta sesión
-    if (sessionStorage.getItem('pwa-install-dismissed')) return
+    // Nota: el dismiss NO se persiste — al recargar vuelve a aparecer hasta que la
+    // app se instale realmente (display-mode: standalone).
 
     // iOS Safari
     const isIos    = /ipad|iphone|ipod/i.test(navigator.userAgent)
@@ -47,7 +47,6 @@ export default function InstallPrompt() {
   const handleDismiss = () => {
     setShowAndroid(false)
     setShowIos(false)
-    sessionStorage.setItem('pwa-install-dismissed', '1')
   }
 
   if (showAndroid) return (

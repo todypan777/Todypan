@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { Card, UserAvatar } from './Atoms'
+import { fmtCOP } from '../utils/format'
 import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview, watchSurplusFundBalance } from '../cashSessions'
 import { watchPendingExpenses } from '../cashExpenses'
@@ -24,6 +25,8 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const [surplusBalance, setSurplusBalance] = useState(0)
   const [showPopup, setShowPopup] = useState(false)
   const [popupShown, setPopupShown] = useState(false)
+  const [closesPopup, setClosesPopup] = useState(null)  // sesiones nuevas a mostrar
+  const seenCloseIdsRef = useRef(new Set())
 
   useEffect(() => {
     const unsub = watchAllUsers(list => {
@@ -41,6 +44,26 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
     const unsub = watchSessionsWithPendingReview(setPendingSessions)
     return unsub
   }, [])
+
+  // Detectar nuevos cierres pending_close (al cargar o en tiempo real)
+  // y mostrar popup llamativo al admin
+  useEffect(() => {
+    const closesNeedingApproval = pendingSessions.filter(s => s.status === 'pending_close')
+    const newOnes = closesNeedingApproval.filter(s => !seenCloseIdsRef.current.has(s.id))
+
+    if (newOnes.length > 0) {
+      newOnes.forEach(s => seenCloseIdsRef.current.add(s.id))
+      setClosesPopup(prev => {
+        // Si ya hay un popup abierto, acumular los nuevos al existente
+        if (prev && prev.length > 0) {
+          const existingIds = new Set(prev.map(s => s.id))
+          const merged = [...prev, ...newOnes.filter(s => !existingIds.has(s.id))]
+          return merged
+        }
+        return newOnes
+      })
+    }
+  }, [pendingSessions])
 
   useEffect(() => {
     const unsub = watchPendingExpenses(setPendingExpenses)
@@ -212,6 +235,17 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
           onLater={() => setShowPopup(false)}
         />
       )}
+
+      {closesPopup && closesPopup.length > 0 && (
+        <PendingClosesPopup
+          sessions={closesPopup}
+          onReview={() => {
+            setClosesPopup(null)
+            ;(onOpenPendientes || onOpenUsers)?.()
+          }}
+          onLater={() => setClosesPopup(null)}
+        />
+      )}
     </>
   )
 }
@@ -244,6 +278,206 @@ function FaseFootnote() {
 
 function fmtMoney(n) {
   return '$' + (Number(n) || 0).toLocaleString('es-CO')
+}
+
+// ──────────────────────────────────────────────────────────────
+// Popup MUY llamativo para cierres de turno pendientes
+// ──────────────────────────────────────────────────────────────
+function PendingClosesPopup({ sessions, onReview, onLater }) {
+  const isPlural = sessions.length > 1
+
+  return (
+    <div
+      onClick={onLater}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 100,
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 20,
+        animation: 'fadeIn 0.18s ease',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 440,
+          background: '#fff', borderRadius: 24,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
+          animation: 'pulseIn 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2)',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Header con color llamativo */}
+        <div style={{
+          background: `linear-gradient(135deg, ${T.warn} 0%, #C08A3E 100%)`,
+          padding: '28px 24px 24px',
+          textAlign: 'center', position: 'relative',
+        }}>
+          {/* Icono pulsante grande */}
+          <div style={{
+            width: 84, height: 84, borderRadius: 999,
+            background: 'rgba(255,255,255,0.2)',
+            border: '3px solid rgba(255,255,255,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            margin: '0 auto 14px',
+            animation: 'iconPulse 1.5s ease-in-out infinite',
+          }}>
+            <svg width="44" height="44" viewBox="0 0 32 32" fill="none">
+              <rect x="6" y="10" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2.4" fill="none"/>
+              <path d="M11 10 V7 Q11 5 13 5 H19 Q21 5 21 7 V10" stroke="#fff" strokeWidth="2.4" fill="none"/>
+              <circle cx="16" cy="17" r="1.6" fill="#fff"/>
+              <path d="M16 18.5 V21" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"/>
+            </svg>
+          </div>
+
+          <div style={{
+            fontSize: 11.5, fontWeight: 800, color: 'rgba(255,255,255,0.85)',
+            letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 6,
+          }}>
+            Acción requerida
+          </div>
+          <div style={{
+            fontSize: 22, fontWeight: 800, color: '#fff',
+            letterSpacing: -0.4, lineHeight: 1.2,
+          }}>
+            {isPlural
+              ? `${sessions.length} cierres de turno por aprobar`
+              : 'Cierre de turno por aprobar'}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '20px 22px' }}>
+          <div style={{
+            fontSize: 13.5, color: T.neutral[600],
+            textAlign: 'center', lineHeight: 1.55, marginBottom: 16,
+          }}>
+            {isPlural
+              ? 'Hay panaderías bloqueadas esperando tu aprobación para liberarse.'
+              : 'Hay una panadería bloqueada esperando tu aprobación para liberarse.'}
+          </div>
+
+          {/* Lista de cierres */}
+          <div style={{
+            background: T.neutral[50], borderRadius: 14,
+            padding: '4px 0', marginBottom: 18,
+            maxHeight: 240, overflowY: 'auto',
+          }}>
+            {sessions.slice(0, 4).map((s, i) => {
+              const cd = s.closingDiscrepancy
+              const hasShortage = cd?.type === 'shortage'
+              const hasSurplus = cd?.type === 'surplus'
+              return (
+                <div key={s.id} style={{
+                  padding: '10px 14px',
+                  borderBottom: i < Math.min(sessions.length, 4) - 1
+                    ? `0.5px solid ${T.neutral[100]}`
+                    : 'none',
+                }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 700, color: T.neutral[900],
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {s.cashierName} · {s.branchName || 'Sin nombre'}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
+                    Esperado <b>{fmtCOP(s.expectedCash || 0)}</b> · Declaró <b>{fmtCOP(s.declaredClosingCash || 0)}</b>
+                  </div>
+                  {hasShortage && (
+                    <div style={{
+                      display: 'inline-block', marginTop: 4,
+                      fontSize: 10.5, fontWeight: 700, color: T.bad,
+                      background: '#FBE9E5',
+                      padding: '2px 8px', borderRadius: 999,
+                      letterSpacing: 0.4, textTransform: 'uppercase',
+                    }}>
+                      Falta {fmtCOP(cd.amount)}
+                    </div>
+                  )}
+                  {hasSurplus && (
+                    <div style={{
+                      display: 'inline-block', marginTop: 4,
+                      fontSize: 10.5, fontWeight: 700, color: T.ok,
+                      background: '#E8F4E8',
+                      padding: '2px 8px', borderRadius: 999,
+                      letterSpacing: 0.4, textTransform: 'uppercase',
+                    }}>
+                      Sobra {fmtCOP(cd.amount)}
+                    </div>
+                  )}
+                  {!cd && (
+                    <div style={{
+                      display: 'inline-block', marginTop: 4,
+                      fontSize: 10.5, fontWeight: 700, color: T.ok,
+                      background: '#E8F4E8',
+                      padding: '2px 8px', borderRadius: 999,
+                      letterSpacing: 0.4, textTransform: 'uppercase',
+                    }}>
+                      Cuadre exacto
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            {sessions.length > 4 && (
+              <div style={{
+                padding: '8px 14px', fontSize: 11.5,
+                color: T.neutral[500], textAlign: 'center',
+              }}>
+                + {sessions.length - 4} más
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={onLater}
+              style={{
+                flex: 1, padding: '14px', borderRadius: 14,
+                background: T.neutral[100], color: T.neutral[700],
+                border: 'none', cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+              }}
+            >
+              Después
+            </button>
+            <button
+              onClick={onReview}
+              style={{
+                flex: 1.6, padding: '14px', borderRadius: 14,
+                background: T.warn, color: '#fff',
+                border: 'none', cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 14.5, fontWeight: 800,
+                boxShadow: '0 4px 14px rgba(192,138,62,0.45)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}
+            >
+              Revisar ahora
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes pulseIn {
+          0%   { transform: scale(0.92); opacity: 0; }
+          50%  { transform: scale(1.02); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes iconPulse {
+          0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,255,255,0.4); }
+          50%      { transform: scale(1.06); box-shadow: 0 0 0 12px rgba(255,255,255,0); }
+        }
+      `}</style>
+    </div>
+  )
 }
 
 function PendingUsersPopup({ users, onReview, onLater }) {

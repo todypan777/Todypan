@@ -1,11 +1,37 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { TodyMark } from '../components/Atoms'
-import { signInWithGoogle, signOut } from '../auth'
+import { signInWithGoogle, signOut, getAndClearRedirectError } from '../auth'
+
+function describeAuthError(code) {
+  switch (code) {
+    case 'auth/popup-closed-by-user':
+    case 'auth/cancelled-popup-request':
+      return null // cancelación voluntaria, no es error
+    case 'auth/popup-blocked':
+      return 'Tu navegador bloqueó la ventana. Permite popups o intenta de nuevo.'
+    case 'auth/network-request-failed':
+      return 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
+    case 'auth/unauthorized-domain':
+      return 'Este dominio no está autorizado en Firebase. El admin debe agregarlo en Authentication → Settings → Authorized domains.'
+    case 'auth/operation-not-supported-in-this-environment':
+      return 'Este navegador no soporta el inicio de sesión. Intenta con Chrome o Safari.'
+    case 'auth/web-storage-unsupported':
+      return 'Tu navegador tiene cookies/almacenamiento bloqueado. Habilítalo e intenta de nuevo.'
+    default:
+      return 'No pudimos iniciar sesión. Intenta de nuevo.'
+  }
+}
 
 export default function Login({ unauthorizedEmail = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  // Al montar: si volvimos de un redirect con error, mostrarlo
+  useEffect(() => {
+    const e = getAndClearRedirectError()
+    if (e) setError(describeAuthError(e.code) || 'No pudimos iniciar sesión. Intenta de nuevo.')
+  }, [])
 
   async function handleSignIn() {
     setError(null)
@@ -14,16 +40,8 @@ export default function Login({ unauthorizedEmail = null }) {
       await signInWithGoogle()
     } catch (err) {
       console.error(err)
-      const code = err?.code || ''
-      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-        setError(null) // el usuario canceló a propósito
-      } else if (code === 'auth/popup-blocked') {
-        setError('Tu navegador bloqueó la ventana. Permite popups o intenta de nuevo.')
-      } else if (code === 'auth/network-request-failed') {
-        setError('Sin conexión a internet. Verifica tu red e intenta de nuevo.')
-      } else {
-        setError('No pudimos iniciar sesión. Intenta de nuevo.')
-      }
+      const msg = describeAuthError(err?.code || '')
+      if (msg) setError(msg)
       setBusy(false)
     }
   }

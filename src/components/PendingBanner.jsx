@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { Card, UserAvatar } from './Atoms'
 import { fmtCOP } from '../utils/format'
 import { watchAllUsers } from '../users'
-import { watchSessionsWithPendingReview, watchSurplusFundBalance } from '../cashSessions'
+import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchPendingExpenses } from '../cashExpenses'
 
 /**
@@ -13,8 +13,6 @@ import { watchPendingExpenses } from '../cashExpenses'
  * - Faltas de cierre de caja (Fase 2)
  * - (Más adelante) gastos de caja pendientes, solicitudes de edición, etc.
  *
- * También muestra el saldo del fondo de sobras como info contextual.
- *
  * La PRIMERA vez que el admin entra a la app en una sesión y hay usuarios
  * pendientes, abre un popup automático (decisión D13).
  */
@@ -22,7 +20,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
-  const [surplusBalance, setSurplusBalance] = useState(0)
   const [showPopup, setShowPopup] = useState(false)
   const [popupShown, setPopupShown] = useState(false)
   const [closesPopup, setClosesPopup] = useState(null)  // sesiones nuevas a mostrar
@@ -70,11 +67,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
     return unsub
   }, [])
 
-  useEffect(() => {
-    const unsub = watchSurplusFundBalance(setSurplusBalance)
-    return unsub
-  }, [])
-
   // Separamos disputas de apertura de faltas de cierre
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
   const closingShortages = pendingSessions.filter(s =>
@@ -117,8 +109,8 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
     )
   }
 
-  // Si no hay nada pendiente y no hay fondo, no renderizamos nada
-  if (total === 0 && surplusBalance === 0) return null
+  // Si no hay nada pendiente, no renderizamos nada
+  if (total === 0) return null
 
   return (
     <>
@@ -204,27 +196,6 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
               <FaseFootnote />
             </DetailBox>
           )}
-        </div>
-      )}
-
-      {surplusBalance > 0 && (
-        <div style={{ padding: '8px 16px 0' }}>
-          <div style={{
-            padding: '11px 14px', borderRadius: 12,
-            background: '#E8F4E8', border: `1px solid #C2DDC1`,
-            fontSize: 12.5, color: T.ok, lineHeight: 1.5,
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-          }}>
-            <div>
-              <div style={{ fontWeight: 700 }}>Fondo de sobras</div>
-              <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 1 }}>
-                Acumulado de cierres con excedente
-              </div>
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
-              {fmtMoney(surplusBalance)}
-            </div>
-          </div>
         </div>
       )}
 

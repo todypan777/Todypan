@@ -10,6 +10,7 @@ import {
   onSnapshot,
   getDocs,
 } from 'firebase/firestore'
+import { addMovement, getBogotaDateStr } from './db'
 
 const sessionsCol = () => collection(firestoreDb, 'cashSessions')
 const sessionRef = (id) => doc(firestoreDb, 'cashSessions', id)
@@ -133,8 +134,7 @@ export async function resolveOpeningDispute(sessionId, resolution, note, adminUi
 /**
  * Resuelve una falta de cierre (closingDiscrepancy con type='shortage').
  * resolution:
- *   - 'business_loss': el negocio asume la pérdida, no afecta cajera ni fondo
- *   - 'covered_by_fund': se descuenta del fondo de sobras (admin debe verificar saldo antes)
+ *   - 'business_loss': el negocio asume la pérdida, no afecta cajera
  *   - 'cashier_deduction': se le cobra a la cajera (crea entrada en cashierDeductions)
  *
  * payload:
@@ -145,9 +145,7 @@ export async function resolveOpeningDispute(sessionId, resolution, note, adminUi
  */
 export async function resolveClosingDiscrepancy(sessionId, payload) {
   await updateDoc(sessionRef(sessionId), {
-    'closingDiscrepancy.status': payload.resolution === 'business_loss' ? 'absorbed'
-                                : payload.resolution === 'covered_by_fund' ? 'fundCovered'
-                                : 'deducted',
+    'closingDiscrepancy.status': payload.resolution === 'business_loss' ? 'absorbed' : 'deducted',
     'closingDiscrepancy.resolution': payload.resolution,
     'closingDiscrepancy.reviewNote': payload.note || null,
     'closingDiscrepancy.reviewedBy': payload.reviewedBy,
@@ -201,12 +199,17 @@ export async function closeSession(sessionId, payload) {
  * Solo admin: aprueba el cierre de un turno (y opcionalmente resuelve la
  * discrepancia si aplica). Esta acción libera la panadería para nueva apertura.
  *
+ * Si el cierre tiene una sobra (closingDiscrepancy.type === 'surplus'),
+ * además se crea automáticamente un movimiento de ingreso (cat: 'sobra_caja')
+ * por el monto excedente.
+ *
  * payload (todos opcionales según el caso):
  *   - reviewedBy: uid del admin
  *   - approveNote?: nota interna
- *   - resolution?: 'business_loss' | 'covered_by_fund' | 'cashier_deduction'
+ *   - resolution?: 'business_loss' | 'cashier_deduction'
  *                  (solo si hay closingDiscrepancy.type === 'shortage')
  *   - deductionId?: id en cashierDeductions (si resolution === 'cashier_deduction')
+ *   - session?: el doc completo de la sesión (necesario para registrar el movimiento de sobra)
  */
 export async function approveSessionClose(sessionId, payload = {}) {
   const data = {
@@ -218,10 +221,14 @@ export async function approveSessionClose(sessionId, payload = {}) {
     data.closeApproveNote = payload.approveNote
   }
 
+  const session = payload.session
+  const cd = session?.closingDiscrepancy
+  const isSurplus = cd?.type === 'surplus'
+
   if (payload.resolution) {
+    // Resolución de FALTA (shortage)
     data['closingDiscrepancy.status'] =
       payload.resolution === 'business_loss' ? 'absorbed'
-      : payload.resolution === 'covered_by_fund' ? 'fundCovered'
       : payload.resolution === 'cashier_deduction' ? 'deducted'
       : 'resolved'
     data['closingDiscrepancy.resolution'] = payload.resolution
@@ -233,15 +240,37 @@ export async function approveSessionClose(sessionId, payload = {}) {
     if (payload.approveNote) {
       data['closingDiscrepancy.reviewNote'] = payload.approveNote
     }
-  } else {
-    // Si hay surplus pero no hay resolution explícita, marcar como resuelto al fondo
-    // (esto se procesa al aprobar el cierre).
-    data['closingDiscrepancy.status'] = 'resolved'
+  } else if (cd) {
+    // Cierre con discrepancia sin resolution explícita (sobra o exacto con flag).
+    // En el caso de sobra: se registra como ingreso y queda 'resolved'.
+    data['closingDiscrepancy.status'] = isSurplus ? 'resolved_as_income' : 'resolved'
     data['closingDiscrepancy.reviewedAt'] = serverTimestamp()
     data['closingDiscrepancy.reviewedBy'] = payload.reviewedBy || null
   }
 
+  // Si hay sobra, crear movimiento de ingreso (cat: 'sobra_caja') antes de aprobar
+  let surplusMovementId = null
+  if (isSurplus && session) {
+    try {
+      surplusMovementId = addMovement({
+        type: 'income',
+        amount: Number(cd.amount) || 0,
+        date: getBogotaDateStr(),
+        cat: 'sobra_caja',
+        branch: session.branchId || 'both',
+        origin: 'caja',
+        sessionId,
+        cashierName: session.cashierName,
+        note: `Sobra de cierre · ${session.cashierName || 'cajera'}${session.branchName ? ' · ' + session.branchName : ''}`,
+      })
+      data['closingDiscrepancy.surplusMovementId'] = surplusMovementId
+    } catch (e) {
+      console.warn('[cashSessions] No se pudo registrar el movimiento de sobra:', e)
+    }
+  }
+
   await updateDoc(sessionRef(sessionId), data)
+  return { surplusMovementId }
 }
 
 /**
@@ -271,32 +300,33 @@ export function watchSessionsWithPendingReview(callback) {
 }
 
 /**
- * Calcula el saldo del fondo de sobras a partir de las sesiones cerradas:
- *  + sobras (closingDiscrepancy.type === 'surplus')
- *  − faltas cubiertas con fondo (resolution === 'covered_by_fund')
+ * Suscripción a las sesiones cerradas o pendientes de cierre cuyo cierre cae
+ * en una fecha específica (zona Bogotá). Usado por la pantalla Registro para
+ * mostrar el historial de cierres del día.
+ *
+ * Filtramos en cliente porque closedAt es Timestamp (no string).
  */
-export function watchSurplusFundBalance(callback) {
-  const q = query(sessionsCol(), where('status', '==', 'closed'))
+export function watchClosedSessionsForDate(dateStr, callback) {
+  if (!dateStr) { callback([]); return () => {} }
+  const q = query(sessionsCol(), where('status', 'in', ['closed', 'pending_close']))
   return onSnapshot(
     q,
     snap => {
-      let balance = 0
-      snap.docs.forEach(d => {
-        const data = d.data()
-        const cd = data.closingDiscrepancy
-        if (!cd) return
-        if (cd.type === 'surplus') {
-          balance += Number(cd.amount) || 0
-        }
-        if (cd.resolution === 'covered_by_fund') {
-          balance -= Number(cd.amount) || 0
-        }
-      })
-      callback(Math.max(0, balance))
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(s => {
+          const ts = s.closedAt?.toDate?.()
+          if (!ts) return false
+          // Convertir a fecha Bogotá (YYYY-MM-DD)
+          const bogotaDate = ts.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          return bogotaDate === dateStr
+        })
+        .sort((a, b) => (b.closedAt?.toMillis?.() ?? 0) - (a.closedAt?.toMillis?.() ?? 0))
+      callback(list)
     },
     err => {
-      console.error('[cashSessions] watchSurplusFundBalance error:', err)
-      callback(0)
+      console.error('[cashSessions] watchClosedSessionsForDate error:', err)
+      callback([])
     }
   )
 }

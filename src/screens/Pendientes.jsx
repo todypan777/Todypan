@@ -8,7 +8,6 @@ import { useAuth } from '../context/AuthCtx'
 import { watchAllUsers } from '../users'
 import {
   watchSessionsWithPendingReview,
-  watchSurplusFundBalance,
   resolveOpeningDispute,
   resolveClosingDiscrepancy,
   approveSessionClose,
@@ -33,7 +32,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
   const [allSales, setAllSales] = useState([])
-  const [surplusBalance, setSurplusBalance] = useState(0)
   const [cashierProducts, setCashierProducts] = useState([])
 
   useEffect(() => watchAllUsers(list => {
@@ -43,7 +41,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchPendingExpenses(setPendingExpenses), [])
   useEffect(() => watchAllSales(setAllSales), [])
-  useEffect(() => watchSurplusFundBalance(setSurplusBalance), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
   // Reminders y asistencia (legacy del admin) — recalcula al cambiar dataTick
@@ -203,7 +200,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
         <PendingClosesSection
           sessions={pendingCloses}
           adminUid={authUser.uid}
-          surplusBalance={surplusBalance}
           allUsers={allUsers}
         />
       )}
@@ -212,7 +208,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
         <ClosingShortagesSection
           sessions={orphanShortages}
           adminUid={authUser.uid}
-          surplusBalance={surplusBalance}
           allUsers={allUsers}
         />
       )}
@@ -230,25 +225,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
           products={cashierProducts}
           onOpenProducts={onOpenProducts}
         />
-      )}
-
-      {/* Saldo del fondo de sobras (siempre visible si > 0) */}
-      {surplusBalance > 0 && (
-        <div style={{ padding: '0 16px 12px' }}>
-          <Card style={{ background: '#E8F4E8', border: `1px solid #C2DDC1`, boxShadow: 'none' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: T.ok }}>Fondo de sobras</div>
-                <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
-                  Disponible para cubrir faltas futuras
-                </div>
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: T.ok, fontVariantNumeric: 'tabular-nums' }}>
-                {fmtCOP(surplusBalance)}
-              </div>
-            </div>
-          </Card>
-        </div>
       )}
     </div>
   )
@@ -541,7 +517,7 @@ function OpeningDisputeModal({ session, adminUid, onCancel, onResolved }) {
 // ──────────────────────────────────────────────────────────────
 // Cierres pendientes de aprobación (TODOS los cierres pasan por aquí)
 // ──────────────────────────────────────────────────────────────
-function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) {
+function PendingClosesSection({ sessions, adminUid, allUsers }) {
   const [reviewing, setReviewing] = useState(null)
   return (
     <>
@@ -570,7 +546,7 @@ function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) 
                 )}
                 {hasSurplus && (
                   <div style={{ fontSize: 12, color: T.ok, fontWeight: 700, marginTop: 2 }}>
-                    Sobra {fmtCOP(cd.amount)} (al fondo si apruebas)
+                    Sobra {fmtCOP(cd.amount)} (se registra como ingreso)
                   </div>
                 )}
                 {!cd && (
@@ -591,7 +567,6 @@ function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) 
         <ApproveCloseModal
           session={reviewing}
           adminUid={adminUid}
-          surplusBalance={surplusBalance}
           allUsers={allUsers}
           onCancel={() => setReviewing(null)}
           onResolved={() => setReviewing(null)}
@@ -601,12 +576,11 @@ function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) 
   )
 }
 
-function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCancel, onResolved }) {
+function ApproveCloseModal({ session, adminUid, allUsers, onCancel, onResolved }) {
   const cd = session.closingDiscrepancy
   const hasShortage = cd?.type === 'shortage'
   const hasSurplus = cd?.type === 'surplus'
   const amount = cd?.amount || 0
-  const canCoverWithFund = surplusBalance >= amount
 
   const [resolution, setResolution] = useState(null)
   const [note, setNote] = useState('')
@@ -641,6 +615,7 @@ function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCanc
         approveNote: note.trim() || null,
         resolution: needsResolution ? resolution : null,
         deductionId,
+        session,
       })
       onResolved()
     } catch (err) {
@@ -721,17 +696,7 @@ function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCanc
               selected={resolution === 'business_loss'}
               onClick={() => setResolution('business_loss')}
               title="Asumir como pérdida del negocio"
-              subtitle="No afecta a la cajera ni al fondo. Solo se registra."
-            />
-            <RadioOption
-              selected={resolution === 'covered_by_fund'}
-              onClick={() => canCoverWithFund && setResolution('covered_by_fund')}
-              title="Cubrir con fondo de sobras"
-              subtitle={canCoverWithFund
-                ? `Disponible: ${fmtCOP(surplusBalance)}. Se descuentan ${fmtCOP(amount)}.`
-                : `Saldo insuficiente (tienes ${fmtCOP(surplusBalance)}).`
-              }
-              disabled={!canCoverWithFund}
+              subtitle="No afecta a la cajera. Solo se registra."
             />
             <RadioOption
               selected={resolution === 'cashier_deduction'}
@@ -751,7 +716,7 @@ function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCanc
             marginBottom: 12,
           }}>
             {hasSurplus
-              ? `Al aprobar, ${fmtCOP(amount)} se sumarán al fondo de sobras y la panadería quedará libre.`
+              ? `Al aprobar, se registrará un ingreso de ${fmtCOP(amount)} con la nota "Sobra de cierre" y la panadería quedará libre.`
               : 'Al aprobar, la panadería quedará libre para nuevo turno.'}
           </div>
         )}
@@ -775,7 +740,7 @@ function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCanc
 // ──────────────────────────────────────────────────────────────
 // Faltas de cierre (LEGACY: solo para sesiones cerradas antes del cambio)
 // ──────────────────────────────────────────────────────────────
-function ClosingShortagesSection({ sessions, adminUid, surplusBalance, allUsers }) {
+function ClosingShortagesSection({ sessions, adminUid, allUsers }) {
   const [resolving, setResolving] = useState(null)
   return (
     <>
@@ -810,7 +775,6 @@ function ClosingShortagesSection({ sessions, adminUid, surplusBalance, allUsers 
         <ClosingShortageModal
           session={resolving}
           adminUid={adminUid}
-          surplusBalance={surplusBalance}
           allUsers={allUsers}
           onCancel={() => setResolving(null)}
           onResolved={() => setResolving(null)}
@@ -820,15 +784,14 @@ function ClosingShortagesSection({ sessions, adminUid, surplusBalance, allUsers 
   )
 }
 
-function ClosingShortageModal({ session, adminUid, surplusBalance, allUsers, onCancel, onResolved }) {
-  const [resolution, setResolution] = useState(null) // 'business_loss' | 'covered_by_fund' | 'cashier_deduction'
+function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolved }) {
+  const [resolution, setResolution] = useState(null) // 'business_loss' | 'cashier_deduction'
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
   const cd = session.closingDiscrepancy
   const amount = cd.amount
-  const canCoverWithFund = surplusBalance >= amount
 
   async function handleConfirm() {
     if (!resolution || busy) return
@@ -897,17 +860,7 @@ function ClosingShortageModal({ session, adminUid, surplusBalance, allUsers, onC
           selected={resolution === 'business_loss'}
           onClick={() => setResolution('business_loss')}
           title="Asumir como pérdida del negocio"
-          subtitle="No afecta a la cajera ni al fondo. Solo se registra."
-        />
-        <RadioOption
-          selected={resolution === 'covered_by_fund'}
-          onClick={() => canCoverWithFund && setResolution('covered_by_fund')}
-          title="Cubrir con fondo de sobras"
-          subtitle={canCoverWithFund
-            ? `Disponible: ${fmtCOP(surplusBalance)}. Se descuentan ${fmtCOP(amount)}.`
-            : `Saldo insuficiente (tienes ${fmtCOP(surplusBalance)}).`
-          }
-          disabled={!canCoverWithFund}
+          subtitle="No afecta a la cajera. Solo se registra."
         />
         <RadioOption
           selected={resolution === 'cashier_deduction'}

@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtDate } from '../utils/format'
 import { Card, BranchChip } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaDateStr, isDayConfirmed, calcHourRate } from '../db'
+import { watchClosedSessionsForDate } from '../cashSessions'
 
 // Registro es solo VISUALIZACIÓN + acceso al formulario de confirmación.
 // No permite edición inline — toda edición pasa por DailyConfirmation o DayEditModal.
@@ -11,6 +12,9 @@ import { getBogotaDateStr, isDayConfirmed, calcHourRate } from '../db'
 export default function Registro({ employees, attendance, onRefresh, onConfirmDay, onEditDay }) {
   const todayStr = getBogotaDateStr()
   const [date, setDate] = useState(todayStr)
+  const [closures, setClosures] = useState([])
+
+  useEffect(() => watchClosedSessionsForDate(date, setClosures), [date])
 
   const confirmed = isDayConfirmed(date)
   const isToday = date === todayStr
@@ -282,6 +286,177 @@ export default function Registro({ employees, attendance, onRefresh, onConfirmDa
           </button>
         </div>
       )}
+
+      {/* ── Historial de cierres del día ── */}
+      {!isFuture && closures.length > 0 && <ClosuresHistory closures={closures} />}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Historial de cierres de caja del día seleccionado
+// ──────────────────────────────────────────────────────────────
+function ClosuresHistory({ closures }) {
+  return (
+    <div style={{ padding: '24px 16px 0' }}>
+      <div style={{
+        fontSize: 12, fontWeight: 700, color: T.neutral[500],
+        textTransform: 'uppercase', letterSpacing: 0.5,
+        paddingLeft: 4, marginBottom: 10,
+      }}>
+        Cierres de caja · {closures.length}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {closures.map(s => <ClosureCard key={s.id} session={s} />)}
+      </div>
+    </div>
+  )
+}
+
+function ClosureCard({ session }) {
+  const cd = session.closingDiscrepancy
+  const hasShortage = cd?.type === 'shortage'
+  const hasSurplus = cd?.type === 'surplus'
+  const isPending = session.status === 'pending_close'
+
+  // Estado y color de borde
+  const tone = isPending
+    ? { border: '#F0D9A0', bg: '#FFF8EC', label: 'Pendiente de aprobación', labelColor: '#7A5C00' }
+    : hasShortage
+      ? { border: `${T.bad}33`, bg: '#fff', label: null, labelColor: null }
+      : hasSurplus
+        ? { border: `${T.ok}35`, bg: '#fff', label: null, labelColor: null }
+        : { border: T.neutral[100], bg: '#fff', label: null, labelColor: null }
+
+  const opened = session.openedAt?.toDate?.()
+  const closed = session.closedAt?.toDate?.()
+  const fmtTime = (d) => d
+    ? d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+    : '—'
+
+  // Texto de resolución de la falta
+  const resolutionLabel = hasShortage && cd.resolution
+    ? cd.resolution === 'business_loss' ? 'Asumido como pérdida'
+      : cd.resolution === 'cashier_deduction' ? 'Descontado a la cajera'
+      : cd.resolution === 'covered_by_fund' ? 'Cubierto con fondo (legacy)'
+      : null
+    : null
+
+  return (
+    <Card padding={14} style={{ border: `1.5px solid ${tone.border}`, background: tone.bg }}>
+      {/* Header: cajera + panadería + hora */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900] }}>
+            {session.cashierName || 'Cajera'}
+          </div>
+          <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
+            {session.branchName || 'Sin nombre'} · {fmtTime(opened)} → {fmtTime(closed)}
+          </div>
+        </div>
+        {tone.label && (
+          <div style={{
+            padding: '3px 9px', borderRadius: 999,
+            background: '#F4E0BC', color: tone.labelColor,
+            fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+            flexShrink: 0,
+          }}>
+            {tone.label}
+          </div>
+        )}
+      </div>
+
+      {/* Cifras: apertura · esperado · declarado */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6,
+        padding: '8px 10px', borderRadius: 10,
+        background: T.neutral[50],
+      }}>
+        <Stat label="Apertura" value={fmtCOP(session.openingFloat || 0)} />
+        <Stat label="Esperado" value={fmtCOP(session.expectedCash || 0)} />
+        <Stat label="Declaró" value={fmtCOP(session.declaredClosingCash || 0)} />
+      </div>
+
+      {/* Resultado */}
+      <div style={{ marginTop: 10 }}>
+        {!cd && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: 13, fontWeight: 700, color: T.ok,
+          }}>
+            ✓ Cuadre exacto
+          </div>
+        )}
+        {hasSurplus && (
+          <div style={{
+            fontSize: 13, fontWeight: 700, color: T.ok,
+          }}>
+            ✓ Sobra {fmtCOP(cd.amount)} <span style={{ fontWeight: 500, color: T.neutral[600] }}>· registrada como ingreso</span>
+          </div>
+        )}
+        {hasShortage && (
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.bad }}>
+              ✗ Falta {fmtCOP(cd.amount)}
+            </div>
+            {resolutionLabel && (
+              <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
+                {resolutionLabel}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Handover (a quién entregó) */}
+      {session.handover && (
+        <div style={{
+          marginTop: 10, paddingTop: 10, borderTop: `0.5px solid ${T.neutral[100]}`,
+          fontSize: 11.5, color: T.neutral[600],
+        }}>
+          Entregó <b style={{ color: T.neutral[800] }}>{fmtCOP(session.handover.amount)}</b> a {session.handover.toName}
+          {session.handover.type === 'admin' && ' (admin)'}
+        </div>
+      )}
+
+      {/* Notas */}
+      {(session.closingNote || cd?.note) && (
+        <div style={{
+          marginTop: 8, padding: '8px 10px', borderRadius: 8,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`,
+          fontSize: 11.5, color: T.neutral[700], fontStyle: 'italic', lineHeight: 1.4,
+        }}>
+          <b style={{ fontStyle: 'normal', color: T.warn }}>Cajera:</b> "{cd?.note || session.closingNote}"
+        </div>
+      )}
+      {cd?.reviewNote && (
+        <div style={{
+          marginTop: 6, padding: '8px 10px', borderRadius: 8,
+          background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+          fontSize: 11.5, color: T.neutral[700], fontStyle: 'italic', lineHeight: 1.4,
+        }}>
+          <b style={{ fontStyle: 'normal', color: T.neutral[600] }}>Admin:</b> "{cd.reviewNote}"
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function Stat({ label, value }) {
+  return (
+    <div style={{ textAlign: 'center' }}>
+      <div style={{
+        fontSize: 9.5, fontWeight: 700, color: T.neutral[500],
+        textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 2,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 12.5, fontWeight: 700, color: T.neutral[800],
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {value}
+      </div>
     </div>
   )
 }

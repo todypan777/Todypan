@@ -11,6 +11,7 @@ const defaultIncomeCats = [
   { id: 'pedidos',          label: 'Pedidos especiales' },
   { id: 'domicilios',       label: 'Domicilios' },
   { id: 'mayorista',        label: 'Venta mayorista' },
+  { id: 'sobra_caja',       label: 'Sobra de cierre' },
 ]
 
 const defaultExpenseCats = {
@@ -63,6 +64,10 @@ function migrate(d) {
   if (!d.dailyConfirmations) d.dailyConfirmations = {}
   if (!d.branches) d.branches = defaultData().branches
   if (!d.incomeCats) d.incomeCats = defaultIncomeCats
+  // Migrar: agregar 'sobra_caja' si falta (apps con datos previos)
+  if (Array.isArray(d.incomeCats) && !d.incomeCats.some(c => c.id === 'sobra_caja')) {
+    d.incomeCats = [...d.incomeCats, { id: 'sobra_caja', label: 'Sobra de cierre' }]
+  }
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []

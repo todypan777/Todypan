@@ -25,6 +25,9 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        // El handler de Firebase Auth (/__/auth/*) NO debe ser interceptado
+        // por el SW: rompería el flujo de login con Google en PWA.
+        navigateFallbackDenylist: [/^\/__\/auth\//],
       },
     }),
   ],

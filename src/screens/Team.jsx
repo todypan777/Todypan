@@ -34,14 +34,6 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
   const pendingUsers = users.filter(u => u.status === 'pending')
   const inactiveUsers = users.filter(u => u.status === 'inactive')
 
-  // Si hay pendientes y no se ha forzado tab, sugerir Pendientes
-  useEffect(() => {
-    if (pendingUsers.length > 0 && tab === 'active' && pendingUsers.length === users.filter(u => u.status === 'pending').length) {
-      // No auto-switch; solo mostrar badge
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingUsers.length])
-
   // Activos: empleados (con su user vinculado si existe)
   const filtered = employees.filter(e => filter === 'all' || e.branch === filter)
   const stats = filtered.map(e => {

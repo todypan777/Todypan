@@ -75,13 +75,6 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
       <ScreenHeader
         title={monthLabel}
         subtitle={greeting}
-        right={
-          <IconButton>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M3 6 H15 M5 9 H13 M7 12 H11" stroke={T.neutral[600]} strokeWidth="1.6" strokeLinecap="round"/>
-            </svg>
-          </IconButton>
-        }
       />
 
       {/* Branch filter */}

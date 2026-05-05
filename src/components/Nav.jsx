@@ -372,7 +372,9 @@ export function ScreenHeader({ title, subtitle, right }) {
   const isDesktop = useIsDesktop()
   return (
     <div style={{
-      padding: isDesktop ? '28px 32px 16px' : '56px 20px 12px',
+      padding: isDesktop
+        ? '24px 32px 16px'
+        : 'calc(env(safe-area-inset-top, 0px) + 20px) 20px 12px',
       display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12,
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>

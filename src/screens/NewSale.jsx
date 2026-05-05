@@ -88,19 +88,20 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
     }
   }
 
-  async function handleConfirmFirstTimePrice(price) {
+  function handleConfirmFirstTimePrice(price) {
     const product = missingPriceProduct
     if (!product || !price || Number(price) <= 0) return
     const num = Number(price)
-    try {
-      if (product.source === 'admin') {
-        setProductPriceForBranch(product.id, branchId, num)
-      } else if (product.source === 'cashier') {
-        await setCashierProductPriceForBranch(product.id, branchId, num)
-      }
-      addProductToCart(product, num)
-    } finally {
-      setMissingPriceProduct(null)
+    // Agregar al carrito de inmediato — la cajera NO debe esperar Firestore.
+    addProductToCart(product, num)
+    setMissingPriceProduct(null)
+    // Persistir el precio en background; si falla solo se queda como precio
+    // del item del carrito (la venta igual queda con unitPrice congelado).
+    if (product.source === 'admin') {
+      try { setProductPriceForBranch(product.id, branchId, num) } catch (e) { console.warn('[POS] no se pudo persistir precio admin:', e) }
+    } else if (product.source === 'cashier') {
+      setCashierProductPriceForBranch(product.id, branchId, num)
+        .catch(e => console.warn('[POS] no se pudo persistir precio cajera:', e))
     }
   }
 
@@ -208,11 +209,6 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
                     }}>
                       {p.name}
                     </div>
-                    {p.needsCostReview && (
-                      <div style={{ fontSize: 10.5, color: T.warn, marginTop: 2 }}>
-                        pendiente de revisión por admin
-                      </div>
-                    )}
                   </div>
                   {needsPrice ? (
                     <div style={{
@@ -564,26 +560,16 @@ function CreateProductModal({ initialName, authUser, userDoc, branchId, branchNa
 // ──────────────────────────────────────────────────────────────
 function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
   const [priceStr, setPriceStr] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
 
   const valid = Number(priceStr) > 0
 
-  async function handleConfirm() {
-    if (!valid || busy) return
-    setBusy(true)
-    setError(null)
-    try {
-      await onConfirm(Number(priceStr))
-    } catch (err) {
-      console.error(err)
-      setError('No pudimos guardar el precio. Intenta de nuevo.')
-      setBusy(false)
-    }
+  function handleConfirm() {
+    if (!valid) return
+    onConfirm(Number(priceStr))
   }
 
   return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
+    <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
           Primera venta de este producto
@@ -596,25 +582,22 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
           label={`Precio en ${branchName || 'esta panadería'}`}
           value={priceStr}
           onChange={setPriceStr}
-          disabled={busy}
         />
 
-        {error && <ErrorBox text={error} />}
-
         <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleConfirm}
-            disabled={!valid || busy}
+            disabled={!valid}
             style={{
-              ...btnPrimary(valid && !busy ? T.copper[500] : T.neutral[200]),
+              ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
               flex: 1.4,
-              color: valid && !busy ? '#fff' : T.neutral[400],
-              cursor: valid && !busy ? 'pointer' : 'not-allowed',
-              boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+              color: valid ? '#fff' : T.neutral[400],
+              cursor: valid ? 'pointer' : 'not-allowed',
+              boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
             }}
           >
-            {busy ? 'Guardando...' : 'Guardar y agregar'}
+            Guardar y agregar
           </button>
         </div>
       </div>

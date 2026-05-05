@@ -185,7 +185,8 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
     setConvertOpen(true)
   }
 
-  // Convertir venta nueva → mesa con número escogido
+  // Convertir venta nueva → mesa con número escogido.
+  // Devuelve un mensaje de error si falla, null si OK (para que el modal lo muestre).
   async function handleConvertToTab(numberToUse) {
     try {
       await createOpenTab({
@@ -198,8 +199,18 @@ export default function NewSale({ session, authUser, userDoc, tab, intent, onCan
       })
       setConvertOpen(false)
       onCancel() // cerrar el modal de venta; la burbuja aparecerá vía listener
+      return null
     } catch (err) {
       console.error('[NewSale] no se pudo crear la mesa:', err)
+      // Detectar errores típicos de Firestore para mostrar mensaje claro
+      const code = err?.code || ''
+      if (code === 'permission-denied') {
+        return 'Las reglas de Firestore bloquean crear mesas. El admin debe habilitar /openTabs en Firebase.'
+      }
+      if (code === 'unavailable' || code === 'failed-precondition') {
+        return 'Sin conexión a la base de datos. Verifica tu red.'
+      }
+      return `No se pudo crear la mesa. ${err?.message || 'Intenta de nuevo.'}`
     }
   }
 
@@ -842,6 +853,7 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
   const defaultNum = nextFreeTableNumber(openTabs)
   const [str, setStr] = useState(String(defaultNum))
   const [error, setError] = useState(null)
+  const [busy, setBusy] = useState(false)
   const num = Number(str)
   const isTaken = num > 0 && isTableNumberTaken(openTabs, num)
   const valid = num > 0 && !isTaken
@@ -851,7 +863,14 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
       if (isTaken) setError(`Ya tienes una Mesa ${num}. Elige otro número.`)
       return
     }
-    await onConfirm(num)
+    setBusy(true)
+    setError(null)
+    const errMsg = await onConfirm(num)
+    if (errMsg) {
+      setError(errMsg)
+      setBusy(false)
+    }
+    // Si onConfirm tuvo éxito, el modal se cierra desde fuera (no hace falta resetear busy)
   }
 
   return (
@@ -875,19 +894,19 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
         )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleConfirm}
-            disabled={!valid}
+            disabled={!valid || busy}
             style={{
-              ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
+              ...btnPrimary(valid && !busy ? T.copper[500] : T.neutral[200]),
               flex: 1.4,
-              color: valid ? '#fff' : T.neutral[400],
-              cursor: valid ? 'pointer' : 'not-allowed',
-              boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+              color: valid && !busy ? '#fff' : T.neutral[400],
+              cursor: valid && !busy ? 'pointer' : 'not-allowed',
+              boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
             }}
           >
-            Crear mesa
+            {busy ? 'Creando...' : 'Crear mesa'}
           </button>
         </div>
       </div>

@@ -34,13 +34,6 @@ const MORE_TABS = [
       <path d="M17 14 H7 M17 14 L14 11 M17 14 L14 17" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   )},
-  { id: 'ventas', label: 'Ventas', icon: (c) => (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-      <rect x="3" y="6" width="14" height="11" rx="2" stroke={c} strokeWidth="1.6" fill="none"/>
-      <path d="M7 6 V4 Q7 3 8 3 H12 Q13 3 13 4 V6" stroke={c} strokeWidth="1.6" fill="none"/>
-      <path d="M6 10 H14 M6 13 H10" stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
-    </svg>
-  )},
   { id: 'deudores', label: 'Deudores', icon: (c) => (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <circle cx="10" cy="7" r="3" stroke={c} strokeWidth="1.6" fill="none"/>

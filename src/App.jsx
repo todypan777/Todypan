@@ -20,7 +20,6 @@ import Registro from './screens/Registro'
 import Products from './screens/Products'
 import Users from './screens/Users'
 import Pendientes from './screens/Pendientes'
-import Ventas from './screens/Ventas'
 import Deudores from './screens/Deudores'
 import Login from './screens/Login'
 import {
@@ -136,9 +135,6 @@ function AppShell() {
     } else if (target === 'pendientes') {
       setMoreSub('pendientes')
       setTab('more')
-    } else if (target === 'ventas') {
-      setMoreSub('ventas')
-      setTab('more')
     } else if (target === 'deudores') {
       setMoreSub('deudores')
       setTab('more')
@@ -153,7 +149,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users', 'pendientes', 'ventas', 'deudores'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'users', 'pendientes', 'deudores'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -279,12 +275,6 @@ function AppShell() {
           onOpenReminders={() => setMoreSub('reminders')}
           onConfirmAttendance={() => setConfirmingDate(getBogotaDateStr())}
           dataTick={dataTick}
-        />
-      )
-    } else if (moreSub === 'ventas') {
-      content = (
-        <Ventas
-          onBack={() => setMoreSub(null)}
         />
       )
     } else if (moreSub === 'deudores') {

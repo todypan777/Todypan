@@ -485,9 +485,9 @@ function SalesList({ sales, branches, onClick }) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Modal de detalle
+// Modal de detalle (exportado para uso desde Movements unificado)
 // ──────────────────────────────────────────────────────────────
-function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
+export function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [editing, setEditing] = useState(false)
   const branch = branches.find(b => String(b.id) === String(sale.branchId))

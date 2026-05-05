@@ -12,21 +12,11 @@ export default function More({ onOpen }) {
 
   const items = [
     {
-      id: 'movements', label: 'Movimientos', desc: 'Historial de ingresos y gastos',
+      id: 'movements', label: 'Movimientos', desc: 'Ingresos, gastos y ventas — todo en un lugar',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
           <path d="M3 6 H13 M3 6 L6 3 M3 6 L6 9" stroke={T.copper[600]} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
           <path d="M17 14 H7 M17 14 L14 11 M17 14 L14 17" stroke={T.copper[600]} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      ),
-    },
-    {
-      id: 'ventas', label: 'Ventas', desc: 'Historial de ventas de cajeras',
-      icon: (
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-          <rect x="3" y="6" width="14" height="11" rx="2" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
-          <path d="M7 6 V4 Q7 3 8 3 H12 Q13 3 13 4 V6" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
-          <path d="M6 10 H14 M6 13 H10" stroke={T.copper[600]} strokeWidth="1.4" strokeLinecap="round"/>
         </svg>
       ),
     },

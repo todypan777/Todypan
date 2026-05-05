@@ -85,12 +85,15 @@ export async function bootstrapAdminIfNeeded(authUser) {
 
 /**
  * Aprueba un user pendiente y crea su empleado vinculado.
- * employeeData: { nombre, apellido, telefono, rate? }
+ * employeeData: { nombre, apellido, telefono, cargo, branch, restDay, rate }
  */
 export async function approveUserAndCreateEmployee(uid, employeeData, approvedByUid) {
   const fullName = `${employeeData.nombre.trim()} ${employeeData.apellido.trim()}`.trim()
   const empPayload = {
     name: fullName,
+    role: employeeData.cargo?.trim() || '',
+    branch: employeeData.branch ?? 1,
+    restDay: Number.isInteger(employeeData.restDay) ? employeeData.restDay : 0,
     phone: employeeData.telefono.trim(),
     rate: Number(employeeData.rate) || 0,
     type: 'regular',

@@ -88,7 +88,7 @@ function CashierTopBar({ authUser, userDoc }) {
       <img
         src="/Logo.png"
         alt="Infinity Eventos"
-        style={{ width: 32, height: 32, objectFit: 'contain', flexShrink: 0 }}
+        style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
       />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>

@@ -17,6 +17,8 @@ import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { compressAndUpload } from '../utils/imagebb'
 import NewSale from './NewSale'
+import OpenTabsBubbles from '../components/OpenTabsBubbles'
+import { watchOpenTabsForSession } from '../openTabs'
 
 // ──────────────────────────────────────────────────────────────
 // Wrapper top-level: decide StartTurn vs ActiveSession
@@ -626,10 +628,12 @@ function ErrorBox({ text }) {
 function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
   const [newSaleOpen, setNewSaleOpen] = useState(false)
+  const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [showDeductions, setShowDeductions] = useState(false)
   const [sessionSales, setSessionSales] = useState([])
   const [sessionExpenses, setSessionExpenses] = useState([])
+  const [openTabsCount, setOpenTabsCount] = useState(0)  // bloquear cierre con tabs abiertas
   const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const branches = getData().branches || []
@@ -642,6 +646,10 @@ function ActiveSession({ session, userDoc, authUser }) {
   useEffect(() => {
     const unsub = watchSessionExpenses(session.id, setSessionExpenses)
     return unsub
+  }, [session.id])
+
+  useEffect(() => {
+    return watchOpenTabsForSession(session.id, list => setOpenTabsCount(list.length))
   }, [session.id])
 
   useEffect(() => {
@@ -875,6 +883,7 @@ function ActiveSession({ session, userDoc, authUser }) {
         <CloseTurnModal
           session={session}
           authUserUid={session.cashierUid}
+          openTabsCount={openTabsCount}
           onCancel={() => setClosing(false)}
           onClosed={() => setClosing(false)}
         />
@@ -894,6 +903,28 @@ function ActiveSession({ session, userDoc, authUser }) {
           />
         </div>
       )}
+
+      {editingTab && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 60, background: T.neutral[50],
+          animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+        }}>
+          <NewSale
+            session={session}
+            authUser={authUser}
+            userDoc={userDoc}
+            tab={editingTab}
+            onCancel={() => setEditingTab(null)}
+            onSaved={() => setEditingTab(null)}
+          />
+        </div>
+      )}
+
+      {/* Burbujas de mesas abiertas — siempre visibles mientras haya turno */}
+      <OpenTabsBubbles
+        sessionId={session.id}
+        onSelect={tab => setEditingTab(tab)}
+      />
 
       {reportSale && (
         <ReportSaleModal
@@ -1491,7 +1522,7 @@ function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: Cerrar turno (cuadre + handover)
 // ──────────────────────────────────────────────────────────────
-function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
+function CloseTurnModal({ session, authUserUid, openTabsCount = 0, onCancel, onClosed }) {
   // ⚠ ANTI-FRAUDE: la cajera NO ve "esperado" ni "diferencia". Solo declara
   // a ciegas lo que tiene físicamente. El admin recibe el cuadre con el
   // desglose real (ventas + gastos) y aprueba/rechaza gastos pendientes
@@ -1519,7 +1550,9 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
 
   const selectedCashier = handoverType === 'cashier' ? cashiers.find(c => c.uid === handoverToUid) : null
 
+  const blockedByOpenTabs = openTabsCount > 0
   const canConfirm =
+    !blockedByOpenTabs &&
     declared >= 0 &&
     (handoverType === 'admin' || (handoverType === 'cashier' && selectedCashier))
 
@@ -1571,6 +1604,16 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
             Paso {step === 'count' ? '1' : '2'} de 2 · {step === 'count' ? 'Conteo' : 'Entrega'}
           </div>
         </div>
+
+        {blockedByOpenTabs && (
+          <div style={{
+            margin: '0 22px 12px', padding: '12px 14px', borderRadius: 12,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 13, fontWeight: 600, lineHeight: 1.5,
+          }}>
+            Tienes <b>{openTabsCount} mesa{openTabsCount === 1 ? '' : 's'}</b> abierta{openTabsCount === 1 ? '' : 's'}. Cobra o eliminala{openTabsCount === 1 ? '' : 's'} antes de cerrar turno.
+          </div>
+        )}
 
         {step === 'count' && (
           <div style={{ padding: '8px 22px 4px' }}>
@@ -1681,8 +1724,13 @@ function CloseTurnModal({ session, authUserUid, onCancel, onClosed }) {
               <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
               <button
                 onClick={() => setStep('handover')}
-                disabled={busy || declared < 0}
-                style={{ ...btnPrimary(T.neutral[900]), flex: 1.4 }}
+                disabled={busy || declared < 0 || blockedByOpenTabs}
+                style={{
+                  ...btnPrimary(blockedByOpenTabs ? T.neutral[200] : T.neutral[900]),
+                  flex: 1.4,
+                  color: blockedByOpenTabs ? T.neutral[400] : '#fff',
+                  cursor: blockedByOpenTabs ? 'not-allowed' : 'pointer',
+                }}
               >
                 Siguiente
               </button>

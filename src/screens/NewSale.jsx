@@ -13,6 +13,14 @@ import {
 import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
 import { createSale } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
+import {
+  watchOpenTabsForSession,
+  createOpenTab,
+  updateOpenTab,
+  deleteOpenTab,
+  nextFreeTableNumber,
+  isTableNumberTaken,
+} from '../openTabs'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -24,7 +32,7 @@ import { compressAndUpload } from '../utils/imagebb'
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
-export default function NewSale({ session, authUser, userDoc, onCancel, onSaved }) {
+export default function NewSale({ session, authUser, userDoc, tab, onCancel, onSaved }) {
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
@@ -32,13 +40,24 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
     [adminProducts, cashierProducts],
   )
 
+  // Modo "edit tab": precargar items del tab y mostrar número editable
+  const isTabMode = !!tab
   const [query, setQuery] = useState('')
-  const [cart, setCart] = useState([]) // [{ key, productId, source, name, qty, unitPrice }]
+  const [cart, setCart] = useState(() => tab?.items ? [...tab.items] : [])
+  const [tableNumber, setTableNumber] = useState(tab?.tableNumber || null)
   const [createOpen, setCreateOpen] = useState(false)
   const [createInitialName, setCreateInitialName] = useState('')
   const [paymentOpen, setPaymentOpen] = useState(false)
   // Modal "primera vez": producto que falta precio en la panaderia activa
   const [missingPriceProduct, setMissingPriceProduct] = useState(null)
+  // Modal "convertir en mesa" (modo venta nueva)
+  const [convertOpen, setConvertOpen] = useState(false)
+  // Modal de confirmación al eliminar tab existente
+  const [confirmDeleteTab, setConfirmDeleteTab] = useState(false)
+
+  // Listener de tabs abiertas para validar números duplicados
+  const [openTabs, setOpenTabs] = useState([])
+  useEffect(() => watchOpenTabsForSession(session.id, setOpenTabs), [session.id])
 
   const branchId = session.branchId
 
@@ -131,6 +150,96 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
     setCart(prev => prev.filter(it => it.key !== key))
   }
 
+  // ── Handlers de mesas (tabs) ──
+
+  // Minimizar: en modo tab, persiste cambios y vuelve. En modo venta nueva,
+  // si hay items abre el modal de convertir; si no, cancela.
+  async function handleMinimize() {
+    if (isTabMode) {
+      // Si la cajera vacio el carrito, eliminar la mesa (no dejar burbujas vacias)
+      if (cart.length === 0) {
+        try { await deleteOpenTab(tab.id) } catch (err) {
+          console.warn('[NewSale] no se pudo eliminar mesa vacia:', err)
+        }
+        onCancel()
+        return
+      }
+      // Persistir items actuales en la tab y salir
+      try {
+        await updateOpenTab(tab.id, { items: cart })
+      } catch (err) {
+        console.error('[NewSale] no se pudo guardar la mesa:', err)
+      }
+      onCancel()
+      return
+    }
+    // Modo venta nueva: si NO hay items, equivale a cancelar
+    if (cart.length === 0) {
+      onCancel()
+      return
+    }
+    // Hay items y no es tab → ofrecer convertir en mesa
+    setConvertOpen(true)
+  }
+
+  // Convertir venta nueva → mesa con número escogido
+  async function handleConvertToTab(numberToUse) {
+    try {
+      await createOpenTab({
+        sessionId: session.id,
+        cashierUid: authUser.uid,
+        branchId: session.branchId,
+        branchName: session.branchName,
+        tableNumber: numberToUse,
+        items: cart,
+      })
+      setConvertOpen(false)
+      onCancel() // cerrar el modal de venta; la burbuja aparecerá vía listener
+    } catch (err) {
+      console.error('[NewSale] no se pudo crear la mesa:', err)
+    }
+  }
+
+  // Eliminar tab (sin cobrar) — solo en modo tab
+  async function handleDeleteTab() {
+    if (!isTabMode) return
+    try {
+      await deleteOpenTab(tab.id)
+    } catch (err) {
+      console.error('[NewSale] no se pudo eliminar la mesa:', err)
+    }
+    setConfirmDeleteTab(false)
+    onCancel()
+  }
+
+  // Cambio de número de mesa (solo en modo tab) — valida duplicados
+  async function handleChangeTableNumber(newNumber) {
+    const num = Number(newNumber)
+    if (!num || num <= 0) return false
+    if (isTableNumberTaken(openTabs, num, tab.id)) {
+      return false // UI debe avisar
+    }
+    try {
+      await updateOpenTab(tab.id, { tableNumber: num })
+      setTableNumber(num)
+      return true
+    } catch (err) {
+      console.error('[NewSale] no se pudo cambiar el número:', err)
+      return false
+    }
+  }
+
+  // Después de cobrar exitoso: si era tab, eliminarla
+  async function handleSaleConfirmed() {
+    if (isTabMode) {
+      try { await deleteOpenTab(tab.id) } catch (err) {
+        console.warn('[NewSale] no se pudo eliminar tab tras cobro:', err)
+      }
+    }
+    setPaymentOpen(false)
+    onSaved?.()
+  }
+
   return (
     <div style={{
       minHeight: '100dvh', background: T.neutral[50],
@@ -146,24 +255,43 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
           padding: '16px 18px',
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
-          <button onClick={onCancel} style={{
-            width: 36, height: 36, borderRadius: 999,
-            background: T.neutral[100], border: 'none',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
-          }}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M11 4 L5 9 L11 14" stroke={T.neutral[700]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+          <button
+            onClick={handleMinimize}
+            title={isTabMode ? 'Minimizar mesa' : (cart.length > 0 ? 'Convertir en mesa' : 'Cancelar')}
+            style={{
+              width: 36, height: 36, borderRadius: 999,
+              background: T.neutral[100], border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {isTabMode ? (
+              // Ícono "minimizar a burbuja"
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M3 11 L3 14 L6 14 M15 7 L15 4 L12 4" stroke={T.neutral[700]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M11 4 L5 9 L11 14" stroke={T.neutral[700]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-              Nueva venta
+              {isTabMode ? `Mesa ${tableNumber}` : 'Nueva venta'}
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
               {session.branchName || 'Panadería'}
             </div>
           </div>
+          {isTabMode && (
+            <TableNumberEditButton
+              currentNumber={tableNumber}
+              openTabs={openTabs}
+              currentTabId={tab.id}
+              onChange={handleChangeTableNumber}
+            />
+          )}
         </div>
       </div>
 
@@ -301,7 +429,7 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
         )}
       </div>
 
-      {/* Footer con total + botón Cobrar (fondo full-width, contenido en maxWidth) */}
+      {/* Footer con total + acciones (fondo full-width, contenido en maxWidth) */}
       {cart.length > 0 && (
         <div style={{
           background: '#fff', borderTop: `1px solid ${T.neutral[100]}`,
@@ -330,6 +458,36 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
             >
               Cobrar {fmtCOP(total)}
             </button>
+            {/* En modo venta nueva: botón secundario "Convertir en mesa" */}
+            {!isTabMode && (
+              <button
+                onClick={() => setConvertOpen(true)}
+                style={{
+                  width: '100%', marginTop: 8, padding: '12px',
+                  background: 'transparent', color: T.copper[700],
+                  border: `1.5px solid ${T.copper[300]}`, borderRadius: 14,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 14, fontWeight: 700,
+                }}
+              >
+                Convertir en mesa
+              </button>
+            )}
+            {/* En modo mesa: botón secundario "Eliminar mesa" */}
+            {isTabMode && (
+              <button
+                onClick={() => setConfirmDeleteTab(true)}
+                style={{
+                  width: '100%', marginTop: 8, padding: '12px',
+                  background: 'transparent', color: T.bad,
+                  border: `1.5px solid ${T.bad}55`, borderRadius: 14,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 14, fontWeight: 700,
+                }}
+              >
+                Eliminar mesa
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -366,10 +524,24 @@ export default function NewSale({ session, authUser, userDoc, onCancel, onSaved 
           cart={cart}
           total={total}
           onCancel={() => setPaymentOpen(false)}
-          onConfirmed={() => {
-            setPaymentOpen(false)
-            onSaved?.()
-          }}
+          onConfirmed={handleSaleConfirmed}
+        />
+      )}
+
+      {convertOpen && (
+        <ConvertToTabModal
+          openTabs={openTabs}
+          onCancel={() => setConvertOpen(false)}
+          onConfirm={handleConvertToTab}
+        />
+      )}
+
+      {confirmDeleteTab && (
+        <ConfirmDeleteTabModal
+          tableNumber={tableNumber}
+          itemsCount={cart.length}
+          onCancel={() => setConfirmDeleteTab(false)}
+          onConfirm={handleDeleteTab}
         />
       )}
     </div>
@@ -516,6 +688,192 @@ function qtyBtn() {
     background: 'transparent', border: 'none',
     cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Botón pequeño junto al título para editar el número de mesa
+// ──────────────────────────────────────────────────────────────
+function TableNumberEditButton({ currentNumber, openTabs, currentTabId, onChange }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title="Cambiar número de mesa"
+        style={{
+          padding: '6px 12px', borderRadius: 999,
+          background: T.copper[50], color: T.copper[700],
+          border: `1px solid ${T.copper[200]}`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 12, fontWeight: 700,
+          flexShrink: 0,
+        }}
+      >
+        Cambiar #
+      </button>
+      {open && (
+        <ChangeTableNumberModal
+          currentNumber={currentNumber}
+          openTabs={openTabs}
+          currentTabId={currentTabId}
+          onCancel={() => setOpen(false)}
+          onConfirm={async (n) => {
+            const ok = await onChange(n)
+            if (ok) setOpen(false)
+            return ok
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function ChangeTableNumberModal({ currentNumber, openTabs, currentTabId, onCancel, onConfirm }) {
+  const [str, setStr] = useState(String(currentNumber || ''))
+  const [error, setError] = useState(null)
+  const num = Number(str)
+  const isTaken = num > 0 && isTableNumberTaken(openTabs, num, currentTabId)
+  const valid = num > 0 && !isTaken
+
+  async function handleConfirm() {
+    if (!valid) {
+      if (isTaken) setError(`Ya tienes una Mesa ${num}. Elige otro número.`)
+      return
+    }
+    const ok = await onConfirm(num)
+    if (!ok) setError('No se pudo cambiar. Intenta de nuevo.')
+  }
+
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          Cambiar número de mesa
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
+          Actualmente es <b>Mesa {currentNumber}</b>.
+        </div>
+
+        <ModalNumberInput
+          label="Nuevo número"
+          value={str}
+          onChange={(v) => { setStr(v); setError(null) }}
+        />
+
+        {(error || isTaken) && (
+          <ErrorBox text={error || `Ya tienes una Mesa ${num}.`} />
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid}
+            style={{
+              ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
+              flex: 1.4,
+              color: valid ? '#fff' : T.neutral[400],
+              cursor: valid ? 'pointer' : 'not-allowed',
+              boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            Cambiar
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Convertir venta nueva en mesa (asignar número)
+// ──────────────────────────────────────────────────────────────
+function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
+  const defaultNum = nextFreeTableNumber(openTabs)
+  const [str, setStr] = useState(String(defaultNum))
+  const [error, setError] = useState(null)
+  const num = Number(str)
+  const isTaken = num > 0 && isTableNumberTaken(openTabs, num)
+  const valid = num > 0 && !isTaken
+
+  async function handleConfirm() {
+    if (!valid) {
+      if (isTaken) setError(`Ya tienes una Mesa ${num}. Elige otro número.`)
+      return
+    }
+    await onConfirm(num)
+  }
+
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          Convertir en mesa
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16, lineHeight: 1.5 }}>
+          La venta queda guardada como mesa abierta. Después la abres desde la burbuja para agregar más o cobrar.
+        </div>
+
+        <ModalNumberInput
+          label="Número de mesa"
+          value={str}
+          onChange={(v) => { setStr(v); setError(null) }}
+        />
+
+        {(error || isTaken) && (
+          <ErrorBox text={error || `Ya tienes una Mesa ${num}.`} />
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid}
+            style={{
+              ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
+              flex: 1.4,
+              color: valid ? '#fff' : T.neutral[400],
+              cursor: valid ? 'pointer' : 'not-allowed',
+              boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            Crear mesa
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Confirmar eliminar mesa (con productos)
+// ──────────────────────────────────────────────────────────────
+function ConfirmDeleteTabModal({ tableNumber, itemsCount, onCancel, onConfirm }) {
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          ¿Eliminar Mesa {tableNumber}?
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5 }}>
+          Esta mesa tiene <b>{itemsCount} producto{itemsCount === 1 ? '' : 's'}</b> sin cobrar. Si la eliminas, no se registrará la venta y los productos se pierden.
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={onConfirm}
+            style={{
+              ...btnPrimary(T.bad),
+              flex: 1.4, color: '#fff',
+              boxShadow: `0 3px 10px ${T.bad}44`,
+            }}
+          >
+            Sí, eliminar
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
 }
 
 // ──────────────────────────────────────────────────────────────

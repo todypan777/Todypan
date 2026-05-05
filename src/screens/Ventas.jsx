@@ -83,84 +83,15 @@ export default function Ventas({ onBack }) {
         }
       />
 
-      {/* Filtros */}
-      <div style={{ padding: '0 16px 12px' }}>
-        <Card padding={14} style={{ marginBottom: 10 }}>
-          {/* Rango fechas */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-              Fechas
-            </span>
-            <DateInput value={from} onChange={setFrom} />
-            <span style={{ color: T.neutral[400] }}>→</span>
-            <DateInput value={to} onChange={setTo} />
-            <button
-              onClick={() => { setFrom(today); setTo(today) }}
-              style={miniBtn()}
-            >Hoy</button>
-            <button
-              onClick={() => { setFrom(monthStart); setTo(today) }}
-              style={miniBtn()}
-            >Este mes</button>
-          </div>
-
-          {/* Cajera + Panadería */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-            <SelectFilter
-              label="Cajera"
-              value={cashierUid}
-              onChange={setCashierUid}
-              options={[
-                { value: 'all', label: 'Todas' },
-                ...cashiers.map(c => ({
-                  value: c.uid,
-                  label: `${c.nombre} ${c.apellido}`.trim(),
-                })),
-              ]}
-            />
-            <SelectFilter
-              label="Panadería"
-              value={branchId}
-              onChange={setBranchId}
-              options={[
-                { value: 'all', label: 'Todas' },
-                ...branches.map(b => ({ value: String(b.id), label: b.name })),
-              ]}
-            />
-          </div>
-
-          {/* Método */}
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase', marginRight: 4 }}>
-              Método
-            </span>
-            <Chip label="Todos" active={!methodFilter} onClick={() => setMethodFilter(null)} />
-            {METHODS.map(m => (
-              <Chip
-                key={m.id}
-                label={`${m.icon} ${m.label}`}
-                active={methodFilter === m.id}
-                onClick={() => setMethodFilter(methodFilter === m.id ? null : m.id)}
-              />
-            ))}
-          </div>
-
-          {/* Estado */}
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase', marginRight: 4 }}>
-              Estado
-            </span>
-            {STATUSES.map(s => (
-              <Chip
-                key={s.id}
-                label={s.label}
-                active={statusFilter === s.id}
-                onClick={() => setStatusFilter(s.id)}
-              />
-            ))}
-          </div>
-        </Card>
-      </div>
+      {/* Filtros (toolbar compacta) */}
+      <FilterToolbar
+        from={from} to={to} setFrom={setFrom} setTo={setTo}
+        today={today} monthStart={monthStart}
+        cashierUid={cashierUid} setCashierUid={setCashierUid} cashiers={cashiers}
+        branchId={branchId} setBranchId={setBranchId} branches={branches}
+        methodFilter={methodFilter} setMethodFilter={setMethodFilter}
+        statusFilter={statusFilter} setStatusFilter={setStatusFilter}
+      />
 
       {/* Lista de ventas */}
       <div style={{ padding: '0 16px' }}>
@@ -201,25 +132,230 @@ export default function Ventas({ onBack }) {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Toolbar de filtros (compacta, una sola fila en desktop)
+// ──────────────────────────────────────────────────────────────
+function FilterToolbar({
+  from, to, setFrom, setTo, today, monthStart,
+  cashierUid, setCashierUid, cashiers,
+  branchId, setBranchId, branches,
+  methodFilter, setMethodFilter,
+  statusFilter, setStatusFilter,
+}) {
+  const isDesktop = useIsDesktop()
+  const [moreOpen, setMoreOpen] = useState(false)
+
+  // Detectar shortcut activo
+  const isToday = from === today && to === today
+  const isThisMonth = from === monthStart && to === today
+
+  // Resumen de filtros activos (chip con count)
+  const activeCount =
+    (cashierUid !== 'all' ? 1 : 0) +
+    (branchId !== 'all' ? 1 : 0) +
+    (methodFilter ? 1 : 0)
+
+  return (
+    <div style={{ padding: '0 16px 12px' }}>
+      <div style={{
+        background: '#fff',
+        border: `1px solid ${T.neutral[100]}`,
+        borderRadius: 16,
+        padding: '10px 12px',
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+      }}>
+        {/* Date range */}
+        <DateInput value={from} onChange={setFrom} />
+        <span style={{ color: T.neutral[400], fontSize: 13 }}>→</span>
+        <DateInput value={to} onChange={setTo} />
+
+        {/* Shortcuts */}
+        <button
+          onClick={() => { setFrom(today); setTo(today) }}
+          style={shortcutBtn(isToday)}
+        >Hoy</button>
+        <button
+          onClick={() => { setFrom(monthStart); setTo(today) }}
+          style={shortcutBtn(isThisMonth)}
+        >Mes</button>
+
+        <div style={{ flex: 1, minWidth: 8 }}/>
+
+        {/* Estado siempre visible */}
+        <CompactSelect
+          value={statusFilter}
+          onChange={setStatusFilter}
+          options={STATUSES.map(s => ({ value: s.id, label: s.label }))}
+        />
+
+        {/* Botón "Más filtros" */}
+        <button
+          onClick={() => setMoreOpen(v => !v)}
+          style={{
+            padding: '7px 12px', borderRadius: 10,
+            background: activeCount > 0 ? T.copper[50] : T.neutral[100],
+            color: activeCount > 0 ? T.copper[700] : T.neutral[700],
+            border: activeCount > 0 ? `1px solid ${T.copper[200]}` : 'none',
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2 3 H10 M3 6 H9 M4 9 H8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+          </svg>
+          Filtros{activeCount > 0 ? ` · ${activeCount}` : ''}
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ transform: moreOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+            <path d="M2 3.5 L5 6.5 L8 3.5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+      </div>
+
+      {/* Panel expandible con filtros adicionales */}
+      {moreOpen && (
+        <div style={{
+          marginTop: 8,
+          background: '#fff',
+          border: `1px solid ${T.neutral[100]}`,
+          borderRadius: 16,
+          padding: '12px 14px',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
+          {/* Cajera + Panadería en fila */}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <FilterRow label="Cajera">
+              <CompactSelect
+                value={cashierUid}
+                onChange={setCashierUid}
+                options={[
+                  { value: 'all', label: 'Todas' },
+                  ...cashiers.map(c => ({
+                    value: c.uid,
+                    label: `${c.nombre} ${c.apellido}`.trim(),
+                  })),
+                ]}
+              />
+            </FilterRow>
+            <FilterRow label="Panadería">
+              <CompactSelect
+                value={branchId}
+                onChange={setBranchId}
+                options={[
+                  { value: 'all', label: 'Todas' },
+                  ...branches.map(b => ({ value: String(b.id), label: b.name })),
+                ]}
+              />
+            </FilterRow>
+          </div>
+
+          {/* Método como chips */}
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={filterLabelStyle()}>Método</span>
+            <Chip label="Todos" active={!methodFilter} onClick={() => setMethodFilter(null)} />
+            {METHODS.map(m => (
+              <Chip
+                key={m.id}
+                label={`${m.icon} ${m.label}`}
+                active={methodFilter === m.id}
+                onClick={() => setMethodFilter(methodFilter === m.id ? null : m.id)}
+              />
+            ))}
+          </div>
+
+          {/* Botón limpiar */}
+          {activeCount > 0 && (
+            <button
+              onClick={() => { setCashierUid('all'); setBranchId('all'); setMethodFilter(null) }}
+              style={{
+                alignSelf: 'flex-end',
+                padding: '6px 12px', borderRadius: 10,
+                background: 'transparent', color: T.neutral[600],
+                border: `1px solid ${T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 11.5, fontWeight: 700,
+              }}
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function shortcutBtn(active) {
+  return {
+    padding: '6px 12px', borderRadius: 999,
+    background: active ? T.copper[500] : T.neutral[100],
+    color: active ? '#fff' : T.neutral[700],
+    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 12, fontWeight: 700,
+  }
+}
+
+function FilterRow({ label, children }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span style={filterLabelStyle()}>{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function filterLabelStyle() {
+  return {
+    fontSize: 11, fontWeight: 700, color: T.neutral[500],
+    letterSpacing: 0.4, textTransform: 'uppercase',
+  }
+}
+
+function CompactSelect({ value, onChange, options }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{
+        padding: '6px 28px 6px 10px', borderRadius: 10,
+        border: `1px solid ${T.neutral[200]}`,
+        fontSize: 12.5, fontFamily: 'inherit', fontWeight: 600,
+        background: '#fff', color: T.neutral[800],
+        outline: 'none', cursor: 'pointer',
+        appearance: 'none', WebkitAppearance: 'none',
+        backgroundImage: `url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5L6 8L9 5' stroke='%237A7163' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'right 8px center',
+        backgroundSize: '12px',
+      }}
+    >
+      {options.map(o => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
 // Tabla desktop
 // ──────────────────────────────────────────────────────────────
 function SalesTable({ sales, branches, onClick }) {
+  const cols = '90px 64px 1.6fr 1fr 60px 110px 90px'
   return (
     <Card padding={0} style={{ overflow: 'hidden' }}>
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '90px 70px 1.5fr 1fr 0.8fr 1fr 1fr',
+        gridTemplateColumns: cols,
         padding: '10px 14px',
         background: T.neutral[25],
         borderBottom: `1px solid ${T.neutral[100]}`,
         fontSize: 11, fontWeight: 700, color: T.neutral[400],
         textTransform: 'uppercase', letterSpacing: 0.5,
+        gap: 10,
       }}>
         <div>Fecha</div>
         <div>Hora</div>
-        <div>Cajera</div>
+        <div>Registró</div>
         <div>Panadería</div>
-        <div>Método</div>
+        <div style={{ textAlign: 'center' }}>Pago</div>
         <div style={{ textAlign: 'right' }}>Total</div>
         <div style={{ textAlign: 'right' }}>Estado</div>
       </div>
@@ -231,12 +367,12 @@ function SalesTable({ sales, branches, onClick }) {
             onClick={() => onClick(s)}
             style={{
               display: 'grid',
-              gridTemplateColumns: '90px 70px 1.5fr 1fr 0.8fr 1fr 1fr',
-              padding: '10px 14px', width: '100%',
+              gridTemplateColumns: cols,
+              padding: '12px 14px', width: '100%',
               background: 'transparent', border: 'none',
               borderBottom: i < sales.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
               cursor: 'pointer', fontFamily: 'inherit',
-              alignItems: 'center', textAlign: 'left',
+              alignItems: 'center', textAlign: 'left', gap: 10,
             }}
             onMouseEnter={e => e.currentTarget.style.background = T.neutral[25]}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -247,29 +383,51 @@ function SalesTable({ sales, branches, onClick }) {
             <div style={{ fontSize: 12, color: T.neutral[500], fontVariantNumeric: 'tabular-nums' }}>
               {timeOf(s)}
             </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <CashierAvatar name={s.cashierName} />
+              <div style={{
+                fontSize: 13, color: T.neutral[900], fontWeight: 700,
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {s.cashierName}
+              </div>
+            </div>
             <div style={{
-              fontSize: 13, color: T.neutral[800], fontWeight: 600,
+              fontSize: 12, color: T.neutral[600],
               whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {s.cashierName}
-            </div>
-            <div style={{ fontSize: 12, color: T.neutral[600] }}>
               {branch?.name || '—'}
             </div>
-            <div style={{ fontSize: 16 }}>{methodIcon(s.paymentMethod)}</div>
+            <div style={{ fontSize: 16, textAlign: 'center' }} title={s.paymentMethod}>
+              {methodIcon(s.paymentMethod)}
+            </div>
             <div style={{
-              fontSize: 13, fontWeight: 700, color: T.neutral[900],
+              fontSize: 13.5, fontWeight: 800, color: T.neutral[900],
               fontVariantNumeric: 'tabular-nums', textAlign: 'right',
             }}>
               {fmtCOP(s.total)}
             </div>
             <div style={{ textAlign: 'right' }}>
-              <StatusBadge status={s.status || 'active'} />
+              <StatusBadge status={s.status || 'active'} small />
             </div>
           </button>
         )
       })}
     </Card>
+  )
+}
+
+function CashierAvatar({ name }) {
+  const initials = (name || '?').split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
+  return (
+    <div style={{
+      width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+      background: T.copper[100], color: T.copper[700],
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 10, fontWeight: 800, letterSpacing: 0.3,
+    }}>
+      {initials}
+    </div>
   )
 }
 
@@ -293,15 +451,15 @@ function SalesList({ sales, branches, onClick }) {
               display: 'flex', alignItems: 'center', gap: 12,
             }}
           >
-            <div style={{ fontSize: 18, flexShrink: 0 }}>
-              {methodIcon(s.paymentMethod)}
-            </div>
+            <CashierAvatar name={s.cashierName} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{
                 fontSize: 14, fontWeight: 700, color: T.neutral[900],
                 whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                display: 'flex', alignItems: 'center', gap: 6,
               }}>
                 {s.cashierName}
+                <span style={{ fontSize: 14 }}>{methodIcon(s.paymentMethod)}</span>
               </div>
               <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
                 {fmtDate(s.date)} · {timeOf(s)} · {branch?.name || '—'}

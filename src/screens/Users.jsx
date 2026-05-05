@@ -10,7 +10,6 @@ import {
   reactivateUser,
   rejectPendingUser,
 } from '../users'
-import { getData } from '../db'
 import { useIsDesktop } from '../context/DesktopCtx'
 
 const REST_DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
@@ -242,12 +241,10 @@ function primaryBtn() {
 
 // ─── Modal de aprobación ──────────────────────────────────────
 export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
-  const branches = getData().branches || []
   const [nombre, setNombre] = useState(user.nombre || '')
   const [apellido, setApellido] = useState(user.apellido || '')
   const [telefono, setTelefono] = useState('')
   const [cargo, setCargo] = useState('')
-  const [branch, setBranch] = useState(branches[0]?.id || 1)
   const [restDay, setRestDay] = useState(0)
   const [salario, setSalario] = useState('')
   const [busy, setBusy] = useState(false)
@@ -269,7 +266,7 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
         {
           nombre, apellido, telefono,
           cargo: cargo.trim(),
-          branch,
+          branch: 'both',
           restDay,
           rate: Number(salario),
         },
@@ -322,32 +319,6 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
           <ModalField label="Nombre" value={nombre} onChange={setNombre} placeholder="Ej. María" disabled={busy} autoFocus />
           <ModalField label="Apellido" value={apellido} onChange={setApellido} placeholder="Ej. González" disabled={busy} />
           <ModalField label="Cargo" value={cargo} onChange={setCargo} placeholder="Ej. Panadera" disabled={busy} />
-
-          {/* Panadería */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
-              Panadería
-            </label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {branches.map(b => (
-                <button
-                  key={b.id}
-                  onClick={() => !busy && setBranch(b.id)}
-                  disabled={busy}
-                  style={{
-                    flex: 1, padding: '10px', borderRadius: 10, border: 'none',
-                    cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-                    background: branch === b.id ? T.copper[500] : T.neutral[100],
-                    color: branch === b.id ? '#fff' : T.neutral[700],
-                    fontSize: 13.5, fontWeight: 600,
-                    opacity: busy ? 0.6 : 1,
-                  }}
-                >
-                  {b.name}
-                </button>
-              ))}
-            </div>
-          </div>
 
           {/* Día de descanso */}
           <div style={{ marginBottom: 12 }}>

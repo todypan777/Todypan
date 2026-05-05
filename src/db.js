@@ -25,6 +25,7 @@ const defaultExpenseCats = {
     { id: 'otros_prov', label: 'Otros insumos' },
   ],
   operacion: [
+    { id: 'nomina',     label: 'Nómina' },
     { id: 'arriendo',   label: 'Arriendo' },
     { id: 'energia',    label: 'Energía' },
     { id: 'agua',       label: 'Agua' },
@@ -69,6 +70,10 @@ function migrate(d) {
     d.incomeCats = [...d.incomeCats, { id: 'sobra_caja', label: 'Sobra de cierre' }]
   }
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
+  // Migrar: agregar 'nomina' a operacion si falta
+  if (d.expenseCats?.operacion && !d.expenseCats.operacion.some(c => c.id === 'nomina')) {
+    d.expenseCats.operacion = [{ id: 'nomina', label: 'Nómina' }, ...d.expenseCats.operacion]
+  }
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
   if (!d.products) d.products = []
@@ -151,6 +156,17 @@ export function addMovement(mov) {
 }
 
 export function deleteMovement(id) {
+  const mov = _data.movements.find(m => m.id === id)
+  // Si es un movimiento de nomina, sincronizar: despagar el dia para no
+  // dejar attendance.paid=true sin gasto registrado.
+  if (mov?.payrollRef) {
+    const { empId, workedDate } = mov.payrollRef
+    const a = _data.attendance[empId]?.[workedDate]
+    if (a) {
+      a.paid = false
+      delete a.payrollMovementId
+    }
+  }
   _data.movements = _data.movements.filter(m => m.id !== id)
   persist()
 }
@@ -201,15 +217,80 @@ export function setAttendanceEntry(empId, date, data) {
   persist()
 }
 
+// ─── Helpers: pago de nómina como movimiento de gasto ─────────
+// Cada día pagado de un empleado crea un movimiento expense (cat: 'nomina')
+// con fecha del día del pago (Bogotá). Despagar borra ese movimiento.
+function _shortDate(dateStr) {
+  try {
+    return new Date(dateStr + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
+  } catch {
+    return dateStr
+  }
+}
+
+function _buildPayrollMovement(empId, workedDate) {
+  const emp = _data.employees.find(e => e.id === empId)
+  if (!emp) return null
+  const a = _data.attendance[empId]?.[workedDate]
+  if (!a) return null
+  const amount = (Number(emp.rate) || 0) + (Number(a.extras) || 0)
+  if (amount <= 0) return null
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  const firstName = (emp.name || 'empleado').split(' ')[0]
+  return {
+    type: 'expense',
+    amount,
+    date: today,
+    cat: 'nomina',
+    group: 'operacion',
+    branch: emp.branch || 'both',
+    note: `Pago nómina · ${firstName} · ${_shortDate(workedDate)}`,
+    payrollRef: { empId, workedDate },
+    origin: 'nomina',
+  }
+}
+
+function _addPayrollMovementForDay(empId, workedDate) {
+  const a = _data.attendance[empId]?.[workedDate]
+  if (!a || a.paid) return
+  const mov = _buildPayrollMovement(empId, workedDate)
+  if (!mov) { a.paid = true; return }
+  const id = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+  _data.movements = [{ id, ...mov }, ..._data.movements]
+  a.paid = true
+  a.payrollMovementId = id
+}
+
+function _removePayrollMovementForDay(empId, workedDate) {
+  const a = _data.attendance[empId]?.[workedDate]
+  if (!a) return
+  const movId = a.payrollMovementId
+    || _data.movements.find(m => m.payrollRef?.empId === empId && m.payrollRef?.workedDate === workedDate)?.id
+  if (movId) {
+    _data.movements = _data.movements.filter(m => m.id !== movId)
+  }
+  a.paid = false
+  delete a.payrollMovementId
+}
+
 export function togglePaid(empId, date) {
   const a = _data.attendance[empId]?.[date]
-  if (a) { a.paid = !a.paid; persist() }
+  if (!a) return
+  if (a.paid) {
+    _removePayrollMovementForDay(empId, date)
+  } else {
+    _addPayrollMovementForDay(empId, date)
+  }
+  persist()
 }
 
 export function payAllPending(empId, month) {
   const att = _data.attendance[empId] || {}
-  Object.entries(att).forEach(([d, a]) => {
-    if (d.startsWith(month) && a.worked && !a.paid) a.paid = true
+  Object.keys(att).forEach(d => {
+    const a = att[d]
+    if (d.startsWith(month) && a.worked && !a.paid) {
+      _addPayrollMovementForDay(empId, d)
+    }
   })
   persist()
 }

@@ -39,7 +39,10 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
     })
     .filter(x => x.owed > 0)
   const totalPayroll = pendingByEmp.reduce((s, x) => s + x.owed, 0)
-  const net = income - expense - totalPayroll
+  // Modelo CAJA: el balance solo refleja la plata real (ingresos - gastos pagados,
+  // donde los pagos de nomina ya estan incluidos como movements expense con cat:'nomina').
+  // La nomina PENDIENTE se muestra aparte como obligacion futura, no resta del balance.
+  const net = income - expense
 
   // Upcoming reminders
   const upcoming = reminders
@@ -124,7 +127,7 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
             {[
               { label: 'Ingresos', value: income },
               { label: 'Gastos', value: expense },
-              { label: 'Nómina', value: totalPayroll },
+              { label: 'Por pagar', value: totalPayroll },
             ].map(({ label, value }) => (
               <div key={label}>
                 <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>{label}</div>

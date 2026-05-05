@@ -8,6 +8,7 @@ import {
   query,
   onSnapshot,
   arrayUnion,
+  getDoc,
 } from 'firebase/firestore'
 
 const debtorsCol = () => collection(firestoreDb, 'debtors')
@@ -67,6 +68,7 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
       name: name.trim(),
       normalizedName: normalized,
       totalOwed: Number(amount) || 0,
+      status: 'active',
       lastUpdate: serverTimestamp(),
       createdAt: serverTimestamp(),
       history: [{
@@ -79,4 +81,47 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
     })
     return ref.id
   }
+}
+
+/**
+ * Solo admin: registra un abono o pago de un deudor.
+ *
+ * payload:
+ *   - amount (positivo, lo que paga el deudor)
+ *   - method: 'efectivo' | 'nequi' | 'daviplata'
+ *   - photoUrl?: foto del comprobante (opcional)
+ *   - note?: nota interna
+ *   - registeredBy: uid del admin
+ */
+export async function registerDebtorPayment(debtorId, payload) {
+  const ref = debtorRef(debtorId)
+  const snap = await getDoc(ref)
+  if (!snap.exists()) throw new Error('Deudor no encontrado')
+
+  const debtor = snap.data()
+  const amount = Number(payload.amount) || 0
+  if (amount <= 0) throw new Error('El monto debe ser mayor a 0')
+
+  const currentOwed = Number(debtor.totalOwed) || 0
+  const newOwed = Math.max(0, currentOwed - amount)
+
+  const paymentEntry = {
+    type: 'payment',
+    amount,
+    method: payload.method || 'efectivo',
+    date: payload.date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }),
+    registeredBy: payload.registeredBy || null,
+    createdAt: Date.now(),
+  }
+  if (payload.photoUrl) paymentEntry.photoUrl = payload.photoUrl
+  if (payload.note) paymentEntry.note = payload.note
+
+  await updateDoc(ref, {
+    totalOwed: newOwed,
+    lastUpdate: serverTimestamp(),
+    history: arrayUnion(paymentEntry),
+    status: newOwed === 0 ? 'paid' : 'active',
+  })
+
+  return { newOwed, fullyPaid: newOwed === 0 }
 }

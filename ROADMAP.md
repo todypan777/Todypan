@@ -353,21 +353,31 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 8 — Deudores (admin)
+### ✅ Fase 8 — Deudores (admin)
 **Objetivo:** Admin gestiona pagos y abonos de deudas.
 
-- [ ] Pestaña "Deudores" en sidebar
-- [ ] Lista de deudores ordenados por monto adeudado
-- [ ] Click → detalle con historial (ventas + abonos)
-- [ ] Botón "Registrar abono / pago": monto, método (efectivo/nequi/daviplata), foto opcional
-- [ ] Actualiza `totalOwed` y agrega entrada al `history`
-- [ ] Si paga total → marcar deudor como "pagado"
-- [ ] Total deudas en Dashboard del admin
-- [ ] Build + deploy
+- [x] Pestaña "Deudores" en sidebar y en Más (mobile)
+- [x] Card resumen "Total adeudado" en negro con total + cantidad de personas
+- [x] Tabs Activos / Pagados con count + buscador por nombre
+- [x] Lista ordenada por monto descendente
+- [x] Avatar con iniciales (cobre activos, gris pagados)
+- [x] Click → modal de detalle con header de color (cobre activo / verde pagado)
+- [x] Historial completo con tipo (venta/abono), fecha, método, foto, nota, monto coloreado
+- [x] Botón **"Registrar abono o pago"** que abre form inline:
+  - [x] Input monto con quick-fill "Pagar todo" / "Mitad"
+  - [x] Indicador en vivo: "quedaría debiendo $X" (verde) o "excede la deuda" (rojo)
+  - [x] Selector de método (Efectivo / NEQUI / DAVIPLATA)
+  - [x] Foto opcional del comprobante (mismo flujo ImgBB)
+  - [x] Nota interna opcional
+- [x] Helper `registerDebtorPayment` en debtors.js:
+  - [x] Resta del totalOwed
+  - [x] Agrega entry tipo 'payment' al history
+  - [x] Si totalOwed llega a 0 → status='paid' automático
+- [x] Build + deploy
 
 ---
 
-### 📅 Fase 9 — Vista cajera de ventas (días anteriores)
+### 🔄 Fase 9 — Vista cajera de ventas (días anteriores)
 **Objetivo:** Cajera consulta historial sin poder editar.
 
 - [ ] Pantalla "Mis ventas" para cajera
@@ -433,4 +443,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1-7 completas y en producción.** Próxima: Fase 8 (Deudores admin). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-04 — **Fases 1-8 completas y en producción.** Próxima: Fase 9 (vista cajera de ventas históricas) y Fase 10 (lockdown reglas Firestore). Decisiones D1-D21 cerradas.

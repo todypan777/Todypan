@@ -32,7 +32,7 @@ import {
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
-export default function NewSale({ session, authUser, userDoc, tab, onCancel, onSaved }) {
+export default function NewSale({ session, authUser, userDoc, tab, intent, onCancel, onSaved }) {
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
@@ -42,6 +42,9 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
 
   // Modo "edit tab": precargar items del tab y mostrar número editable
   const isTabMode = !!tab
+  // Intent "tab": la cajera abrió "Nueva mesa" desde el home (no es tab existente todavía,
+  // pero queremos que el flujo apunte a guardar como mesa al final).
+  const isNewTabIntent = intent === 'tab' && !isTabMode
   const [query, setQuery] = useState('')
   const [cart, setCart] = useState(() => tab?.items ? [...tab.items] : [])
   const [tableNumber, setTableNumber] = useState(tab?.tableNumber || null)
@@ -278,10 +281,10 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-              {isTabMode ? `Mesa ${tableNumber}` : 'Nueva venta'}
+              {isTabMode ? `Mesa ${tableNumber}` : (isNewTabIntent ? 'Nueva mesa' : 'Nueva venta')}
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
-              {session.branchName || 'Panadería'}
+              {isNewTabIntent ? 'Agrega productos y luego guárdala' : (session.branchName || 'Panadería')}
             </div>
           </div>
           {isTabMode && (
@@ -446,32 +449,79 @@ export default function NewSale({ session, authUser, userDoc, tab, onCancel, onS
                 {fmtCOP(total)}
               </span>
             </div>
-            <button
-              onClick={() => setPaymentOpen(true)}
-              style={{
-                width: '100%', padding: '15px', borderRadius: 16,
-                background: T.copper[500], color: '#fff',
-                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 15.5, fontWeight: 700,
-                boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
-              }}
-            >
-              Cobrar {fmtCOP(total)}
-            </button>
-            {/* En modo venta nueva: botón secundario "Convertir en mesa" */}
-            {!isTabMode && (
-              <button
-                onClick={() => setConvertOpen(true)}
-                style={{
-                  width: '100%', marginTop: 8, padding: '12px',
-                  background: 'transparent', color: T.copper[700],
-                  border: `1.5px solid ${T.copper[300]}`, borderRadius: 14,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 14, fontWeight: 700,
-                }}
-              >
-                Convertir en mesa
-              </button>
+            {/* Acción principal: depende del intent */}
+            {isNewTabIntent ? (
+              <>
+                <button
+                  onClick={() => setConvertOpen(true)}
+                  style={{
+                    width: '100%', padding: '15px', borderRadius: 16,
+                    background: T.copper[500], color: '#fff',
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 15.5, fontWeight: 700,
+                    boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}
+                >
+                  Guardar como mesa
+                </button>
+                <button
+                  onClick={() => setPaymentOpen(true)}
+                  style={{
+                    width: '100%', marginTop: 10, padding: '13px',
+                    background: 'transparent', color: T.neutral[600],
+                    border: `1.5px solid ${T.neutral[200]}`, borderRadius: 14,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 13.5, fontWeight: 600,
+                  }}
+                >
+                  O cobrar ahora {fmtCOP(total)}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setPaymentOpen(true)}
+                  style={{
+                    width: '100%', padding: '15px', borderRadius: 16,
+                    background: T.copper[500], color: '#fff',
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 15.5, fontWeight: 700,
+                    boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+                  }}
+                >
+                  Cobrar {fmtCOP(total)}
+                </button>
+                {!isTabMode && (
+                  <button
+                    onClick={() => setConvertOpen(true)}
+                    style={{
+                      width: '100%', marginTop: 10, padding: '13px',
+                      background: 'transparent', color: T.neutral[700],
+                      border: `1.5px solid ${T.neutral[300]}`, borderRadius: 14,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: 13.5, fontWeight: 700,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    }}
+                  >
+                    O guardar como mesa
+                  </button>
+                )}
+                {isTabMode && (
+                  <button
+                    onClick={() => setConfirmDeleteTab(true)}
+                    style={{
+                      width: '100%', marginTop: 10, padding: '12px',
+                      background: 'transparent', color: T.bad,
+                      border: `1.5px solid ${T.bad}55`, borderRadius: 14,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: 13.5, fontWeight: 700,
+                    }}
+                  >
+                    Eliminar mesa
+                  </button>
+                )}
+              </>
             )}
             {/* En modo mesa: botón secundario "Eliminar mesa" */}
             {isTabMode && (
@@ -747,17 +797,17 @@ function ChangeTableNumberModal({ currentNumber, openTabs, currentTabId, onCance
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
           Cambiar número de mesa
         </div>
-        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, textAlign: 'center' }}>
           Actualmente es <b>Mesa {currentNumber}</b>.
         </div>
 
-        <ModalNumberInput
-          label="Nuevo número"
+        <TableNumberStepper
           value={str}
           onChange={(v) => { setStr(v); setError(null) }}
+          error={isTaken}
         />
 
         {(error || isTaken) && (
@@ -807,17 +857,17 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
-          Convertir en mesa
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
+          Número de mesa
         </div>
-        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16, lineHeight: 1.5 }}>
-          La venta queda guardada como mesa abierta. Después la abres desde la burbuja para agregar más o cobrar.
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, lineHeight: 1.5, textAlign: 'center' }}>
+          La venta queda guardada como mesa. Después la abres desde la burbuja para agregar más o cobrar.
         </div>
 
-        <ModalNumberInput
-          label="Número de mesa"
+        <TableNumberStepper
           value={str}
           onChange={(v) => { setStr(v); setError(null) }}
+          error={isTaken}
         />
 
         {(error || isTaken) && (
@@ -1496,6 +1546,75 @@ function ModalInput({ label, value, onChange, placeholder, disabled, autoFocus }
       </div>
     </div>
   )
+}
+
+// Stepper para número de mesa: número grande centrado + botones − / +
+function TableNumberStepper({ label, value, onChange, min = 1, max = 99, error }) {
+  const num = Number(value) || min
+  const dec = () => onChange(String(Math.max(min, num - 1)))
+  const inc = () => onChange(String(Math.min(max, num + 1)))
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {label && (
+        <label style={{
+          fontSize: 12, fontWeight: 600, color: T.neutral[600],
+          display: 'block', marginBottom: 8, textAlign: 'center',
+        }}>
+          {label}
+        </label>
+      )}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14,
+      }}>
+        <button
+          onClick={dec}
+          disabled={num <= min}
+          style={stepperBtn(num <= min)}
+          aria-label="Disminuir"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M5 10 H15" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
+          </svg>
+        </button>
+        <div style={{
+          minWidth: 100, padding: '14px 20px', borderRadius: 16,
+          background: error ? '#FBE9E5' : T.copper[50],
+          border: `2px solid ${error ? '#F0C8BE' : T.copper[200]}`,
+          textAlign: 'center',
+          fontSize: 38, fontWeight: 800, color: error ? T.bad : T.copper[700],
+          letterSpacing: -1, fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+          transition: 'all 0.15s',
+        }}>
+          {num}
+        </div>
+        <button
+          onClick={inc}
+          disabled={num >= max}
+          style={stepperBtn(num >= max)}
+          aria-label="Aumentar"
+        >
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 5 V15 M5 10 H15" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function stepperBtn(disabled) {
+  return {
+    width: 52, height: 52, borderRadius: 999,
+    background: disabled ? T.neutral[100] : T.copper[500],
+    color: disabled ? T.neutral[400] : '#fff',
+    border: 'none',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontFamily: 'inherit',
+    boxShadow: disabled ? 'none' : '0 3px 10px rgba(184,122,86,0.35)',
+    transition: 'all 0.15s',
+    flexShrink: 0,
+  }
 }
 
 function ModalNumberInput({ label, value, onChange, disabled, hint }) {

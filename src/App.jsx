@@ -115,7 +115,7 @@ function AppShell() {
     return () => window.removeEventListener('resize', handler)
   }, [])
 
-  const [, forceUpdate] = useReducer(x => x + 1, 0)
+  const [dataTick, forceUpdate] = useReducer(x => x + 1, 0)
   const refresh = useCallback(() => forceUpdate(), [])
 
   const data = getData()
@@ -272,6 +272,9 @@ function AppShell() {
           onBack={() => setMoreSub(null)}
           onOpenUsers={() => setMoreSub('users')}
           onOpenProducts={() => setMoreSub('products')}
+          onOpenReminders={() => setMoreSub('reminders')}
+          onConfirmAttendance={() => setConfirmingDate(getBogotaDateStr())}
+          dataTick={dataTick}
         />
       )
     } else if (moreSub === 'ventas') {
@@ -388,6 +391,7 @@ function AppShell() {
         <NotificationBell
           onOpenPendientes={() => handleNav('pendientes')}
           onOpenUsers={() => handleNav('users')}
+          dataTick={dataTick}
         />
 
         <InstallPrompt />

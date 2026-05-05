@@ -7,6 +7,7 @@ import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchPendingExpenses } from '../cashExpenses'
 import { watchAllSales } from '../sales'
 import { watchCashierProducts } from '../products'
+import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
 
 /**
  * Campana de notificaciones flotante (top-right) siempre visible para el admin.
@@ -20,7 +21,7 @@ import { watchCashierProducts } from '../products'
  * - Cierre de turno pendiente (pending_close)
  * - Usuario nuevo esperando aprobación
  */
-export default function NotificationBell({ onOpenPendientes, onOpenUsers }) {
+export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [pendingExpenses, setPendingExpenses] = useState([])
@@ -48,6 +49,26 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers }) {
     s.closingDiscrepancy?.type === 'shortage'
   )
 
+  // Reminders vencidos y confirmación de asistencia (legacy del admin)
+  // dataTick fuerza recálculo cuando AppShell hace refresh
+  const { overdueReminders, needsAttendanceConfirm } = useMemo(() => {
+    const data = getData()
+    const today = getBogotaDateStr()
+    const reminders = data.reminders || []
+    const overdue = reminders.filter(r => {
+      if (r.paid) return false
+      if (!r.due) return false
+      const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
+      return daysLeft <= 0
+    })
+    const employees = data.employees || []
+    const needsAttend = getBogotaHour() >= 20
+      && !isDayConfirmed(today)
+      && employees.some(e => e.type !== 'occasional')
+    return { overdueReminders: overdue, needsAttendanceConfirm: needsAttend }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataTick])
+
   const totalCount =
     pendingUsers.length +
     pendingCloses.length +
@@ -55,7 +76,9 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers }) {
     orphanShortages.length +
     pendingExpenses.length +
     flaggedSales.length +
-    cashierProducts.length
+    cashierProducts.length +
+    overdueReminders.length +
+    (needsAttendanceConfirm ? 1 : 0)
 
   // Detectar cierres nuevos para popup
   useEffect(() => {

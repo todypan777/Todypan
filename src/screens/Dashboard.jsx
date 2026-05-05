@@ -71,71 +71,7 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      {/* Alert banner */}
-      {showConfirmBanner && (
-        <div onClick={onConfirmDay} style={{
-          margin: '12px 16px 0',
-          padding: '12px 16px', borderRadius: 14,
-          background: T.neutral[900],
-          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 999, flexShrink: 0,
-            background: T.copper[500],
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M9 3 V9 L12.5 11.5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-              <circle cx="9" cy="9" r="7" stroke="#fff" strokeWidth="1.5"/>
-            </svg>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Confirmar asistencia de hoy</div>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginTop: 1 }}>
-              Pendiente · toca para registrar
-            </div>
-          </div>
-          <svg width="7" height="12" viewBox="0 0 7 12">
-            <path d="M1 1 L6 6 L1 11" stroke={T.copper[400]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-      )}
-
-      {(alerts.length > 0 || todayReminders.length > 0) && (
-        <div onClick={() => onNav('reminders')} style={{
-          margin: '12px 16px 0',
-          padding: '12px 16px', borderRadius: 14,
-          background: alerts.length > 0 ? '#FBEAE6' : '#FFF8EC',
-          border: `1px solid ${alerts.length > 0 ? '#E8C4BC' : '#F0D9A0'}`,
-          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-        }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 999, flexShrink: 0,
-            background: alerts.length > 0 ? T.bad : T.warn,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 2 L14 13 H2 Z" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinejoin="round"/>
-              <path d="M8 6 V9 M8 11 V11.5" stroke="#fff" strokeWidth="1.4" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: alerts.length > 0 ? T.bad : '#7A5C00' }}>
-              {alerts.length > 0
-                ? `${alerts.length} pago${alerts.length > 1 ? 's' : ''} vencido${alerts.length > 1 ? 's' : ''}`
-                : `${todayReminders.length} pago${todayReminders.length > 1 ? 's' : ''} vence hoy`}
-            </div>
-            <div style={{ fontSize: 11, color: alerts.length > 0 ? '#8B3A2E' : '#5C4500', marginTop: 1 }}>
-              {alerts.map(r => r.title).join(', ')}
-              {todayReminders.length > 0 && !alerts.length && todayReminders.map(r => r.title).join(', ')}
-            </div>
-          </div>
-          <svg width="7" height="12" viewBox="0 0 7 12">
-            <path d="M1 1 L6 6 L1 11" stroke={alerts.length > 0 ? T.bad : T.warn} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
-      )}
-
+      {/* Banners eliminados — toda la info de pendientes vive en la campanita */}
       <ScreenHeader
         title={monthLabel}
         subtitle={greeting}

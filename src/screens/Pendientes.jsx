@@ -20,12 +20,12 @@ import {
 } from '../cashExpenses'
 import { watchAllSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
-import { watchCashierProducts } from '../products'
-import { addMovement } from '../db'
+import { watchCashierProducts, deleteCashierProduct } from '../products'
+import { addMovement, getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid } from '../db'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
 
-export default function Pendientes({ onOpenUsers, onOpenProducts }) {
+export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminders, onConfirmAttendance, dataTick }) {
   const { authUser } = useAuth()
 
   const [pendingUsers, setPendingUsers] = useState([])
@@ -45,6 +45,25 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchSurplusFundBalance(setSurplusBalance), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+
+  // Reminders y asistencia (legacy del admin) — recalcula al cambiar dataTick
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const { overdueReminders, needsAttendanceConfirm } = useMemo(() => {
+    const data = getData()
+    const today = getBogotaDateStr()
+    const reminders = data.reminders || []
+    const overdue = reminders.filter(r => {
+      if (r.paid) return false
+      if (!r.due) return false
+      const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
+      return daysLeft <= 0
+    }).sort((a, b) => a.due.localeCompare(b.due))
+    const employees = data.employees || []
+    const needs = getBogotaHour() >= 20
+      && !isDayConfirmed(today)
+      && employees.some(e => e.type !== 'occasional')
+    return { overdueReminders: overdue, needsAttendanceConfirm: needs }
+  }, [dataTick])
 
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
   const pendingCloses = pendingSessions.filter(s => s.status === 'pending_close')
@@ -67,7 +86,9 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
     orphanShortages.length +
     pendingExpenses.length +
     flaggedSales.length +
-    cashierProducts.length
+    cashierProducts.length +
+    overdueReminders.length +
+    (needsAttendanceConfirm ? 1 : 0)
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -86,6 +107,65 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
             Cuando haya solicitudes de cuenta, gastos por aprobar o algo más por revisar, aparecerán aquí.
           </div>
         </div>
+      )}
+
+      {needsAttendanceConfirm && (
+        <Section title="Asistencia del día" count={1} tone="copper" defaultOpen>
+          <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
+                Confirmar asistencia de hoy
+              </div>
+              <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
+                Registra los empleados que trabajaron hoy.
+              </div>
+            </div>
+            <button onClick={() => onConfirmAttendance?.()} style={btnSmall(T.copper[500])}>
+              Confirmar
+            </button>
+          </div>
+        </Section>
+      )}
+
+      {overdueReminders.length > 0 && (
+        <Section
+          title="Pagos vencidos"
+          count={overdueReminders.length}
+          tone="bad"
+          actionLabel="Ver todos"
+          onAction={onOpenReminders}
+        >
+          {overdueReminders.slice(0, 5).map((r, i) => (
+            <div key={r.id} style={{
+              padding: '12px 14px',
+              borderBottom: i < Math.min(overdueReminders.length, 5) - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {r.title}
+                </div>
+                <div style={{ fontSize: 11.5, color: T.bad, fontWeight: 600, marginTop: 2 }}>
+                  {fmtCOP(r.amount || 0)} · vencido {r.due}
+                </div>
+              </div>
+              <button
+                onClick={() => { toggleReminderPaid(r.id) }}
+                style={btnSmall(T.ok)}
+              >
+                Marcar pagado
+              </button>
+            </div>
+          ))}
+          {overdueReminders.length > 5 && (
+            <div style={{ padding: '8px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
+              + {overdueReminders.length - 5} más
+            </div>
+          )}
+        </Section>
       )}
 
       {pendingUsers.length > 0 && (
@@ -146,43 +226,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
       )}
 
       {cashierProducts.length > 0 && (
-        <Section
-          title="Productos sin costo"
-          count={cashierProducts.length}
-          tone="copper"
-          actionLabel="Ir a Productos"
-          onAction={onOpenProducts}
-        >
-          <div style={{ padding: '4px 0' }}>
-            {cashierProducts.slice(0, 5).map((p, i) => (
-              <div key={p.id} style={{
-                padding: '10px 14px',
-                display: 'flex', alignItems: 'center', gap: 10,
-                borderBottom: i < Math.min(cashierProducts.length, 5) - 1
-                  ? `0.5px solid ${T.neutral[100]}`
-                  : 'none',
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: 700, color: T.neutral[900],
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {p.name}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                    Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
-                    {p.createdByName && ` · por ${p.createdByName}`}
-                  </div>
-                </div>
-              </div>
-            ))}
-            {cashierProducts.length > 5 && (
-              <div style={{ padding: '8px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
-                + {cashierProducts.length - 5} más
-              </div>
-            )}
-          </div>
-        </Section>
+        <CashierProductsSection
+          products={cashierProducts}
+          onOpenProducts={onOpenProducts}
+        />
       )}
 
       {/* Saldo del fondo de sobras (siempre visible si > 0) */}
@@ -204,6 +251,99 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Productos creados por cajera (con acción inline)
+// ──────────────────────────────────────────────────────────────
+function CashierProductsSection({ products, onOpenProducts }) {
+  const [confirmDel, setConfirmDel] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  async function handleDelete() {
+    if (!confirmDel || busy) return
+    setBusy(true)
+    try {
+      await deleteCashierProduct(confirmDel.id)
+      setConfirmDel(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <Section
+        title="Productos sin costo"
+        count={products.length}
+        tone="copper"
+      >
+        {products.slice(0, 5).map((p, i) => (
+          <div key={p.id} style={{
+            padding: '12px 14px',
+            display: 'flex', alignItems: 'center', gap: 10,
+            borderBottom: i < Math.min(products.length, 5) - 1
+              ? `0.5px solid ${T.neutral[100]}`
+              : 'none',
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {p.name}
+              </div>
+              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+                Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
+                {p.createdByName && ` · por ${p.createdByName}`}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button onClick={() => onOpenProducts?.()} style={btnSmall(T.copper[500])}>
+                Aceptar
+              </button>
+              <button
+                onClick={() => setConfirmDel(p)}
+                style={{
+                  padding: '7px 12px', borderRadius: 10,
+                  background: 'transparent', color: T.bad,
+                  border: `1px solid ${T.bad}33`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12.5, fontWeight: 600,
+                }}
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        ))}
+        {products.length > 5 && (
+          <div style={{ padding: '8px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
+            + {products.length - 5} más en la pestaña Productos
+          </div>
+        )}
+      </Section>
+
+      {confirmDel && (
+        <ModalOverlay onClose={busy ? undefined : () => setConfirmDel(null)}>
+          <ModalCard>
+            <ModalTitle>¿Eliminar producto?</ModalTitle>
+            <ModalSub>{confirmDel.name}</ModalSub>
+            <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5 }}>
+              Se eliminará del catálogo. Las ventas que ya lo usaron no se afectan.
+            </div>
+            <ModalActions
+              onCancel={() => setConfirmDel(null)}
+              onConfirm={handleDelete}
+              confirmLabel={busy ? 'Eliminando...' : 'Eliminar'}
+              confirmDisabled={busy}
+              confirmColor={T.bad}
+            />
+          </ModalCard>
+        </ModalOverlay>
+      )}
+    </>
   )
 }
 

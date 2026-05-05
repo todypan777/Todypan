@@ -51,39 +51,103 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <ScreenHeader title="Equipo" subtitle={fmtMonthLabel(currentMonth())}
-        right={
-          <IconButton tint={T.copper[50]} onClick={() => setShowAddEmp(true)}>
-            <svg width="16" height="16" viewBox="0 0 16 16"><path d="M8 3 V13 M3 8 H13" stroke={T.copper[500]} strokeWidth="2" strokeLinecap="round"/></svg>
-          </IconButton>
-        }/>
+      <ScreenHeader title="Equipo" subtitle={fmtMonthLabel(currentMonth())} />
 
-      {/* Tabs */}
-      <div style={{ padding: '0 20px 8px', display: 'flex', gap: 6, overflowX: 'auto' }}>
-        <Chip
-          label={`Activos${employees.length > 0 ? ` (${employees.length})` : ''}`}
-          active={tab === 'active'}
-          onClick={() => setTab('active')}
-        />
-        <Chip
-          label={`Pendientes${pendingUsers.length > 0 ? ` · ${pendingUsers.length}` : ''}`}
-          active={tab === 'pending'}
-          onClick={() => setTab('pending')}
-        />
-        <Chip
-          label={`Inactivos${inactiveUsers.length > 0 ? ` (${inactiveUsers.length})` : ''}`}
-          active={tab === 'inactive'}
-          onClick={() => setTab('inactive')}
-        />
+      {/* Tabs estilo segmented control */}
+      <div style={{ padding: '0 16px 12px' }}>
+        <div style={{
+          display: 'flex',
+          background: T.neutral[100],
+          padding: 3,
+          borderRadius: 12,
+          gap: 2,
+        }}>
+          {[
+            { id: 'active', label: 'Activos', count: employees.length, badgeColor: null },
+            { id: 'pending', label: 'Pendientes', count: pendingUsers.length, badgeColor: T.warn },
+            { id: 'inactive', label: 'Inactivos', count: inactiveUsers.length, badgeColor: null },
+          ].map(t => {
+            const isActive = tab === t.id
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  flex: 1, padding: '8px 6px', borderRadius: 9,
+                  background: isActive ? '#fff' : 'transparent',
+                  color: isActive ? T.neutral[900] : T.neutral[500],
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12.5, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  boxShadow: isActive ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {t.label}
+                {t.count > 0 && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 800,
+                    minWidth: 16, height: 16, padding: '0 4px',
+                    borderRadius: 999,
+                    background: isActive
+                      ? (t.badgeColor || T.copper[500])
+                      : (t.badgeColor ? `${t.badgeColor}30` : T.neutral[200]),
+                    color: isActive
+                      ? '#fff'
+                      : (t.badgeColor || T.neutral[600]),
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {t.count}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
-      {/* Filtro por panadería (solo en activos) */}
+      {/* Filtro de panadería + botón agregar (solo en activos) */}
       {tab === 'active' && (
-        <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
-          <Chip label="Todos" active={filter === 'all'} onClick={() => setFilter('all')} />
-          {getData().branches.map(br => (
-            <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
-          ))}
+        <div style={{ padding: '0 16px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <select
+            value={filter}
+            onChange={e => setFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+            style={{
+              padding: '8px 32px 8px 12px', borderRadius: 10,
+              border: `1px solid ${T.neutral[200]}`,
+              fontSize: 13, fontFamily: 'inherit', fontWeight: 600,
+              background: '#fff', color: T.neutral[800],
+              outline: 'none', cursor: 'pointer',
+              appearance: 'none', WebkitAppearance: 'none',
+              backgroundImage: `url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5L6 8L9 5' stroke='%237A7163' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'right 10px center',
+              backgroundSize: '12px',
+            }}
+          >
+            <option value="all">Todas las panaderías</option>
+            {getData().branches.map(br => (
+              <option key={br.id} value={br.id}>{br.name}</option>
+            ))}
+          </select>
+
+          <div style={{ flex: 1 }}/>
+
+          <button
+            onClick={() => setShowAddEmp(true)}
+            style={{
+              padding: '8px 14px', borderRadius: 10,
+              background: T.copper[500], color: '#fff',
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 700,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              boxShadow: '0 2px 6px rgba(184,122,86,0.3)',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12"><path d="M6 1 V11 M1 6 H11" stroke="#fff" strokeWidth="2" strokeLinecap="round"/></svg>
+            Nuevo empleado
+          </button>
         </div>
       )}
 

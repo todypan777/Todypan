@@ -20,6 +20,7 @@ import {
 } from '../cashExpenses'
 import { watchAllSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
+import { watchCashierProducts } from '../products'
 import { addMovement } from '../db'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
@@ -33,6 +34,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   const [pendingExpenses, setPendingExpenses] = useState([])
   const [allSales, setAllSales] = useState([])
   const [surplusBalance, setSurplusBalance] = useState(0)
+  const [cashierProducts, setCashierProducts] = useState([])
 
   useEffect(() => watchAllUsers(list => {
     setAllUsers(list)
@@ -42,6 +44,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   useEffect(() => watchPendingExpenses(setPendingExpenses), [])
   useEffect(() => watchAllSales(setAllSales), [])
   useEffect(() => watchSurplusFundBalance(setSurplusBalance), [])
+  useEffect(() => watchCashierProducts(setCashierProducts), [])
 
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
   const pendingCloses = pendingSessions.filter(s => s.status === 'pending_close')
@@ -63,7 +66,8 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
     pendingCloses.length +
     orphanShortages.length +
     pendingExpenses.length +
-    flaggedSales.length
+    flaggedSales.length +
+    cashierProducts.length
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -141,6 +145,46 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
         <FlaggedSalesSection sales={flaggedSales} adminUid={authUser.uid} />
       )}
 
+      {cashierProducts.length > 0 && (
+        <Section
+          title="Productos sin costo"
+          count={cashierProducts.length}
+          tone="copper"
+          actionLabel="Ir a Productos"
+          onAction={onOpenProducts}
+        >
+          <div style={{ padding: '4px 0' }}>
+            {cashierProducts.slice(0, 5).map((p, i) => (
+              <div key={p.id} style={{
+                padding: '10px 14px',
+                display: 'flex', alignItems: 'center', gap: 10,
+                borderBottom: i < Math.min(cashierProducts.length, 5) - 1
+                  ? `0.5px solid ${T.neutral[100]}`
+                  : 'none',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: 700, color: T.neutral[900],
+                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  }}>
+                    {p.name}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+                    Precio: <b style={{ color: T.neutral[700] }}>{fmtCOP(p.salePrice)}</b>
+                    {p.createdByName && ` · por ${p.createdByName}`}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {cashierProducts.length > 5 && (
+              <div style={{ padding: '8px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
+                + {cashierProducts.length - 5} más
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
       {/* Saldo del fondo de sobras (siempre visible si > 0) */}
       {surplusBalance > 0 && (
         <div style={{ padding: '0 16px 12px' }}>
@@ -164,39 +208,76 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Sección genérica
+// Sección colapsable (acordeón)
 // ──────────────────────────────────────────────────────────────
-function Section({ title, count, tone = 'copper', actionLabel, onAction, children }) {
+function Section({ title, count, tone = 'copper', actionLabel, onAction, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
   const tones = {
-    copper: { bg: T.copper[50], border: T.copper[100], text: T.copper[700] },
-    warn:   { bg: '#FFF7E6', border: '#F4E0BC', text: T.warn },
-    bad:    { bg: '#FBE9E5', border: '#F0C8BE', text: T.bad },
+    copper: { bg: T.copper[50], border: T.copper[100], text: T.copper[700], iconBg: T.copper[100] },
+    warn:   { bg: '#FFF7E6', border: '#F4E0BC', text: T.warn, iconBg: '#F4E0BC' },
+    bad:    { bg: '#FBE9E5', border: '#F0C8BE', text: T.bad, iconBg: '#F0C8BE' },
   }
   const tn = tones[tone] || tones.copper
+
   return (
-    <div style={{ padding: '0 16px 12px' }}>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-        padding: '0 4px 8px', gap: 8,
-      }}>
-        <div style={{
-          fontSize: 12, fontWeight: 700, color: T.neutral[500],
-          letterSpacing: 0.5, textTransform: 'uppercase',
-        }}>
-          {title} <span style={{ color: tn.text }}>· {count}</span>
-        </div>
-        {actionLabel && onAction && (
-          <button onClick={onAction} style={{
-            background: 'none', border: 'none', padding: 0,
-            fontSize: 12.5, fontWeight: 700, color: T.copper[600],
-            cursor: 'pointer', fontFamily: 'inherit',
-          }}>
-            {actionLabel}
-          </button>
-        )}
-      </div>
+    <div style={{ padding: '0 16px 10px' }}>
       <Card padding={0} style={{ background: tn.bg, border: `1px solid ${tn.border}`, boxShadow: 'none', overflow: 'hidden' }}>
-        {children}
+        {/* Header clickeable */}
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            width: '100%', padding: '14px 16px',
+            background: 'transparent', border: 'none',
+            cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 12,
+            textAlign: 'left',
+          }}
+        >
+          <div style={{
+            width: 30, height: 30, borderRadius: 999, flexShrink: 0,
+            background: tn.iconBg, color: tn.text,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 13, fontWeight: 800,
+          }}>
+            {count}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 14, fontWeight: 700, color: tn.text,
+            }}>
+              {title}
+            </div>
+          </div>
+          {actionLabel && onAction && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onAction() }}
+              style={{
+                background: 'none', border: 'none', padding: '4px 8px',
+                fontSize: 12, fontWeight: 700, color: T.copper[600],
+                cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              {actionLabel}
+            </button>
+          )}
+          <svg
+            width="14" height="14" viewBox="0 0 14 14" fill="none"
+            style={{
+              transform: open ? 'rotate(180deg)' : 'none',
+              transition: 'transform 0.18s',
+              flexShrink: 0,
+            }}
+          >
+            <path d="M3 5 L7 9 L11 5" stroke={tn.text} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+
+        {/* Cuerpo */}
+        {open && (
+          <div style={{ borderTop: `1px solid ${tn.border}`, background: '#fff' }}>
+            {children}
+          </div>
+        )}
       </Card>
     </div>
   )
@@ -321,7 +402,7 @@ function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) 
   const [reviewing, setReviewing] = useState(null)
   return (
     <>
-      <Section title="Cierres por aprobar" count={sessions.length} tone="warn">
+      <Section title="Cierres de turno por aprobar" count={sessions.length} tone="warn" defaultOpen>
         {sessions.map((s, i) => {
           const cd = s.closingDiscrepancy
           const hasShortage = cd?.type === 'shortage'

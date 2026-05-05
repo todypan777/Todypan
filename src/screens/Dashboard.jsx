@@ -4,7 +4,6 @@ import { fmtCOP, fmtDate, todayStr, currentMonth, fmtMonthLabel } from '../utils
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
-import PendingBanner from '../components/PendingBanner'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
@@ -72,12 +71,6 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      {/* Banner + popup de cosas pendientes para el admin */}
-      <PendingBanner
-        onOpenUsers={() => onNav('users')}
-        onOpenPendientes={() => onNav('pendientes')}
-      />
-
       {/* Alert banner */}
       {showConfirmBanner && (
         <div onClick={onConfirmDay} style={{

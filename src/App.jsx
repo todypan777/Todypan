@@ -3,6 +3,7 @@ import { T } from './tokens'
 import InstallPrompt from './components/UI/InstallPrompt'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
 import { TabBar, Sidebar } from './components/Nav'
+import NotificationBell from './components/NotificationBell'
 import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth } from './context/AuthCtx'
 import { ADMIN_EMAIL } from './auth'
@@ -382,6 +383,12 @@ function AppShell() {
         )}
 
         {addMovementOverlay}
+
+        {/* Campanita de notificaciones global (siempre visible para admin) */}
+        <NotificationBell
+          onOpenPendientes={() => handleNav('pendientes')}
+          onOpenUsers={() => handleNav('users')}
+        />
 
         <InstallPrompt />
 

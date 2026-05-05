@@ -129,6 +129,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     name: p.name,
     pricesByBranch: p.pricesByBranch || {},
     branch: p.branch,
+    freeAmount: p.freeAmount === true,
     createdByCashier: false,
     needsCostReview: false,
   }))
@@ -138,6 +139,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     name: p.name,
     pricesByBranch: p.pricesByBranch || {},
     branch: p.branch || 'both',
+    freeAmount: p.freeAmount === true,
     createdByCashier: true,
     needsCostReview: !!p.needsCostReview,
   }))

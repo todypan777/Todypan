@@ -54,6 +54,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const [paymentOpen, setPaymentOpen] = useState(false)
   // Modal "primera vez": producto que falta precio en la panaderia activa
   const [missingPriceProduct, setMissingPriceProduct] = useState(null)
+  // Modal "¿De cuánto?" para productos de venta libre. Si trae editingKey,
+  // se está editando un item del carrito; si no, se agrega uno nuevo.
+  const [freeAmountTarget, setFreeAmountTarget] = useState(null)
   // Modal "convertir en mesa" (modo venta nueva)
   const [convertOpen, setConvertOpen] = useState(false)
 
@@ -100,6 +103,12 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   }
 
   function handleSelectProduct(product) {
+    // Productos de venta libre (ej: "Pan"): cajera escribe el monto al vender.
+    // Se salta la lógica de "primera vez" porque no hay precio guardado.
+    if (product.freeAmount) {
+      setFreeAmountTarget({ product, editingKey: null })
+      return
+    }
     const price = getProductPrice(product, branchId)
     if (price !== null) {
       addProductToCart(product, price)
@@ -107,6 +116,38 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       // Primera vez en esta panaderia: pedir precio
       setMissingPriceProduct(product)
     }
+  }
+
+  // Confirmar monto del producto de venta libre (agregar nuevo o editar existente)
+  function handleConfirmFreeAmount(amount) {
+    if (!freeAmountTarget) return
+    const num = Number(amount)
+    if (!num || num < 400) return
+    const { product, editingKey } = freeAmountTarget
+
+    if (editingKey) {
+      // Edición de un item del carrito: solo actualiza unitPrice
+      setCart(prev => prev.map(it =>
+        it.key === editingKey ? { ...it, unitPrice: num } : it
+      ))
+    } else {
+      // Nuevo item: cada agregado de venta libre es una línea independiente
+      // (no agrupar como qty++) porque pueden ser montos distintos del mismo producto.
+      setCart(prev => [
+        ...prev,
+        {
+          key: `free_${product.source}_${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          productId: product.id,
+          source: product.source,
+          name: product.name,
+          qty: 1,
+          unitPrice: num,
+          freeAmount: true,
+        },
+      ])
+      setQuery('')
+    }
+    setFreeAmountTarget(null)
   }
 
   function handleConfirmFirstTimePrice(price) {
@@ -387,8 +428,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
               </div>
             )}
             {filtered.map((p, i) => {
-              const priceHere = getProductPrice(p, branchId)
-              const needsPrice = priceHere === null
+              const isFreeAmount = p.freeAmount === true
+              const priceHere = isFreeAmount ? null : getProductPrice(p, branchId)
+              const needsPrice = !isFreeAmount && priceHere === null
               return (
                 <button
                   key={p.source + '_' + p.id}
@@ -410,7 +452,15 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
                       {p.name}
                     </div>
                   </div>
-                  {needsPrice ? (
+                  {isFreeAmount ? (
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: T.copper[700],
+                      background: T.copper[50], padding: '4px 10px', borderRadius: 999,
+                      letterSpacing: 0.3, flexShrink: 0,
+                    }}>
+                      Venta libre
+                    </div>
+                  ) : needsPrice ? (
                     <div style={{
                       fontSize: 11, fontWeight: 700, color: T.copper[700],
                       background: T.copper[50], padding: '4px 10px', borderRadius: 999,
@@ -474,6 +524,10 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
                 onMinus={() => updateQty(it.key, -1)}
                 onPlus={() => updateQty(it.key, +1)}
                 onRemove={() => removeItem(it.key)}
+                onEditAmount={() => setFreeAmountTarget({
+                  product: { id: it.productId, source: it.source, name: it.name },
+                  editingKey: it.key,
+                })}
               />
             ))}
           </Card>
@@ -569,6 +623,18 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           branchName={session.branchName}
           onCancel={() => setMissingPriceProduct(null)}
           onConfirm={handleConfirmFirstTimePrice}
+        />
+      )}
+
+      {freeAmountTarget && (
+        <FreeAmountModal
+          product={freeAmountTarget.product}
+          isEditing={!!freeAmountTarget.editingKey}
+          initialAmount={freeAmountTarget.editingKey
+            ? cart.find(it => it.key === freeAmountTarget.editingKey)?.unitPrice
+            : null}
+          onCancel={() => setFreeAmountTarget(null)}
+          onConfirm={handleConfirmFreeAmount}
         />
       )}
 
@@ -673,8 +739,54 @@ function SearchInput({ value, onChange, placeholder }) {
   )
 }
 
-function CartItem({ item, isLast, onMinus, onPlus, onRemove }) {
+function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
   const subtotal = item.qty * item.unitPrice
+  // Items de venta libre: sin botones - / +; tap en el monto edita
+  if (item.freeAmount) {
+    return (
+      <div style={{
+        padding: '12px 16px',
+        display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 14, fontWeight: 700, color: T.neutral[900],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {item.name}
+          </div>
+          <div style={{ fontSize: 11, color: T.copper[700], marginTop: 2, fontWeight: 600, letterSpacing: 0.3 }}>
+            VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR
+          </div>
+        </div>
+
+        <button
+          onClick={onEditAmount}
+          style={{
+            padding: '8px 14px', borderRadius: 12,
+            background: T.copper[50], border: `1.5px solid ${T.copper[300]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 16, fontWeight: 800, color: T.copper[700],
+            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
+          }}
+        >
+          {fmtCOP(item.unitPrice)}
+        </button>
+
+        <button onClick={onRemove} style={{
+          width: 32, height: 32, borderRadius: 999, marginLeft: 4,
+          background: 'transparent', border: 'none',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.neutral[400]} strokeWidth="1.6" strokeLinecap="round"/>
+          </svg>
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div style={{
       padding: '12px 16px',
@@ -1025,6 +1137,115 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
             }}
           >
             Guardar y agregar
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: ¿De cuánto? (productos de venta libre, ej: "Pan")
+// ──────────────────────────────────────────────────────────────
+function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfirm }) {
+  const MIN = 400
+  const [str, setStr] = useState(initialAmount ? String(initialAmount) : '')
+  const num = Number(str) || 0
+  const valid = num >= MIN
+
+  function sanitize(raw) {
+    return raw.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
+  }
+
+  function handleConfirm() {
+    if (!valid) return
+    onConfirm(num)
+  }
+
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
+          {isEditing ? `Cambiar monto · ${product.name}` : `${product.name}`}
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, textAlign: 'center' }}>
+          ¿De cuánto?
+        </div>
+
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginBottom: 14,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center',
+            border: `2px solid ${valid ? T.copper[400] : T.neutral[200]}`,
+            borderRadius: 16, background: '#fff',
+            padding: '8px 16px',
+            transition: 'border-color 0.15s',
+          }}>
+            <span style={{ paddingRight: 6, color: T.neutral[500], fontSize: 24, fontWeight: 700 }}>$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoFocus
+              value={str}
+              onChange={e => setStr(sanitize(e.target.value))}
+              placeholder="0"
+              style={{
+                width: 160, padding: '6px 0', border: 'none', outline: 'none',
+                fontFamily: 'inherit', fontSize: 32, fontWeight: 800,
+                color: T.neutral[900], background: 'transparent',
+                fontVariantNumeric: 'tabular-nums', letterSpacing: -1,
+                textAlign: 'center',
+              }}
+            />
+          </div>
+        </div>
+
+        {/* Sugerencias rápidas */}
+        <div style={{
+          display: 'flex', gap: 6, marginBottom: 14, justifyContent: 'center', flexWrap: 'wrap',
+        }}>
+          {[500, 1000, 2000, 5000, 10000].map(s => (
+            <button
+              key={s}
+              onClick={() => setStr(String(s))}
+              style={{
+                padding: '6px 12px', borderRadius: 999,
+                background: T.neutral[100], color: T.neutral[700],
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}
+            >
+              ${s.toLocaleString('es-CO')}
+            </button>
+          ))}
+        </div>
+
+        {str && num > 0 && num < MIN && (
+          <div style={{
+            marginBottom: 12, padding: '8px 12px', borderRadius: 10,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+          }}>
+            Monto mínimo: ${MIN.toLocaleString('es-CO')}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid}
+            style={{
+              ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
+              flex: 1.4,
+              color: valid ? '#fff' : T.neutral[400],
+              cursor: valid ? 'pointer' : 'not-allowed',
+              boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            {isEditing ? 'Cambiar' : 'Agregar'}
           </button>
         </div>
       </div>

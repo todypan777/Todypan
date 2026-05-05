@@ -92,6 +92,17 @@ function MarginBadge({ margin }) {
 
 // ── Precios por panadería (compacto inline para tabla desktop) ─
 function PricesByBranchInline({ product }) {
+  if (product.freeAmount) {
+    return (
+      <span style={{
+        fontSize: 11.5, fontWeight: 700, color: T.copper[700],
+        background: T.copper[50], padding: '4px 10px', borderRadius: 999,
+        letterSpacing: 0.3, textTransform: 'uppercase',
+      }}>
+        Venta libre
+      </span>
+    )
+  }
   const breakdown = priceBreakdown(product)
   const missing = branchesMissingPrice(product)
   if (breakdown.length === 0) {
@@ -122,6 +133,16 @@ function PricesByBranchInline({ product }) {
 
 // ── Precios por panadería (bloque para card móvil) ──────────────
 function PricesByBranchBlock({ product }) {
+  if (product.freeAmount) {
+    return (
+      <div style={{
+        fontSize: 12, fontWeight: 700, color: T.copper[700],
+        textAlign: 'center', letterSpacing: 0.3, textTransform: 'uppercase',
+      }}>
+        Venta libre · cajera escribe el monto
+      </div>
+    )
+  }
   const breakdown = priceBreakdown(product)
   const missing = branchesMissingPrice(product)
   if (breakdown.length === 0) {
@@ -181,6 +202,7 @@ export default function Products({ products, onBack, onRefresh }) {
   const [cashierProducts, setCashierProducts] = useState([])
   const [confirmDelCashier, setConfirmDelCashier] = useState(null)
   const [acceptingCashier, setAcceptingCashier] = useState(null)
+  const [cleanupOpen, setCleanupOpen] = useState(false)
 
   useEffect(() => {
     const unsub = watchCashierProducts(setCashierProducts)
@@ -308,6 +330,22 @@ export default function Products({ products, onBack, onRefresh }) {
                   Productos creados por cajeras. Asígnales costo o elimínalos.
                 </div>
               </div>
+              {cashierProducts.some(p => /pan/i.test(p.name || '')) && (
+                <button
+                  onClick={() => setCleanupOpen(true)}
+                  title="Limpiar productos duplicados con la palabra 'Pan'"
+                  style={{
+                    padding: '6px 11px', borderRadius: 8,
+                    background: 'transparent', color: T.bad,
+                    border: `1px solid ${T.bad}55`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 11.5, fontWeight: 700,
+                    flexShrink: 0,
+                  }}
+                >
+                  🧹 Limpiar Pan
+                </button>
+              )}
             </div>
             <div style={{ borderTop: `1px solid ${T.warn}22` }}>
               {cashierProducts.map((p, i) => (
@@ -506,6 +544,15 @@ export default function Products({ products, onBack, onRefresh }) {
           product={acceptingCashier}
           onCancel={() => setAcceptingCashier(null)}
           onDone={() => { setAcceptingCashier(null); onRefresh() }}
+        />
+      )}
+
+      {/* Modal: limpiar duplicados con la palabra "Pan" */}
+      {cleanupOpen && (
+        <CleanupPanProductsModal
+          cashierProducts={cashierProducts}
+          onCancel={() => setCleanupOpen(false)}
+          onDone={() => setCleanupOpen(false)}
         />
       )}
 
@@ -769,6 +816,7 @@ function MetricCell({ label, value, color }) {
 function ProductForm({ initial, isEdit, onClose, onSave }) {
   const branches = getData().branches || []
   const [name,            setName]            = useState(initial?.name || '')
+  const [freeAmount,      setFreeAmount]      = useState(initial?.freeAmount === true)
   const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? true)
   const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null ? String(initial.packageCost) : '')
   const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null ? String(initial.unitsPerPackage) : '')
@@ -800,10 +848,30 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
 
   // Solo requiere nombre + costo. Los precios son opcionales (cajera los pone al usar).
-  const canSave = name.trim() && pc > 0 && (!byPackage || up > 0)
+  // Si es venta libre: NO requiere costo (el costo lo decide la cajera al venderlo).
+  const canSave = name.trim() && (freeAmount || (pc > 0 && (!byPackage || up > 0)))
 
   function handleSave() {
     if (!canSave) return
+    // Si es venta libre: NO se guardan precios ni costo (el monto lo elige la cajera).
+    if (freeAmount) {
+      const data = {
+        name: name.trim(),
+        freeAmount: true,
+        pricesByBranch: {},
+        packageCost: 0,
+        unitsPerPackage: 1,
+        byPackage: false,
+        notes: notes.trim(),
+      }
+      if (isEdit) {
+        updateProduct(initial.id, data)
+      } else {
+        addProduct(data)
+      }
+      onSave()
+      return
+    }
     // Construir pricesByBranch limpio (solo entradas con valor > 0)
     const pricesByBranch = {}
     Object.entries(priceInputs).forEach(([bid, val]) => {
@@ -812,6 +880,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
     })
     const data = {
       name: name.trim(),
+      freeAmount: false,
       byPackage,
       packageCost: pc,
       unitsPerPackage: byPackage ? up : 1,
@@ -836,6 +905,53 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         placeholder="Ej: Pan tajado, Croissant..."
       />
 
+      {/* Toggle Venta libre */}
+      <div style={{ marginBottom: 14 }}>
+        <button
+          onClick={() => setFreeAmount(v => !v)}
+          style={{
+            width: '100%', padding: '14px',
+            background: freeAmount ? T.copper[50] : '#fff',
+            border: `1.5px solid ${freeAmount ? T.copper[400] : T.neutral[200]}`,
+            borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+          }}
+        >
+          <div style={{
+            width: 22, height: 22, borderRadius: 6,
+            background: freeAmount ? T.copper[500] : T.neutral[100],
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
+          }}>
+            {freeAmount && (
+              <svg width="14" height="14" viewBox="0 0 14 14">
+                <path d="M3 7 L6 10 L11 4" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: freeAmount ? T.copper[700] : T.neutral[800] }}>
+              Venta libre
+            </div>
+            <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2, lineHeight: 1.4 }}>
+              El cliente dice de cuánto quiere (ej: "$2.000 de pan"). La cajera escribe el monto al vender.
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Si es venta libre, NO mostrar costo ni precios — saltamos directo a notas */}
+      {freeAmount ? (
+        <div style={{
+          padding: '12px 14px', borderRadius: 12,
+          background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+          fontSize: 12.5, color: T.copper[700], lineHeight: 1.5, marginBottom: 14,
+        }}>
+          ✓ Producto de venta libre. La cajera escribirá el monto al vender (mínimo $400).
+          No requiere precio ni costo.
+        </div>
+      ) : (
+      <>
       {/* Toggle paquete */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
@@ -963,6 +1079,8 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
 
       {/* Notas opcionales */}
@@ -1285,4 +1403,103 @@ function chipBtn(active) {
     cursor: 'pointer', fontFamily: 'inherit',
     fontSize: 12.5, fontWeight: 700,
   }
+}
+
+// ── Modal: limpiar duplicados con la palabra "Pan" ──────────────
+function CleanupPanProductsModal({ cashierProducts, onCancel, onDone }) {
+  const matches = (cashierProducts || []).filter(p => /pan/i.test(p.name || ''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [doneCount, setDoneCount] = useState(0)
+
+  async function handleConfirm() {
+    if (busy) return
+    setBusy(true); setError(null)
+    let n = 0
+    try {
+      for (const p of matches) {
+        await deleteCashierProduct(p.id)
+        n++
+        setDoneCount(n)
+      }
+      onDone()
+    } catch (err) {
+      console.error('[cleanup] failed at item', n, err)
+      setError(`Se borraron ${n} de ${matches.length}. Reintenta para terminar.`)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal onClose={busy ? undefined : onCancel} title="Limpiar productos de pan">
+      <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 14, lineHeight: 1.5 }}>
+        Voy a borrar <b>{matches.length} producto{matches.length === 1 ? '' : 's'}</b> creado{matches.length === 1 ? '' : 's'} por cajeras que contiene{matches.length === 1 ? '' : 'n'} la palabra <b>"Pan"</b>.
+        Las ventas que ya los usaron <b>NO se afectan</b>.
+      </div>
+
+      {matches.length > 0 ? (
+        <div style={{
+          maxHeight: 200, overflowY: 'auto',
+          padding: '10px 12px', borderRadius: 10,
+          background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+          marginBottom: 14, fontSize: 12.5, color: T.neutral[700], lineHeight: 1.6,
+        }}>
+          {matches.map(p => (
+            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p.name}
+              </span>
+              {p.createdByName && (
+                <span style={{ color: T.neutral[400], fontSize: 11, flexShrink: 0 }}>
+                  · {p.createdByName}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ marginBottom: 14, fontSize: 13, color: T.neutral[500], fontStyle: 'italic' }}>
+          No hay productos de cajera con la palabra "Pan".
+        </div>
+      )}
+
+      {busy && (
+        <div style={{ fontSize: 12.5, color: T.copper[600], textAlign: 'center', marginBottom: 12 }}>
+          Borrando {doneCount} de {matches.length}...
+        </div>
+      )}
+
+      {error && (
+        <div style={{
+          marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+          background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+          fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button onClick={onCancel} disabled={busy} style={{
+          flex: 1, padding: 13, borderRadius: 12, border: 'none',
+          background: T.neutral[100], color: T.neutral[700],
+          fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+        }}>Cancelar</button>
+        <button
+          onClick={handleConfirm}
+          disabled={busy || matches.length === 0}
+          style={{
+            flex: 1.4, padding: 13, borderRadius: 12, border: 'none',
+            background: matches.length > 0 && !busy ? T.bad : T.neutral[200],
+            color: matches.length > 0 && !busy ? '#fff' : T.neutral[400],
+            fontSize: 14, fontWeight: 700, cursor: matches.length > 0 && !busy ? 'pointer' : 'not-allowed',
+            fontFamily: 'inherit',
+            boxShadow: matches.length > 0 && !busy ? `0 3px 10px ${T.bad}44` : 'none',
+          }}
+        >
+          {busy ? 'Borrando...' : `Borrar ${matches.length}`}
+        </button>
+      </div>
+    </Modal>
+  )
 }

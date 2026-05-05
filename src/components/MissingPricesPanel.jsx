@@ -29,8 +29,9 @@ export default function MissingPricesPanel({ branchId, branchName, branches, onC
     [adminProducts, cashierProducts],
   )
 
+  // Excluir productos de venta libre — no necesitan precio
   const missing = useMemo(
-    () => catalog.filter(p => getProductPrice(p, branchId) === null),
+    () => catalog.filter(p => !p.freeAmount && getProductPrice(p, branchId) === null),
     [catalog, branchId],
   )
 

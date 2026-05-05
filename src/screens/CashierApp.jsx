@@ -753,11 +753,11 @@ function ActiveSession({ session, userDoc, authUser }) {
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
-  // Productos del catálogo SIN precio en la panadería actual
+  // Productos del catálogo SIN precio en la panadería actual (excluye venta libre)
   const missingPriceCount = useMemo(() => {
     const adminProducts = getData().products || []
     const catalog = mergeProductCatalogs(adminProducts, cashierProducts)
-    return catalog.filter(p => getProductPrice(p, session.branchId) === null).length
+    return catalog.filter(p => !p.freeAmount && getProductPrice(p, session.branchId) === null).length
   }, [cashierProducts, session.branchId])
 
   useEffect(() => {

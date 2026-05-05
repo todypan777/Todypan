@@ -132,57 +132,113 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
     onRefresh?.()
   }
 
+  const isPrevMonth = () => true
+  const isNextMonth = month >= currentMonth()
+  const net = totalInc - totalExp
+
   return (
     <div style={{ paddingBottom: 110 }}>
-      <ScreenHeader title="Movimientos" subtitle={fmtMonthLabel(month)} />
+      <ScreenHeader title="Movimientos" />
 
-      {/* Month nav */}
-      <div style={{ padding: '0 20px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <button onClick={() => changeMonth(-1)} style={monthBtnStyle}>
-          <svg width="8" height="14" viewBox="0 0 8 14"><path d="M6 1 L1 7 L6 13" stroke={T.copper[500]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </button>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.neutral[800] }}>{fmtMonthLabel(month)}</div>
-        <button onClick={() => changeMonth(1)} style={monthBtnStyle} disabled={month >= currentMonth()}>
-          <svg width="8" height="14" viewBox="0 0 8 14"><path d="M2 1 L7 7 L2 13" stroke={month >= currentMonth() ? T.neutral[300] : T.copper[500]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </button>
-      </div>
-
-      {/* Filtros */}
-      <div style={{ padding: '4px 20px 8px', display: 'flex', gap: 8, overflowX: 'auto' }}>
-        <Chip label="Todo" active={typeFilter === 'all'} onClick={() => setTypeFilter('all')} />
-        <Chip label="Ingresos" active={typeFilter === 'income'} onClick={() => setTypeFilter('income')} />
-        <Chip label="Gastos" active={typeFilter === 'expense'} onClick={() => setTypeFilter('expense')} />
-      </div>
-      <div style={{ padding: '0 20px 8px', display: 'flex', gap: 8, overflowX: 'auto' }}>
-        <Chip label="Todo origen" active={originFilter === 'all'} onClick={() => setOriginFilter('all')} />
-        <Chip label="📝 Manuales" active={originFilter === 'manual'} onClick={() => setOriginFilter('manual')} />
-        <Chip label="🛒 Cajeras" active={originFilter === 'cashier'} onClick={() => setOriginFilter('cashier')} />
-      </div>
-      <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
-        <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
-        {branches.map(br => (
-          <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
-        ))}
-      </div>
-
-      {/* Resumen */}
+      {/* Card hero: balance del mes con navegador integrado */}
       <div style={{ padding: '0 16px 12px' }}>
-        <Card padding={14}>
-          <div style={{ display: 'flex', gap: 24 }}>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ingresos</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.ok, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc)}</div>
+        <Card padding={0} style={{
+          background: `linear-gradient(145deg, ${T.neutral[800]} 0%, ${T.neutral[900]} 100%)`,
+          color: '#fff',
+          overflow: 'hidden',
+        }}>
+          {/* Navegador de mes */}
+          <div style={{
+            padding: '12px 16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderBottom: '1px solid rgba(255,255,255,0.08)',
+          }}>
+            <button onClick={() => changeMonth(-1)} style={navBtnStyle()}>
+              <svg width="8" height="14" viewBox="0 0 8 14"><path d="M6 1 L1 7 L6 13" stroke={T.copper[300]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <div style={{ fontSize: 13.5, fontWeight: 700, letterSpacing: 0.2, textTransform: 'capitalize' }}>
+              {fmtMonthLabel(month)}
             </div>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Gastos</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.copper[500], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalExp)}</div>
+            <button onClick={() => changeMonth(1)} disabled={isNextMonth} style={{ ...navBtnStyle(), opacity: isNextMonth ? 0.3 : 1 }}>
+              <svg width="8" height="14" viewBox="0 0 8 14"><path d="M2 1 L7 7 L2 13" stroke={T.copper[300]} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          </div>
+
+          {/* Hero: neto en grande */}
+          <div style={{ padding: '18px 20px 14px' }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, color: T.copper[300], textTransform: 'uppercase' }}>
+              Balance del mes
             </div>
-            <div>
-              <div style={{ fontSize: 10.5, color: T.neutral[400], fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Neto</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: totalInc - totalExp >= 0 ? T.ok : T.bad, marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(totalInc - totalExp)}</div>
+            <div style={{
+              fontSize: 36, fontWeight: 800, letterSpacing: -1.2, marginTop: 4,
+              fontVariantNumeric: 'tabular-nums',
+              color: net >= 0 ? '#fff' : '#FFB4A8',
+            }}>
+              {net >= 0 ? '+ ' : '− '}{fmtCOP(Math.abs(net))}
+            </div>
+          </div>
+
+          {/* Desglose ingresos / gastos */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 1fr',
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+          }}>
+            <div style={{ padding: '14px 16px', borderRight: '1px solid rgba(255,255,255,0.08)' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>
+                Ingresos
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4, color: '#9DCC9C', fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
+                {fmtCOP(totalInc)}
+              </div>
+            </div>
+            <div style={{ padding: '14px 16px' }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>
+                Gastos
+              </div>
+              <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4, color: T.copper[300], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
+                {fmtCOP(totalExp)}
+              </div>
             </div>
           </div>
         </Card>
+      </div>
+
+      {/* Toolbar de filtros (1 fila compacta) */}
+      <div style={{ padding: '0 16px 14px' }}>
+        <div style={{
+          background: '#fff',
+          border: `1px solid ${T.neutral[100]}`,
+          borderRadius: 14,
+          padding: '10px 12px',
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <CompactSelect
+            value={typeFilter}
+            onChange={setTypeFilter}
+            options={[
+              { value: 'all', label: 'Todo' },
+              { value: 'income', label: 'Ingresos' },
+              { value: 'expense', label: 'Gastos' },
+            ]}
+          />
+          <CompactSelect
+            value={originFilter}
+            onChange={setOriginFilter}
+            options={[
+              { value: 'all', label: 'Todo origen' },
+              { value: 'manual', label: '📝 Manuales' },
+              { value: 'cashier', label: '🛒 Cajeras' },
+            ]}
+          />
+          <CompactSelect
+            value={String(filter)}
+            onChange={v => setFilter(v === 'all' ? 'all' : Number(v))}
+            options={[
+              { value: 'all', label: 'Todas las panaderías' },
+              ...branches.map(br => ({ value: String(br.id), label: br.name })),
+            ]}
+          />
+        </div>
       </div>
 
       {dates.length === 0 && (
@@ -387,4 +443,38 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
 
 const monthBtnStyle = {
   background: 'none', border: 'none', padding: '8px 12px', cursor: 'pointer',
+}
+
+function navBtnStyle() {
+  return {
+    width: 32, height: 32, borderRadius: 999,
+    background: 'rgba(255,255,255,0.08)', border: 'none',
+    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    transition: 'background 0.15s',
+  }
+}
+
+function CompactSelect({ value, onChange, options }) {
+  return (
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{
+        padding: '7px 28px 7px 12px', borderRadius: 10,
+        border: `1px solid ${T.neutral[200]}`,
+        fontSize: 12.5, fontFamily: 'inherit', fontWeight: 600,
+        background: '#fff', color: T.neutral[800],
+        outline: 'none', cursor: 'pointer',
+        appearance: 'none', WebkitAppearance: 'none',
+        backgroundImage: `url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 5L6 8L9 5' stroke='%237A7163' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'right 8px center',
+        backgroundSize: '12px',
+      }}
+    >
+      {options.map(o => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  )
 }

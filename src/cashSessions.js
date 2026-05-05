@@ -14,9 +14,15 @@ import {
 const sessionsCol = () => collection(firestoreDb, 'cashSessions')
 const sessionRef = (id) => doc(firestoreDb, 'cashSessions', id)
 
-/** Suscripción a TODAS las sesiones abiertas (para bloquear panaderías ocupadas). */
+/**
+ * Suscripción a TODAS las sesiones que bloquean la panadería:
+ *  - 'open': cajera todavía atendiendo
+ *  - 'pending_close': cajera ya cerró pero admin no ha aprobado
+ *
+ * Una panadería con cualquiera de estos estados NO puede recibir un nuevo turno.
+ */
 export function watchOpenSessions(callback) {
-  const q = query(sessionsCol(), where('status', '==', 'open'))
+  const q = query(sessionsCol(), where('status', 'in', ['open', 'pending_close']))
   return onSnapshot(
     q,
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
@@ -151,7 +157,11 @@ export async function resolveClosingDiscrepancy(sessionId, payload) {
 }
 
 /**
- * Cierra un turno con cuadre + handover.
+ * La cajera cierra un turno con cuadre + handover.
+ *
+ * IMPORTANTE: el status NO pasa a 'closed' directo. Pasa a 'pending_close'
+ * y la panadería sigue bloqueada hasta que el admin apruebe en Pendientes.
+ *
  * payload: {
  *   declaredClosingCash, expectedCash, difference, handover,
  *   closingNote?,                    ← nota opcional de la cajera
@@ -161,7 +171,7 @@ export async function resolveClosingDiscrepancy(sessionId, payload) {
  *
  * closingDiscrepancy:
  *   { type: 'shortage' | 'surplus', amount, status, note? }
- *   status: 'resolved' (sobras absorbidas en fondo) | 'pending' (faltas requieren admin)
+ *   status: 'pending' siempre al cerrar (admin resuelve junto con el cierre)
  */
 export async function closeSession(sessionId, payload) {
   const data = {
@@ -170,7 +180,7 @@ export async function closeSession(sessionId, payload) {
     difference: Number(payload.difference) || 0,
     handover: payload.handover,
     closedAt: serverTimestamp(),
-    status: 'closed',
+    status: 'pending_close',  // ← antes era 'closed'
   }
   if (payload.closingNote) {
     data.closingNote = payload.closingNote
@@ -179,7 +189,7 @@ export async function closeSession(sessionId, payload) {
     data.closingDiscrepancy = {
       type: payload.closingDiscrepancy.type,
       amount: Number(payload.closingDiscrepancy.amount) || 0,
-      status: payload.closingDiscrepancy.status,
+      status: 'pending',  // siempre pending hasta que admin apruebe
       note: payload.closingDiscrepancy.note || null,
       reportedAt: serverTimestamp(),
     }
@@ -188,9 +198,57 @@ export async function closeSession(sessionId, payload) {
 }
 
 /**
- * Watcher que devuelve cualquier sesión (abierta o cerrada) con un
- * elemento que requiera acción del admin: openingDispute pendiente o
- * closingDiscrepancy de tipo shortage pendiente.
+ * Solo admin: aprueba el cierre de un turno (y opcionalmente resuelve la
+ * discrepancia si aplica). Esta acción libera la panadería para nueva apertura.
+ *
+ * payload (todos opcionales según el caso):
+ *   - reviewedBy: uid del admin
+ *   - approveNote?: nota interna
+ *   - resolution?: 'business_loss' | 'covered_by_fund' | 'cashier_deduction'
+ *                  (solo si hay closingDiscrepancy.type === 'shortage')
+ *   - deductionId?: id en cashierDeductions (si resolution === 'cashier_deduction')
+ */
+export async function approveSessionClose(sessionId, payload = {}) {
+  const data = {
+    status: 'closed',
+    closeApprovedAt: serverTimestamp(),
+    closeApprovedBy: payload.reviewedBy || null,
+  }
+  if (payload.approveNote) {
+    data.closeApproveNote = payload.approveNote
+  }
+
+  if (payload.resolution) {
+    data['closingDiscrepancy.status'] =
+      payload.resolution === 'business_loss' ? 'absorbed'
+      : payload.resolution === 'covered_by_fund' ? 'fundCovered'
+      : payload.resolution === 'cashier_deduction' ? 'deducted'
+      : 'resolved'
+    data['closingDiscrepancy.resolution'] = payload.resolution
+    data['closingDiscrepancy.reviewedBy'] = payload.reviewedBy || null
+    data['closingDiscrepancy.reviewedAt'] = serverTimestamp()
+    if (payload.deductionId) {
+      data['closingDiscrepancy.deductionId'] = payload.deductionId
+    }
+    if (payload.approveNote) {
+      data['closingDiscrepancy.reviewNote'] = payload.approveNote
+    }
+  } else {
+    // Si hay surplus pero no hay resolution explícita, marcar como resuelto al fondo
+    // (esto se procesa al aprobar el cierre).
+    data['closingDiscrepancy.status'] = 'resolved'
+    data['closingDiscrepancy.reviewedAt'] = serverTimestamp()
+    data['closingDiscrepancy.reviewedBy'] = payload.reviewedBy || null
+  }
+
+  await updateDoc(sessionRef(sessionId), data)
+}
+
+/**
+ * Watcher de sesiones que requieren acción del admin:
+ *  - status 'pending_close': cierre esperando aprobación
+ *  - openingDispute pendiente: disputa de apertura
+ *  - closingDiscrepancy.shortage pendiente: residuos de cierres antiguos
  */
 export function watchSessionsWithPendingReview(callback) {
   const q = query(sessionsCol())
@@ -199,6 +257,7 @@ export function watchSessionsWithPendingReview(callback) {
     snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       const filtered = all.filter(s =>
+        s.status === 'pending_close' ||
         s.openingDispute?.status === 'pending' ||
         s.closingDiscrepancy?.status === 'pending'
       )

@@ -11,6 +11,7 @@ import {
   watchSurplusFundBalance,
   resolveOpeningDispute,
   resolveClosingDiscrepancy,
+  approveSessionClose,
 } from '../cashSessions'
 import {
   watchPendingExpenses,
@@ -43,8 +44,13 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   useEffect(() => watchSurplusFundBalance(setSurplusBalance), [])
 
   const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
-  const closingShortages = pendingSessions.filter(s =>
-    s.closingDiscrepancy?.status === 'pending' && s.closingDiscrepancy?.type === 'shortage'
+  const pendingCloses = pendingSessions.filter(s => s.status === 'pending_close')
+  // Discrepancias antiguas (de antes del cambio a pending_close) que aún están pending
+  // y no son parte de un pending_close actual
+  const orphanShortages = pendingSessions.filter(s =>
+    s.status === 'closed' &&
+    s.closingDiscrepancy?.status === 'pending' &&
+    s.closingDiscrepancy?.type === 'shortage'
   )
   const flaggedSales = useMemo(
     () => allSales.filter(s => s.status === 'flagged'),
@@ -54,7 +60,8 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
   const totalCount =
     pendingUsers.length +
     openingDisputes.length +
-    closingShortages.length +
+    pendingCloses.length +
+    orphanShortages.length +
     pendingExpenses.length +
     flaggedSales.length
 
@@ -108,9 +115,18 @@ export default function Pendientes({ onOpenUsers, onOpenProducts }) {
         <OpeningDisputesSection sessions={openingDisputes} adminUid={authUser.uid} />
       )}
 
-      {closingShortages.length > 0 && (
+      {pendingCloses.length > 0 && (
+        <PendingClosesSection
+          sessions={pendingCloses}
+          adminUid={authUser.uid}
+          surplusBalance={surplusBalance}
+          allUsers={allUsers}
+        />
+      )}
+
+      {orphanShortages.length > 0 && (
         <ClosingShortagesSection
-          sessions={closingShortages}
+          sessions={orphanShortages}
           adminUid={authUser.uid}
           surplusBalance={surplusBalance}
           allUsers={allUsers}
@@ -299,7 +315,241 @@ function OpeningDisputeModal({ session, adminUid, onCancel, onResolved }) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Faltas de cierre
+// Cierres pendientes de aprobación (TODOS los cierres pasan por aquí)
+// ──────────────────────────────────────────────────────────────
+function PendingClosesSection({ sessions, adminUid, surplusBalance, allUsers }) {
+  const [reviewing, setReviewing] = useState(null)
+  return (
+    <>
+      <Section title="Cierres por aprobar" count={sessions.length} tone="warn">
+        {sessions.map((s, i) => {
+          const cd = s.closingDiscrepancy
+          const hasShortage = cd?.type === 'shortage'
+          const hasSurplus = cd?.type === 'surplus'
+          return (
+            <div key={s.id} style={{
+              padding: '12px 14px',
+              borderBottom: i < sessions.length - 1 ? `0.5px solid ${T.warn}33` : 'none',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
+                  {s.cashierName} · {s.branchName || 'Sin nombre'}
+                </div>
+                <div style={{ fontSize: 12, color: T.neutral[600], marginTop: 2 }}>
+                  Esperado <b>{fmtCOP(s.expectedCash || 0)}</b> · Declaró <b>{fmtCOP(s.declaredClosingCash || 0)}</b>
+                </div>
+                {hasShortage && (
+                  <div style={{ fontSize: 12, color: T.bad, fontWeight: 700, marginTop: 2 }}>
+                    Falta {fmtCOP(cd.amount)}
+                  </div>
+                )}
+                {hasSurplus && (
+                  <div style={{ fontSize: 12, color: T.ok, fontWeight: 700, marginTop: 2 }}>
+                    Sobra {fmtCOP(cd.amount)} (al fondo si apruebas)
+                  </div>
+                )}
+                {!cd && (
+                  <div style={{ fontSize: 12, color: T.ok, fontWeight: 600, marginTop: 2 }}>
+                    Cuadre exacto
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setReviewing(s)} style={btnSmall(T.warn)}>
+                Revisar
+              </button>
+            </div>
+          )
+        })}
+      </Section>
+
+      {reviewing && (
+        <ApproveCloseModal
+          session={reviewing}
+          adminUid={adminUid}
+          surplusBalance={surplusBalance}
+          allUsers={allUsers}
+          onCancel={() => setReviewing(null)}
+          onResolved={() => setReviewing(null)}
+        />
+      )}
+    </>
+  )
+}
+
+function ApproveCloseModal({ session, adminUid, surplusBalance, allUsers, onCancel, onResolved }) {
+  const cd = session.closingDiscrepancy
+  const hasShortage = cd?.type === 'shortage'
+  const hasSurplus = cd?.type === 'surplus'
+  const amount = cd?.amount || 0
+  const canCoverWithFund = surplusBalance >= amount
+
+  const [resolution, setResolution] = useState(null)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  // Si es exacto o sobra, no hay decisión que tomar
+  const needsResolution = hasShortage
+  const canConfirm = needsResolution ? !!resolution && !busy : !busy
+
+  async function handleApprove() {
+    if (!canConfirm) return
+    setBusy(true); setError(null)
+    try {
+      let deductionId = null
+      if (needsResolution && resolution === 'cashier_deduction') {
+        const cashierUser = (allUsers || []).find(u => u.uid === session.cashierUid)
+        const employeeId = cashierUser?.linkedEmployeeId || null
+        deductionId = await createDeduction({
+          cashierUid: session.cashierUid,
+          cashierName: session.cashierName,
+          employeeId,
+          amount,
+          reason: 'cash_shortage',
+          sessionId: session.id,
+          createdBy: adminUid,
+        })
+      }
+
+      await approveSessionClose(session.id, {
+        reviewedBy: adminUid,
+        approveNote: note.trim() || null,
+        resolution: needsResolution ? resolution : null,
+        deductionId,
+      })
+      onResolved()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos aprobar el cierre.')
+      setBusy(false)
+    }
+  }
+
+  // Hora apertura/cierre
+  const opened = session.openedAt?.toDate?.()
+  const closed = session.closedAt?.toDate?.()
+  const fmtTime = (d) => d ? d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Aprobar cierre de turno</ModalTitle>
+        <ModalSub>
+          {session.cashierName} · {session.branchName || 'Sin nombre'} · {fmtTime(opened)} → {fmtTime(closed)}
+        </ModalSub>
+
+        {/* Desglose */}
+        <div style={{
+          padding: '14px 16px', borderRadius: 12,
+          background: T.neutral[50], marginBottom: 12,
+        }}>
+          <Row label="Apertura" value={fmtCOP(session.openingFloat || 0)} />
+          <Row label="Esperado en caja" value={fmtCOP(session.expectedCash || 0)} />
+          <Row label="Declarado por la cajera" value={fmtCOP(session.declaredClosingCash || 0)} />
+          {hasShortage && (
+            <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
+              <Row label="FALTA" value={fmtCOP(amount)} highlight />
+            </div>
+          )}
+          {hasSurplus && (
+            <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
+              <Row label="SOBRA" value={fmtCOP(amount)} highlight tone="ok" />
+            </div>
+          )}
+        </div>
+
+        {/* Handover info */}
+        {session.handover && (
+          <div style={{
+            padding: '10px 14px', borderRadius: 12,
+            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 }}>
+              Entregó a {session.handover.type === 'admin' ? 'administrador' : 'cajera'}
+            </div>
+            <div style={{ fontSize: 13.5, color: T.copper[700], fontWeight: 600 }}>
+              {session.handover.toName} · <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(session.handover.amount)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Nota de cajera */}
+        {(session.closingNote || cd?.note) && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 10,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 12.5, color: T.neutral[700], fontStyle: 'italic',
+            marginBottom: 12, lineHeight: 1.5,
+          }}>
+            <b style={{ fontStyle: 'normal', color: T.warn }}>Nota de la cajera:</b> "{cd?.note || session.closingNote}"
+          </div>
+        )}
+
+        {/* Si es shortage: pide resolución */}
+        {hasShortage && (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], marginBottom: 8 }}>
+              ¿Qué hacer con la falta?
+            </div>
+            <RadioOption
+              selected={resolution === 'business_loss'}
+              onClick={() => setResolution('business_loss')}
+              title="Asumir como pérdida del negocio"
+              subtitle="No afecta a la cajera ni al fondo. Solo se registra."
+            />
+            <RadioOption
+              selected={resolution === 'covered_by_fund'}
+              onClick={() => canCoverWithFund && setResolution('covered_by_fund')}
+              title="Cubrir con fondo de sobras"
+              subtitle={canCoverWithFund
+                ? `Disponible: ${fmtCOP(surplusBalance)}. Se descuentan ${fmtCOP(amount)}.`
+                : `Saldo insuficiente (tienes ${fmtCOP(surplusBalance)}).`
+              }
+              disabled={!canCoverWithFund}
+            />
+            <RadioOption
+              selected={resolution === 'cashier_deduction'}
+              onClick={() => setResolution('cashier_deduction')}
+              title="Descontar a la cajera"
+              subtitle={`Se restará ${fmtCOP(amount)} del próximo pago de ${session.cashierName}.`}
+            />
+          </>
+        )}
+
+        {/* Si es exacto o sobra: solo aprobar */}
+        {!hasShortage && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 12,
+            background: '#E8F4E8', border: `1px solid #C2DDC1`,
+            fontSize: 12.5, color: T.ok, fontWeight: 600, lineHeight: 1.5,
+            marginBottom: 12,
+          }}>
+            {hasSurplus
+              ? `Al aprobar, ${fmtCOP(amount)} se sumarán al fondo de sobras y la panadería quedará libre.`
+              : 'Al aprobar, la panadería quedará libre para nuevo turno.'}
+          </div>
+        )}
+
+        <NoteInput value={note} onChange={setNote} placeholder="Nota interna (opcional)" disabled={busy} />
+
+        {error && <ErrorBox>{error}</ErrorBox>}
+
+        <ModalActions
+          onCancel={onCancel}
+          onConfirm={handleApprove}
+          confirmLabel={busy ? 'Aprobando...' : 'Aprobar cierre'}
+          confirmDisabled={!canConfirm}
+          confirmColor={T.ok}
+        />
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Faltas de cierre (LEGACY: solo para sesiones cerradas antes del cambio)
 // ──────────────────────────────────────────────────────────────
 function ClosingShortagesSection({ sessions, adminUid, surplusBalance, allUsers }) {
   const [resolving, setResolving] = useState(null)
@@ -754,16 +1004,25 @@ function btnSmall(color) {
   }
 }
 
-function Row({ label, value, highlight }) {
+function Row({ label, value, highlight, tone }) {
+  const highlightColor = tone === 'ok' ? T.ok : T.bad
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
       padding: '4px 0', gap: 8,
     }}>
-      <span style={{ fontSize: 12.5, color: T.neutral[600] }}>{label}</span>
+      <span style={{
+        fontSize: highlight ? 11.5 : 12.5,
+        color: highlight ? highlightColor : T.neutral[600],
+        fontWeight: highlight ? 700 : 500,
+        letterSpacing: highlight ? 0.5 : 0,
+        textTransform: highlight ? 'uppercase' : 'none',
+      }}>
+        {label}
+      </span>
       <span style={{
         fontSize: highlight ? 16 : 14, fontWeight: highlight ? 800 : 600,
-        color: highlight ? T.bad : T.neutral[900],
+        color: highlight ? highlightColor : T.neutral[900],
         fontVariantNumeric: 'tabular-nums',
       }}>
         {value}

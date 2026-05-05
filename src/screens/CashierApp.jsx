@@ -155,17 +155,58 @@ function StartTurn({ authUser, userDoc, openSessions }) {
   const branches = getData().branches || []
   const [selectedBranch, setSelectedBranch] = useState(null)
 
+  // Mis cierres pendientes de aprobación (puedo tener varios si trabajé en varias panaderías)
+  const myPendingCloses = openSessions.filter(s =>
+    s.status === 'pending_close' && s.cashierUid === authUser.uid
+  )
+
   const branchStatus = useMemo(() => {
     const map = {}
     branches.forEach(b => {
-      const occupied = openSessions.find(s => s.branchId === b.id)
-      map[b.id] = occupied ? { occupied: true, byName: occupied.cashierName } : { occupied: false }
+      const session = openSessions.find(s => s.branchId === b.id)
+      if (!session) {
+        map[b.id] = { occupied: false }
+      } else {
+        map[b.id] = {
+          occupied: true,
+          byName: session.cashierName,
+          isPendingClose: session.status === 'pending_close',
+        }
+      }
     })
     return map
   }, [branches, openSessions])
 
   return (
     <div style={{ padding: '24px 18px 40px', maxWidth: 540, margin: '0 auto' }}>
+      {myPendingCloses.length > 0 && (
+        <div style={{
+          padding: '14px 16px', borderRadius: 14,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`,
+          marginBottom: 18,
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 999, flexShrink: 0,
+            background: '#F4E0BC',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
+              <circle cx="11" cy="11" r="8" stroke={T.warn} strokeWidth="1.7" fill="none"/>
+              <path d="M11 7 V11 L14 13" stroke={T.warn} strokeWidth="1.7" strokeLinecap="round" fill="none"/>
+            </svg>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: T.warn }}>
+              Tu cierre está pendiente de aprobación
+            </div>
+            <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2, lineHeight: 1.5 }}>
+              El administrador debe aprobar el cierre de {myPendingCloses[0].branchName || 'tu turno anterior'} antes de que esa panadería se pueda volver a abrir.
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{
         fontSize: 13, fontWeight: 600, color: T.copper[600], letterSpacing: 0.4, textTransform: 'uppercase',
         marginBottom: 4,
@@ -246,9 +287,15 @@ function BranchCard({ branch, status, onSelect }) {
           {branch.name}
         </div>
         {isOccupied ? (
-          <div style={{ fontSize: 12, color: T.bad, marginTop: 3, fontWeight: 600 }}>
-            Turno activo · {status.byName}
-          </div>
+          status.isPendingClose ? (
+            <div style={{ fontSize: 12, color: T.warn, marginTop: 3, fontWeight: 600 }}>
+              ⏳ Cierre pendiente de aprobar · {status.byName}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: T.bad, marginTop: 3, fontWeight: 600 }}>
+              Turno activo · {status.byName}
+            </div>
+          )
         ) : (
           <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 3 }}>
             Disponible · toca para iniciar turno

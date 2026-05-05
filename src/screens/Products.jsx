@@ -330,7 +330,7 @@ export default function Products({ products, onBack, onRefresh }) {
                   Productos creados por cajeras. Asígnales costo o elimínalos.
                 </div>
               </div>
-              {cashierProducts.some(p => /pan/i.test(p.name || '')) && (
+              {cashierProducts.some(p => isPanWithAmount(p.name)) && (
                 <button
                   onClick={() => setCleanupOpen(true)}
                   title="Limpiar productos duplicados con la palabra 'Pan'"
@@ -1405,19 +1405,45 @@ function chipBtn(active) {
   }
 }
 
-// ── Modal: limpiar duplicados con la palabra "Pan" ──────────────
+// ── Detección segura de duplicados de "Pan + monto" ────────────
+// Matchea solo nombres que tienen la palabra "pan" como palabra independiente
+// (NO matchea "empanada", "panela") Y que contienen un número de 3+ dígitos
+// (precio típico: 400, 1000, 2000…).
+function isPanWithAmount(name) {
+  if (!name) return false
+  const hasPanWord = /\bpan\b/i.test(name)
+  const hasNumber = /\d{3,}/.test(name)
+  return hasPanWord && hasNumber
+}
+
+// ── Modal: limpiar duplicados "Pan + monto" con checkboxes ──────
 function CleanupPanProductsModal({ cashierProducts, onCancel, onDone }) {
-  const matches = (cashierProducts || []).filter(p => /pan/i.test(p.name || ''))
+  const matches = (cashierProducts || []).filter(p => isPanWithAmount(p.name))
+  // Por defecto todos seleccionados; el admin puede desmarcar falsos positivos
+  const [selectedIds, setSelectedIds] = useState(() => new Set(matches.map(p => p.id)))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [doneCount, setDoneCount] = useState(0)
 
+  function toggle(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+  function selectAll() { setSelectedIds(new Set(matches.map(p => p.id))) }
+  function selectNone() { setSelectedIds(new Set()) }
+
+  const toDelete = matches.filter(p => selectedIds.has(p.id))
+
   async function handleConfirm() {
-    if (busy) return
+    if (busy || toDelete.length === 0) return
     setBusy(true); setError(null)
     let n = 0
     try {
-      for (const p of matches) {
+      for (const p of toDelete) {
         await deleteCashierProduct(p.id)
         n++
         setDoneCount(n)
@@ -1425,47 +1451,111 @@ function CleanupPanProductsModal({ cashierProducts, onCancel, onDone }) {
       onDone()
     } catch (err) {
       console.error('[cleanup] failed at item', n, err)
-      setError(`Se borraron ${n} de ${matches.length}. Reintenta para terminar.`)
+      setError(`Se borraron ${n} de ${toDelete.length}. Reintenta para terminar.`)
       setBusy(false)
     }
   }
 
   return (
-    <Modal onClose={busy ? undefined : onCancel} title="Limpiar productos de pan">
-      <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 14, lineHeight: 1.5 }}>
-        Voy a borrar <b>{matches.length} producto{matches.length === 1 ? '' : 's'}</b> creado{matches.length === 1 ? '' : 's'} por cajeras que contiene{matches.length === 1 ? '' : 'n'} la palabra <b>"Pan"</b>.
-        Las ventas que ya los usaron <b>NO se afectan</b>.
+    <Modal onClose={busy ? undefined : onCancel} title="Limpiar duplicados de Pan">
+      <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 12, lineHeight: 1.5 }}>
+        Detecté <b>{matches.length} producto{matches.length === 1 ? '' : 's'}</b> tipo "Pan + monto" creado{matches.length === 1 ? '' : 's'} por cajeras.
+        Desmarca los que NO quieras borrar. Las ventas pasadas <b>no se afectan</b>.
       </div>
 
-      {matches.length > 0 ? (
-        <div style={{
-          maxHeight: 200, overflowY: 'auto',
-          padding: '10px 12px', borderRadius: 10,
-          background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-          marginBottom: 14, fontSize: 12.5, color: T.neutral[700], lineHeight: 1.6,
-        }}>
-          {matches.map(p => (
-            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.name}
-              </span>
-              {p.createdByName && (
-                <span style={{ color: T.neutral[400], fontSize: 11, flexShrink: 0 }}>
-                  · {p.createdByName}
-                </span>
-              )}
+      {matches.length > 0 && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, fontSize: 12 }}>
+            <span style={{ color: T.neutral[600], fontWeight: 600 }}>
+              {selectedIds.size} de {matches.length} seleccionados
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={selectAll} disabled={busy} style={{
+                padding: '4px 10px', borderRadius: 8, border: 'none',
+                background: T.neutral[100], color: T.neutral[700],
+                fontSize: 11.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              }}>
+                Todos
+              </button>
+              <button onClick={selectNone} disabled={busy} style={{
+                padding: '4px 10px', borderRadius: 8, border: 'none',
+                background: T.neutral[100], color: T.neutral[700],
+                fontSize: 11.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              }}>
+                Ninguno
+              </button>
             </div>
-          ))}
-        </div>
-      ) : (
-        <div style={{ marginBottom: 14, fontSize: 13, color: T.neutral[500], fontStyle: 'italic' }}>
-          No hay productos de cajera con la palabra "Pan".
+          </div>
+
+          <div style={{
+            maxHeight: 280, overflowY: 'auto',
+            padding: '6px 0', borderRadius: 12,
+            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+            marginBottom: 14,
+          }}>
+            {matches.map(p => {
+              const checked = selectedIds.has(p.id)
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => !busy && toggle(p.id)}
+                  disabled={busy}
+                  style={{
+                    width: '100%', padding: '10px 12px',
+                    background: 'transparent', border: 'none',
+                    cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    textAlign: 'left',
+                  }}
+                >
+                  {/* Checkbox */}
+                  <div style={{
+                    width: 20, height: 20, borderRadius: 6, flexShrink: 0,
+                    background: checked ? T.bad : '#fff',
+                    border: `1.5px solid ${checked ? T.bad : T.neutral[300]}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {checked && (
+                      <svg width="13" height="13" viewBox="0 0 13 13">
+                        <path d="M3 6.5 L5.5 9 L10 4" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13, color: T.neutral[900], fontWeight: 600,
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      textDecoration: checked ? 'line-through' : 'none',
+                      opacity: checked ? 0.85 : 1,
+                    }}>
+                      {p.name}
+                    </div>
+                    {p.createdByName && (
+                      <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 1 }}>
+                        {p.createdByName}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      {matches.length === 0 && (
+        <div style={{
+          marginBottom: 14, padding: '20px',
+          background: '#E8F4E8', border: `1px solid #C2DDC1`, borderRadius: 12,
+          textAlign: 'center', color: T.ok, fontSize: 13, fontWeight: 600,
+        }}>
+          ✓ No hay duplicados que limpiar
         </div>
       )}
 
       {busy && (
         <div style={{ fontSize: 12.5, color: T.copper[600], textAlign: 'center', marginBottom: 12 }}>
-          Borrando {doneCount} de {matches.length}...
+          Borrando {doneCount} de {toDelete.length}...
         </div>
       )}
 
@@ -1487,17 +1577,21 @@ function CleanupPanProductsModal({ cashierProducts, onCancel, onDone }) {
         }}>Cancelar</button>
         <button
           onClick={handleConfirm}
-          disabled={busy || matches.length === 0}
+          disabled={busy || toDelete.length === 0}
           style={{
             flex: 1.4, padding: 13, borderRadius: 12, border: 'none',
-            background: matches.length > 0 && !busy ? T.bad : T.neutral[200],
-            color: matches.length > 0 && !busy ? '#fff' : T.neutral[400],
-            fontSize: 14, fontWeight: 700, cursor: matches.length > 0 && !busy ? 'pointer' : 'not-allowed',
+            background: toDelete.length > 0 && !busy ? T.bad : T.neutral[200],
+            color: toDelete.length > 0 && !busy ? '#fff' : T.neutral[400],
+            fontSize: 14, fontWeight: 700, cursor: toDelete.length > 0 && !busy ? 'pointer' : 'not-allowed',
             fontFamily: 'inherit',
-            boxShadow: matches.length > 0 && !busy ? `0 3px 10px ${T.bad}44` : 'none',
+            boxShadow: toDelete.length > 0 && !busy ? `0 3px 10px ${T.bad}44` : 'none',
           }}
         >
-          {busy ? 'Borrando...' : `Borrar ${matches.length}`}
+          {busy
+            ? 'Borrando...'
+            : toDelete.length === 0
+              ? 'Selecciona alguno'
+              : `Borrar ${toDelete.length}`}
         </button>
       </div>
     </Modal>

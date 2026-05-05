@@ -85,6 +85,7 @@ export default function Products({ products, onBack, onRefresh }) {
   const [sortBy, setSortBy] = useState('margin') // 'margin' | 'name' | 'profit'
   const [cashierProducts, setCashierProducts] = useState([])
   const [confirmDelCashier, setConfirmDelCashier] = useState(null)
+  const [acceptingCashier, setAcceptingCashier] = useState(null)
 
   useEffect(() => {
     const unsub = watchCashierProducts(setCashierProducts)
@@ -240,18 +241,33 @@ export default function Products({ products, onBack, onRefresh }) {
                       {p.createdByName && ` · por ${p.createdByName}`}
                     </div>
                   </div>
-                  <button
-                    onClick={() => setConfirmDelCashier(p)}
-                    style={{
-                      padding: '7px 12px', borderRadius: 10,
-                      background: 'transparent', color: T.bad,
-                      border: `1px solid ${T.bad}33`,
-                      cursor: 'pointer', fontFamily: 'inherit',
-                      fontSize: 12.5, fontWeight: 600, flexShrink: 0,
-                    }}
-                  >
-                    Eliminar
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                    <button
+                      onClick={() => setAcceptingCashier(p)}
+                      style={{
+                        padding: '7px 12px', borderRadius: 10,
+                        background: T.copper[500], color: '#fff',
+                        border: 'none',
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: 12.5, fontWeight: 700,
+                        boxShadow: '0 2px 6px rgba(184,122,86,0.3)',
+                      }}
+                    >
+                      Aceptar
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelCashier(p)}
+                      style={{
+                        padding: '7px 12px', borderRadius: 10,
+                        background: 'transparent', color: T.bad,
+                        border: `1px solid ${T.bad}33`,
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: 12.5, fontWeight: 600,
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -385,6 +401,15 @@ export default function Products({ products, onBack, onRefresh }) {
             }}>Eliminar</button>
           </div>
         </Modal>
+      )}
+
+      {/* Aceptar producto cajera (asignar costo y promover al catálogo) */}
+      {acceptingCashier && (
+        <AcceptCashierProductModal
+          product={acceptingCashier}
+          onCancel={() => setAcceptingCashier(null)}
+          onDone={() => { setAcceptingCashier(null); onRefresh() }}
+        />
       )}
 
       {/* Confirmar eliminar producto cajera */}
@@ -855,4 +880,282 @@ const inputStyle = {
   border: `1px solid ${T.neutral[200]}`, background: '#fff',
   fontSize: 15, color: T.neutral[800], fontFamily: 'inherit',
   outline: 'none', boxSizing: 'border-box',
+}
+
+// ── Modal: Aceptar producto creado por cajera ─────────────────
+function AcceptCashierProductModal({ product, onCancel, onDone }) {
+  const [salePrice, setSalePrice] = useState(String(product.salePrice || ''))
+  const [byPackage, setByPackage] = useState(false)
+  const [packageCost, setPackageCost] = useState('')
+  const [unitsPerPackage, setUnitsPerPackage] = useState('')
+  const [unitCost, setUnitCost] = useState('')
+  const [branch, setBranch] = useState(product.branch || 'both')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  // Cálculo del costo final por unidad y margen
+  const sale = Number(salePrice) || 0
+  const cost = byPackage
+    ? (Number(unitsPerPackage) > 0 ? (Number(packageCost) || 0) / Number(unitsPerPackage) : 0)
+    : (Number(unitCost) || 0)
+  const profit = sale - cost
+  const margin = sale > 0 ? (profit / sale) * 100 : 0
+
+  const valid = sale > 0 && (
+    byPackage
+      ? (Number(packageCost) > 0 && Number(unitsPerPackage) > 0)
+      : Number(unitCost) > 0
+  )
+
+  async function handleAccept() {
+    if (!valid || busy) return
+    setBusy(true); setError(null)
+    try {
+      // 1. Crear el producto en /todypan/data.products (catálogo del admin)
+      addProduct({
+        name: product.name,
+        salePrice: sale,
+        packageCost: byPackage ? Number(packageCost) : Number(unitCost),
+        byPackage,
+        unitsPerPackage: byPackage ? Number(unitsPerPackage) : 0,
+        branch,
+      })
+      // 2. Eliminar el producto cajera (se "promovió")
+      await deleteCashierProduct(product.id)
+      onDone()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos aceptar el producto. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal onClose={busy ? undefined : onCancel} title="Aceptar producto">
+      <div style={{
+        padding: '10px 12px', borderRadius: 10,
+        background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+        marginBottom: 14,
+      }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 }}>
+          Producto creado por
+        </div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
+          {product.name}
+        </div>
+        <div style={{ fontSize: 12, color: T.neutral[600], marginTop: 2 }}>
+          {product.createdByName || 'Cajera'}
+        </div>
+      </div>
+
+      {/* Precio de venta */}
+      <label style={fieldLabel()}>Precio de venta</label>
+      <div style={moneyInputWrap()}>
+        <span style={moneyPrefix()}>$</span>
+        <input
+          type="text"
+          inputMode="numeric"
+          value={salePrice === '0' ? '' : salePrice}
+          onChange={e => setSalePrice(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+          placeholder="0"
+          disabled={busy}
+          style={moneyInput()}
+        />
+      </div>
+
+      {/* Toggle modo de costo */}
+      <label style={fieldLabel()}>¿Cómo lo compras?</label>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button
+          onClick={() => setByPackage(false)}
+          disabled={busy}
+          style={toggleBtn(!byPackage)}
+        >
+          Por unidad
+        </button>
+        <button
+          onClick={() => setByPackage(true)}
+          disabled={busy}
+          style={toggleBtn(byPackage)}
+        >
+          Por paquete
+        </button>
+      </div>
+
+      {byPackage ? (
+        <>
+          <label style={fieldLabel()}>Unidades por paquete</label>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={unitsPerPackage}
+            onChange={e => setUnitsPerPackage(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder="Ej. 24"
+            disabled={busy}
+            style={{ ...inputStyle, marginBottom: 12 }}
+          />
+          <label style={fieldLabel()}>Costo del paquete</label>
+          <div style={moneyInputWrap()}>
+            <span style={moneyPrefix()}>$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={packageCost === '0' ? '' : packageCost}
+              onChange={e => setPackageCost(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+              placeholder="0"
+              disabled={busy}
+              style={moneyInput()}
+            />
+          </div>
+        </>
+      ) : (
+        <>
+          <label style={fieldLabel()}>Costo por unidad</label>
+          <div style={moneyInputWrap()}>
+            <span style={moneyPrefix()}>$</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={unitCost === '0' ? '' : unitCost}
+              onChange={e => setUnitCost(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+              placeholder="0"
+              disabled={busy}
+              style={moneyInput()}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Sucursal */}
+      <label style={fieldLabel()}>Sucursal</label>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+        {[
+          { id: 'both', label: 'Ambas' },
+          { id: 1, label: 'Iglesia' },
+          { id: 2, label: 'Esquina' },
+        ].map(b => (
+          <button
+            key={b.id}
+            onClick={() => setBranch(b.id)}
+            disabled={busy}
+            style={chipBtn(branch === b.id)}
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Resumen de margen */}
+      {valid && (
+        <div style={{
+          padding: '10px 12px', borderRadius: 10,
+          background: T.neutral[50], marginBottom: 14,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
+              Ganancia / unidad
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: profit >= 0 ? T.ok : T.bad, fontVariantNumeric: 'tabular-nums' }}>
+              {fmtCOP(profit)}
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
+              Margen
+            </div>
+            <div style={{
+              fontSize: 16, fontWeight: 800,
+              color: margin >= 40 ? T.ok : margin >= 20 ? T.warn : T.bad,
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              {margin.toFixed(1)}%
+            </div>
+          </div>
+        </div>
+      )}
+
+      {error && (
+        <div style={{
+          marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+          background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+          fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button onClick={onCancel} disabled={busy} style={{
+          flex: 1, padding: 13, borderRadius: 12, border: 'none',
+          background: T.neutral[100], color: T.neutral[700],
+          fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+        }}>Cancelar</button>
+        <button
+          onClick={handleAccept}
+          disabled={!valid || busy}
+          style={{
+            flex: 1.4, padding: 13, borderRadius: 12, border: 'none',
+            background: valid && !busy ? T.copper[500] : T.neutral[200],
+            color: valid && !busy ? '#fff' : T.neutral[400],
+            fontSize: 15, fontWeight: 700,
+            cursor: valid && !busy ? 'pointer' : 'not-allowed',
+            fontFamily: 'inherit',
+            boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+          }}
+        >
+          {busy ? 'Aceptando...' : 'Aceptar y agregar al catálogo'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function fieldLabel() {
+  return {
+    display: 'block',
+    fontSize: 12, fontWeight: 700, color: T.neutral[600],
+    letterSpacing: 0.3, textTransform: 'uppercase',
+    marginBottom: 6,
+  }
+}
+function moneyInputWrap() {
+  return {
+    display: 'flex', alignItems: 'center',
+    border: `1px solid ${T.neutral[200]}`, borderRadius: 12,
+    background: '#fff', marginBottom: 12,
+  }
+}
+function moneyPrefix() {
+  return {
+    paddingLeft: 14, color: T.neutral[500], fontSize: 15, fontWeight: 600,
+  }
+}
+function moneyInput() {
+  return {
+    width: '100%', padding: '12px 14px 12px 8px',
+    border: 'none', outline: 'none',
+    fontFamily: 'inherit', fontSize: 16, fontWeight: 600,
+    color: T.neutral[900], background: 'transparent',
+    fontVariantNumeric: 'tabular-nums',
+  }
+}
+function toggleBtn(active) {
+  return {
+    flex: 1, padding: '10px', borderRadius: 12,
+    background: active ? T.copper[500] : T.neutral[100],
+    color: active ? '#fff' : T.neutral[700],
+    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 13, fontWeight: 700,
+  }
+}
+function chipBtn(active) {
+  return {
+    padding: '8px 14px', borderRadius: 999,
+    background: active ? T.copper[50] : '#fff',
+    color: active ? T.copper[700] : T.neutral[600],
+    border: `1px solid ${active ? T.copper[400] : T.neutral[200]}`,
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 12.5, fontWeight: 700,
+  }
 }

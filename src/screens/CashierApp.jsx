@@ -15,11 +15,16 @@ import { watchAllUsers } from '../users'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
-import { compressAndUpload } from '../utils/imagebb'
+import { compressImage, uploadToImageBB } from '../utils/imagebb'
+import { enqueuePhoto, makePhotoLocalId } from '../utils/photoQueue'
 import NewSale from './NewSale'
 import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import MissingPricesPanel from '../components/MissingPricesPanel'
 import ProductCatalogPanel from '../components/ProductCatalogPanel'
+import ConnectionChip from '../components/ConnectionChip'
+import SyncBeforeCloseModal from '../components/SyncBeforeCloseModal'
+import { getPendingCount } from '../utils/photoQueue'
+import MyHistoricalSales from './MyHistoricalSales'
 import { watchOpenTabsForSession } from '../openTabs'
 import {
   watchCashierProducts,
@@ -117,6 +122,8 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
           {userDoc?.nombre} {userDoc?.apellido}
         </div>
       </div>
+
+      <ConnectionChip compact />
 
       <button
         onClick={() => setMenuOpen(true)}
@@ -738,10 +745,12 @@ function ErrorBox({ text }) {
 // ──────────────────────────────────────────────────────────────
 function ActiveSession({ session, userDoc, authUser }) {
   const [closing, setClosing] = useState(false)
+  const [syncingForClose, setSyncingForClose] = useState(null) // null | { initialPhotoCount }
   const [newSaleOpen, setNewSaleOpen] = useState(false)
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [showDeductions, setShowDeductions] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false) // pantalla "Mis ventas" (Fase 9)
   const [boredomOpen, setBoredomOpen] = useState(false) // panel "¿estás aburrida?"
   const [cashierProducts, setCashierProducts] = useState([])
   const [sessionSales, setSessionSales] = useState([])
@@ -825,24 +834,42 @@ function ActiveSession({ session, userDoc, authUser }) {
         Nueva venta
       </button>
 
-      {/* Botón secundario: Gasto de caja */}
-      <button
-        onClick={() => setExpenseOpen(true)}
-        style={{
-          width: '100%', padding: '13px', borderRadius: 14,
-          background: '#fff', color: T.neutral[700],
-          border: `1.5px solid ${T.neutral[200]}`,
-          cursor: 'pointer', fontFamily: 'inherit',
-          fontSize: 14, fontWeight: 700,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          marginBottom: 14,
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
-          <path d="M3 17 H17 M3 14 L7 10 L11 13 L17 5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-        Registrar gasto de caja
-      </button>
+      {/* Botones secundarios: Gasto de caja + Mis ventas */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+        <button
+          onClick={() => setExpenseOpen(true)}
+          style={{
+            padding: '13px 10px', borderRadius: 14,
+            background: '#fff', color: T.neutral[700],
+            border: `1.5px solid ${T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 13, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <path d="M3 17 H17 M3 14 L7 10 L11 13 L17 5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Gasto de caja
+        </button>
+        <button
+          onClick={() => setHistoryOpen(true)}
+          style={{
+            padding: '13px 10px', borderRadius: 14,
+            background: '#fff', color: T.neutral[700],
+            border: `1.5px solid ${T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 13, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="7.5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
+            <path d="M10 5 V10 L13 12" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Mis ventas
+        </button>
+      </div>
 
       {/* Banner sorpresa: aparece solo si hay productos sin precio en esta panaderia.
           NO revela de qué se trata — la cajera lo descubre al tocar. */}
@@ -1018,7 +1045,21 @@ function ActiveSession({ session, userDoc, authUser }) {
       )}
 
       <button
-        onClick={() => setClosing(true)}
+        onClick={async () => {
+          // Antes de abrir el modal de cierre, verificar que no haya
+          // ventas/fotos en cola offline. Si hay, mostramos primero el
+          // SyncBeforeCloseModal para que la cajera no cierre sin tener
+          // todo subido.
+          const photoCount = await getPendingCount().catch(() => 0)
+          // Para Firestore writes: usamos navigator.onLine como heuristica
+          // rapida. El modal de sync mide el estado real una vez abierto.
+          const offline = typeof navigator !== 'undefined' && navigator.onLine === false
+          if (photoCount > 0 || offline) {
+            setSyncingForClose({ initialPhotoCount: photoCount })
+          } else {
+            setClosing(true)
+          }
+        }}
         style={{
           width: '100%', padding: '15px', borderRadius: 16,
           background: T.neutral[900], color: '#fff',
@@ -1034,6 +1075,17 @@ function ActiveSession({ session, userDoc, authUser }) {
         </svg>
         Cerrar turno
       </button>
+
+      {syncingForClose && (
+        <SyncBeforeCloseModal
+          initialPhotoCount={syncingForClose.initialPhotoCount}
+          onAllSynced={() => {
+            setSyncingForClose(null)
+            setClosing(true)
+          }}
+          onAbort={() => setSyncingForClose(null)}
+        />
+      )}
 
       {closing && (
         <CloseTurnModal
@@ -1058,6 +1110,15 @@ function ActiveSession({ session, userDoc, authUser }) {
             onSaved={() => setNewSaleOpen(false)}
           />
         </div>
+      )}
+
+      {historyOpen && (
+        <MyHistoricalSales
+          authUser={authUser}
+          userDoc={userDoc}
+          onClose={() => setHistoryOpen(false)}
+          onReport={(sale) => setReportSale(sale)}
+        />
       )}
 
       {editingTab && (
@@ -1201,11 +1262,20 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
   const [description, setDescription] = useState('')
   const [amountStr, setAmountStr] = useState('')
   const [photoUrl, setPhotoUrl] = useState(null)
+  const [photoBlob, setPhotoBlob] = useState(null)
+  const [photoLocalPreview, setPhotoLocalPreview] = useState(null)
+  const [photoOfflineQueued, setPhotoOfflineQueued] = useState(false)
   const [photoUploading, setPhotoUploading] = useState(false)
   const [photoError, setPhotoError] = useState(null)
   const fileInputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+
+  useEffect(() => {
+    return () => {
+      if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    }
+  }, [photoLocalPreview])
 
   const amount = Number(amountStr) || 0
   const valid = description.trim().length >= 3 && amount > 0 && !photoUploading
@@ -1215,13 +1285,40 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
     if (!file) return
     setPhotoError(null)
     setPhotoUploading(true)
+    setPhotoOfflineQueued(false)
+    if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    setPhotoLocalPreview(null)
+    setPhotoBlob(null)
+    setPhotoUrl(null)
+
+    let compressed = null
     try {
-      const result = await compressAndUpload(file)
-      setPhotoUrl(result.url)
+      compressed = await compressImage(file)
     } catch (err) {
       console.error(err)
-      setPhotoError(err.message || 'No pudimos subir la foto.')
-      setPhotoUrl(null)
+      setPhotoError(err.message || 'No pudimos procesar la foto.')
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    setPhotoBlob(compressed)
+    setPhotoLocalPreview(URL.createObjectURL(compressed))
+
+    const online = typeof navigator !== 'undefined' ? navigator.onLine : true
+    if (!online) {
+      setPhotoOfflineQueued(true)
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    try {
+      const result = await uploadToImageBB(compressed)
+      setPhotoUrl(result.url)
+      setPhotoOfflineQueued(false)
+    } catch (err) {
+      console.warn('[CashExpense] upload falló, queda en cola offline:', err?.message)
+      setPhotoOfflineQueued(true)
     } finally {
       setPhotoUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -1233,7 +1330,21 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
     setBusy(true); setError(null)
     try {
       const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
-      await createCashExpense({
+
+      // Caso B (foto offline): pre-generar localId para que el doc nazca con
+      // photoLocalId + photoStatus='pending' desde la creacion. Esto evita
+      // un updateDoc post-create — importante porque las reglas actuales de
+      // /cashExpenses NO permiten a la cajera updatear (solo crear).
+      // OJO: aun asi, cuando la red vuelva el worker hara updateDoc para
+      // grabar photoUrl + photoStatus='uploaded' — eso requiere que la regla
+      // permita a la cajera updatear sus propios cashExpenses 'pending'
+      // restringido a campos de foto (ver doc).
+      let photoLocalId = null
+      if (!photoUrl && photoBlob) {
+        photoLocalId = makePhotoLocalId()
+      }
+
+      const expenseId = await createCashExpense({
         sessionId: session.id,
         branchId: session.branchId,
         branchName: session.branchName,
@@ -1242,7 +1353,20 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
         description,
         amount,
         photoUrl: photoUrl || undefined,
+        photoLocalId: photoLocalId || undefined,
       })
+
+      if (photoLocalId && photoBlob && expenseId) {
+        try {
+          await enqueuePhoto(
+            photoBlob,
+            { collection: 'cashExpenses', docId: expenseId },
+            photoLocalId,
+          )
+        } catch (queueErr) {
+          console.warn('[CashExpense] no se pudo encolar la foto offline:', queueErr)
+        }
+      }
       onSaved()
     } catch (err) {
       console.error(err)
@@ -1295,7 +1419,7 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
             onChange={handleFileSelected}
             style={{ display: 'none' }}
           />
-          {!photoUrl && !photoUploading && !photoError && (
+          {!photoUrl && !photoLocalPreview && !photoUploading && !photoError && (
             <button
               onClick={() => fileInputRef.current?.click()}
               style={{
@@ -1339,21 +1463,50 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
               </button>
             </div>
           )}
-          {photoUrl && !photoUploading && (
+          {(photoUrl || photoLocalPreview) && !photoUploading && (
             <div style={{
               borderRadius: 12, overflow: 'hidden',
-              border: `1.5px solid ${T.ok}66`, background: '#fff',
+              border: `1.5px solid ${(photoUrl ? T.ok : T.warn) + '66'}`,
+              background: '#fff',
             }}>
-              <img
-                src={photoUrl}
-                alt="Recibo"
-                style={{
-                  display: 'block', width: '100%', maxHeight: 180,
-                  objectFit: 'contain', background: T.neutral[900],
-                }}
-              />
+              <div style={{ position: 'relative' }}>
+                <img
+                  src={photoUrl || photoLocalPreview}
+                  alt="Recibo"
+                  style={{
+                    display: 'block', width: '100%', maxHeight: 180,
+                    objectFit: 'contain', background: T.neutral[900],
+                  }}
+                />
+                {!photoUrl && (
+                  <div style={{
+                    position: 'absolute', top: 6, right: 6,
+                    background: T.warn, color: '#fff',
+                    padding: '3px 9px', borderRadius: 999,
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
+                  }}>
+                    ⏳ Pendiente
+                  </div>
+                )}
+              </div>
+              {!photoUrl && photoOfflineQueued && (
+                <div style={{
+                  padding: '7px 12px',
+                  background: '#FFF7E6',
+                  borderTop: `1px solid #F4E0BC`,
+                  fontSize: 11.5, color: T.warn, fontWeight: 600,
+                }}>
+                  Sin conexion · subira al volver la red.
+                </div>
+              )}
               <button
-                onClick={() => setPhotoUrl(null)}
+                onClick={() => {
+                  setPhotoUrl(null)
+                  setPhotoBlob(null)
+                  setPhotoOfflineQueued(false)
+                  if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+                  setPhotoLocalPreview(null)
+                }}
                 style={{
                   width: '100%', padding: '8px',
                   background: 'transparent', border: 'none',

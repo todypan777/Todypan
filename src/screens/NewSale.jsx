@@ -12,7 +12,8 @@ import {
 } from '../products'
 import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
 import { createSale } from '../sales'
-import { compressAndUpload } from '../utils/imagebb'
+import { compressImage, uploadToImageBB } from '../utils/imagebb'
+import { enqueuePhoto, makePhotoLocalId } from '../utils/photoQueue'
 import {
   watchOpenTabsForSession,
   createOpenTab,
@@ -1262,9 +1263,19 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   const [debtorName, setDebtorName] = useState('')
   const [debtors, setDebtors] = useState([])
   const [photoUrl, setPhotoUrl] = useState(null)
+  const [photoBlob, setPhotoBlob] = useState(null)        // foto comprimida lista para subir
+  const [photoLocalPreview, setPhotoLocalPreview] = useState(null) // object URL del blob (preview offline)
+  const [photoOfflineQueued, setPhotoOfflineQueued] = useState(false) // sin red — se subira despues
   const [photoUploading, setPhotoUploading] = useState(false)
   const [photoError, setPhotoError] = useState(null)
   const fileInputRef = useRef(null)
+
+  // Limpia el object URL al desmontar para no leak memoria.
+  useEffect(() => {
+    return () => {
+      if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    }
+  }, [photoLocalPreview])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
@@ -1291,7 +1302,8 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
     if (!method) return false
     if (method === 'deuda') return debtorName.trim().length >= 2 && !busy
     if (method === 'efectivo') return !busy
-    if (isDigital) return !!photoUrl && !photoUploading && !busy
+    // Digital: aceptamos foto subida (online) O foto en cola local (offline).
+    if (isDigital) return (!!photoUrl || !!photoBlob) && !photoUploading && !busy
     return false
   })()
 
@@ -1300,16 +1312,46 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
     if (!file) return
     setPhotoError(null)
     setPhotoUploading(true)
+    setPhotoOfflineQueued(false)
+    // Limpiar preview previo
+    if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    setPhotoLocalPreview(null)
+    setPhotoBlob(null)
+    setPhotoUrl(null)
+
+    let compressed = null
     try {
-      const result = await compressAndUpload(file)
-      setPhotoUrl(result.url)
+      compressed = await compressImage(file)
     } catch (err) {
       console.error(err)
-      setPhotoError(err.message || 'No pudimos subir la foto.')
-      setPhotoUrl(null)
+      setPhotoError(err.message || 'No pudimos procesar la foto.')
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    // Guardamos blob + preview ya — sirve haya o no haya red.
+    setPhotoBlob(compressed)
+    setPhotoLocalPreview(URL.createObjectURL(compressed))
+
+    // Si hay red, intentamos subir ya. Si no, queda offline-queued.
+    const online = typeof navigator !== 'undefined' ? navigator.onLine : true
+    if (!online) {
+      setPhotoOfflineQueued(true)
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    try {
+      const result = await uploadToImageBB(compressed)
+      setPhotoUrl(result.url)
+      setPhotoOfflineQueued(false)
+    } catch (err) {
+      console.warn('[NewSale] upload falló, queda en cola offline:', err?.message)
+      // No mostramos error rojo; la foto queda valida para confirmar igual.
+      setPhotoOfflineQueued(true)
     } finally {
       setPhotoUploading(false)
-      // Reset el input para permitir reintentar con el mismo archivo
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -1324,7 +1366,11 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
     setMethod(m)
     if (m !== 'nequi' && m !== 'daviplata') {
       setPhotoUrl(null)
+      setPhotoBlob(null)
+      setPhotoOfflineQueued(false)
       setPhotoError(null)
+      if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+      setPhotoLocalPreview(null)
     }
   }
 
@@ -1363,8 +1409,16 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
         payload.cashReceived = cashReceived
       }
 
+      // Caso A: foto ya subida online -> guardar URL.
+      // Caso B: foto offline-queued -> pre-generamos el localId aqui mismo
+      //         para que la venta nazca con photoLocalId + photoStatus='pending'.
+      //         Asi nos ahorramos un updateDoc adicional.
+      let photoLocalId = null
       if (isDigital && photoUrl) {
         payload.photoUrl = photoUrl
+      } else if (isDigital && photoBlob) {
+        photoLocalId = makePhotoLocalId()
+        payload.photoLocalId = photoLocalId
       }
 
       // Modo asistir: marcar quién registró la venta (admin)
@@ -1388,6 +1442,22 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
 
       // Crear venta
       const saleId = await createSale(payload)
+
+      // Caso B: foto offline -> encolar la foto con el id pre-generado.
+      // El doc ya tiene photoLocalId desde la creacion, asi que no hace falta
+      // updateDoc. El worker hara el updateDoc final al subir la foto
+      // (las reglas de /sales permiten a la cajera updatear sus propios docs).
+      if (photoLocalId && photoBlob) {
+        try {
+          await enqueuePhoto(
+            photoBlob,
+            { collection: 'sales', docId: saleId },
+            photoLocalId,
+          )
+        } catch (queueErr) {
+          console.warn('[NewSale] no se pudo encolar la foto offline:', queueErr)
+        }
+      }
 
       // Si es deuda, registrar en debtors y guardar debtorId en la sale
       if (method === 'deuda') {
@@ -1524,11 +1594,20 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           <PhotoCapture
             method={method}
             photoUrl={photoUrl}
+            localPreview={photoLocalPreview}
+            offlineQueued={photoOfflineQueued}
             uploading={photoUploading}
             error={photoError}
             onTake={openCamera}
             onRetry={openCamera}
-            onClear={() => { setPhotoUrl(null); setPhotoError(null) }}
+            onClear={() => {
+              setPhotoUrl(null)
+              setPhotoBlob(null)
+              setPhotoOfflineQueued(false)
+              setPhotoError(null)
+              if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+              setPhotoLocalPreview(null)
+            }}
             fileInputRef={fileInputRef}
             onFileSelected={handleFileSelected}
           />
@@ -1560,8 +1639,13 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
 // ──────────────────────────────────────────────────────────────
 // Captura de foto del comprobante (NEQUI / DAVIPLATA)
 // ──────────────────────────────────────────────────────────────
-function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onClear, fileInputRef, onFileSelected }) {
+function PhotoCapture({
+  method, photoUrl, localPreview, offlineQueued,
+  uploading, error, onTake, onRetry, onClear,
+  fileInputRef, onFileSelected,
+}) {
   const methodName = method === 'nequi' ? 'NEQUI' : 'DAVIPLATA'
+  const hasAnyPhoto = !!photoUrl || !!localPreview
 
   return (
     <div style={{ marginBottom: 14 }}>
@@ -1579,7 +1663,7 @@ function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onC
         style={{ display: 'none' }}
       />
 
-      {!photoUrl && !uploading && !error && (
+      {!hasAnyPhoto && !uploading && !error && (
         <button
           onClick={onTake}
           style={{
@@ -1646,10 +1730,10 @@ function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onC
         </div>
       )}
 
-      {photoUrl && !uploading && (
+      {hasAnyPhoto && !uploading && (
         <div style={{
           borderRadius: 14, overflow: 'hidden',
-          border: `1.5px solid ${T.ok}66`,
+          border: `1.5px solid ${(photoUrl ? T.ok : T.warn) + '66'}`,
           background: '#fff',
         }}>
           <div style={{
@@ -1658,7 +1742,7 @@ function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onC
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
             <img
-              src={photoUrl}
+              src={photoUrl || localPreview}
               alt="Comprobante"
               style={{
                 display: 'block', width: '100%',
@@ -1668,17 +1752,35 @@ function PhotoCapture({ method, photoUrl, uploading, error, onTake, onRetry, onC
             />
             <div style={{
               position: 'absolute', top: 8, right: 8,
-              background: T.ok, color: '#fff',
+              background: photoUrl ? T.ok : T.warn,
+              color: '#fff',
               padding: '4px 10px', borderRadius: 999,
               fontSize: 11, fontWeight: 700, letterSpacing: 0.3,
               display: 'flex', alignItems: 'center', gap: 4,
             }}>
-              <svg width="10" height="10" viewBox="0 0 10 10">
-                <path d="M2 5 L4 7 L8 3" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Subida
+              {photoUrl ? (
+                <>
+                  <svg width="10" height="10" viewBox="0 0 10 10">
+                    <path d="M2 5 L4 7 L8 3" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Subida
+                </>
+              ) : (
+                <>⏳ Pendiente</>
+              )}
             </div>
           </div>
+          {!photoUrl && offlineQueued && (
+            <div style={{
+              padding: '8px 12px',
+              background: '#FFF7E6',
+              borderTop: `1px solid #F4E0BC`,
+              fontSize: 11.5, color: T.warn, fontWeight: 600,
+              lineHeight: 1.4,
+            }}>
+              Sin conexion · la foto se subira automaticamente al volver la red.
+            </div>
+          )}
           <button
             onClick={onClear}
             style={{

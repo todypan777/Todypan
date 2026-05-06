@@ -4,6 +4,7 @@ import InstallPrompt from './components/UI/InstallPrompt'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
+import ConnectionChip from './components/ConnectionChip'
 import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth } from './context/AuthCtx'
 import { ADMIN_EMAIL } from './auth'
@@ -387,6 +388,17 @@ function AppShell() {
           dataTick={dataTick}
           hidden={moreSub === 'pendientes'}
         />
+
+        {/* Estado de sincronizacion offline (top-right, a la izquierda de la campana).
+            Respeta safe-area-inset-top para no esconderse bajo el notch en iPhone. */}
+        <div style={{
+          position: 'fixed',
+          top: 'calc(env(safe-area-inset-top, 0px) + 14px)',
+          right: 76,
+          zIndex: 50,
+        }}>
+          <ConnectionChip compact />
+        </div>
 
         <InstallPrompt />
 

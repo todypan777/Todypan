@@ -377,16 +377,61 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-### 🔄 Fase 9 — Vista cajera de ventas (días anteriores)
-**Objetivo:** Cajera consulta historial sin poder editar.
+### ✅ Fase 9.5 — Modo Offline
+**Objetivo:** Las cajeras pueden operar sin internet. La app guarda todo localmente y sube cuando vuelve la red. Antes de cerrar turno, todo debe estar sincronizado.
 
-- [ ] Pantalla "Mis ventas" para cajera
-- [ ] Default: ventas del día actual
-- [ ] Selector de fecha → ventas anteriores
-- [ ] Click en venta → ver detalle (read-only)
-- [ ] Botón "Solicitar edición" → form con nota → cambia status a `edit_requested`
-- [ ] Botón "Solicitar borrado" → form con razón → status `delete_requested`
-- [ ] Build + deploy
+**9.5.1 — Persistencia Firestore + indicadores:**
+- [x] `initializeFirestore` con `persistentLocalCache` + `persistentMultipleTabManager` en [firebase.js](src/firebase.js) — lecturas y escrituras encoladas en IndexedDB
+- [x] `utils/network.js`: `useOnlineStatus`, `usePendingWrites`, `flushPendingWrites`, `reconnectFirestore`
+- [x] `components/ConnectionChip.jsx`: píldora con estados sincronizado / subiendo / sin conexión + modal de detalle
+- [x] `createdAtClient` (timestamp de respaldo) en sales, cashExpenses, cashSessions — para ordenar la lista mientras la cola sube
+- [x] Chip montado en header cajera y flotante en admin (a la izquierda de la campana)
+
+**9.5.2 — Cola de fotos en IndexedDB:**
+- [x] `utils/photoQueue.js` (DB `todypan-offline`, store `photos`): worker con backoff exponencial 2s→1h, máximo 8 reintentos
+- [x] `enqueuePhoto`, `usePendingPhotos`, `startPhotoQueueWorker`, `flushQueueNow`
+- [x] `sales` y `cashExpenses` aceptan `photoLocalId` + setean `photoStatus: 'pending' | 'uploaded' | 'failed'`
+- [x] `NewSale.jsx`: si la cajera está sin red, captura → comprime → guarda preview local → permite confirmar venta. Foto se sube automáticamente al volver la red
+- [x] `CashExpenseModal` aplica el mismo flujo
+- [x] Worker arranca en `main.jsx` y se despierta con evento `online`
+- [x] `ConnectionChip` muestra contador de fotos pendientes con badge numérico
+- [x] Vista admin de Ventas (Fase 7): badges ⏳ pendiente / ⚠ failed en lista y detalle
+
+**9.5.3 — Bloqueo de cierre con cola pendiente:**
+- [x] `navigator.storage.persist()` solicitado al inicio: blinda IndexedDB ante limpiezas automáticas del SO
+- [x] `components/SyncBeforeCloseModal.jsx`: modal con barra de progreso de fotos en vivo
+- [x] El botón "Cerrar turno" verifica `getPendingCount()` + estado online; si hay pendientes muestra el modal de sync primero
+- [x] Cuando todo llega a 0 → modal pasa a ✅ y abre el modal de cierre normal automáticamente
+- [x] Si está offline: modal queda esperando red. Botón "Mantener turno abierto y volver luego" para abortar
+
+**Decisiones cerradas en esta fase:**
+- D22: La cola de fotos se reintenta automáticamente con backoff exponencial. Si falla 8 veces, la venta queda con `photoStatus: 'failed'` y el admin la ve marcada — la cajera debe re-tomar la foto manualmente.
+- D23: El cierre de turno está diseñado para nunca avanzar sin tener todo subido. La única salida es "Mantener turno abierto" — la cajera puede volver luego cuando haya señal.
+- D24: Para celulares con poco almacenamiento, `navigator.storage.persist()` blinda los datos. En PWA instalada se concede sin preguntar.
+
+---
+
+### ✅ Fase 9 — Vista cajera de ventas (días anteriores)
+**Objetivo:** Cajera consulta historial sin poder editar. Read-only y respetando D21 (anti-fraude).
+
+- [x] Pantalla [MyHistoricalSales](src/screens/MyHistoricalSales.jsx) para cajera
+- [x] Default: ventas del día actual (zona Bogotá)
+- [x] Selector de fecha → ventas anteriores (botón "Hoy" para volver rápido)
+- [x] Filtros por método (chips: efectivo / NEQUI / DAVIPLATA / deuda)
+- [x] Click en venta → modal de detalle read-only
+- [x] **Sin botones de "Solicitar edición/borrado"** — D6 manda. La cajera reporta problema con `flagSale` (ya existía en Fase 3) y eso solo deja nota
+- [x] Watcher dedicado [watchCashierSalesByDate](src/sales.js) por `cashierUid + date`
+- [x] Botón "Mis ventas" en home cajera (junto a "Gasto de caja")
+- [x] Modal `ReportSaleModal` reutilizado (exportado desde CashierApp.jsx)
+- [x] Build + deploy
+
+**D21 anti-fraude aplicado en TODA esta vista:**
+- ❌ NO se muestra `total` por venta
+- ❌ NO se muestra `unitPrice` ni `subtotal` por ítem
+- ❌ NO se muestra suma agregada del día
+- ✅ SÍ se muestra cantidad de ventas (es número, no monto)
+- ✅ SÍ se muestran productos (nombre + qty), hora, método, deudor (si aplica), foto del comprobante, notas
+- ✅ Badges ⏳/⚠ para fotos pendientes/fallidas (consistencia con vista admin)
 
 ---
 
@@ -443,4 +488,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-04 — **Fases 1-8 completas y en producción.** Próxima: Fase 9 (vista cajera de ventas históricas) y Fase 10 (lockdown reglas Firestore). Decisiones D1-D21 cerradas.
+**Última actualización:** 2026-05-06 — **Fases 1-9 + 9.5 (modo offline) completas.** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D24 cerradas.

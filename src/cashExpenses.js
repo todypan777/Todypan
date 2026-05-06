@@ -9,9 +9,14 @@ import {
   where,
   onSnapshot,
 } from 'firebase/firestore'
+import { getClientTimestamp } from './utils/network'
 
 const expensesCol = () => collection(firestoreDb, 'cashExpenses')
 const expenseRef = (id) => doc(firestoreDb, 'cashExpenses', id)
+
+function timeOf(doc) {
+  return doc.createdAt?.toMillis?.() ?? doc.createdAtClient ?? 0
+}
 
 /**
  * Crea un gasto de caja. La cajera lo registra; queda como 'pending'
@@ -33,10 +38,15 @@ export async function createCashExpense(payload) {
     description: payload.description.trim(),
     amount: Number(payload.amount) || 0,
     createdAt: serverTimestamp(),
+    createdAtClient: getClientTimestamp(),
     status: 'pending',
   }
   if (payload.photoUrl) {
     data.photoUrl = payload.photoUrl
+    data.photoStatus = 'uploaded'
+  } else if (payload.photoLocalId) {
+    data.photoStatus = 'pending'
+    data.photoLocalId = payload.photoLocalId
   }
   const ref = await addDoc(expensesCol(), data)
   return ref.id
@@ -50,11 +60,7 @@ export function watchSessionExpenses(sessionId, callback) {
     q,
     snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      list.sort((a, b) => {
-        const ta = a.createdAt?.toMillis?.() ?? 0
-        const tb = b.createdAt?.toMillis?.() ?? 0
-        return tb - ta
-      })
+      list.sort((a, b) => timeOf(b) - timeOf(a))
       callback(list)
     },
     err => {

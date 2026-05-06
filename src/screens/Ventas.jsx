@@ -416,6 +416,12 @@ function SalesTable({ sales, branches, onClick }) {
             </div>
             <div style={{ fontSize: 16, textAlign: 'center' }} title={s.paymentMethod}>
               {methodIcon(s.paymentMethod)}
+              {!s.photoUrl && s.photoStatus === 'pending' && (
+                <span title="Foto pendiente de subir" style={{ fontSize: 10, marginLeft: 2 }}>⏳</span>
+              )}
+              {!s.photoUrl && s.photoStatus === 'failed' && (
+                <span title="Foto no se pudo subir" style={{ fontSize: 10, marginLeft: 2 }}>⚠</span>
+              )}
             </div>
             <div style={{
               fontSize: 13.5, fontWeight: 800, color: T.neutral[900],
@@ -476,6 +482,12 @@ function SalesList({ sales, branches, onClick }) {
               }}>
                 {s.cashierName}
                 <span style={{ fontSize: 14 }}>{methodIcon(s.paymentMethod)}</span>
+                {!s.photoUrl && s.photoStatus === 'pending' && (
+                  <span title="Foto pendiente de subir" style={{ fontSize: 11 }}>⏳</span>
+                )}
+                {!s.photoUrl && s.photoStatus === 'failed' && (
+                  <span title="Foto no se pudo subir" style={{ fontSize: 11 }}>⚠</span>
+                )}
                 {s.recordedByUid && s.recordedByRole === 'admin' && (
                   <span style={{
                     fontSize: 9.5, fontWeight: 700, color: '#7A5C00',
@@ -652,6 +664,35 @@ export function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
                   }}
                 />
               </a>
+            )}
+            {!sale.photoUrl && sale.photoStatus === 'pending' && (
+              <div style={{
+                marginTop: 10, padding: '12px 14px', borderRadius: 10,
+                background: '#FFF7E6', border: `1px solid #F4E0BC`,
+                fontSize: 12.5, color: T.warn, fontWeight: 600, lineHeight: 1.5,
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: 16 }}>⏳</span>
+                Foto del comprobante pendiente de subir (la cajera la registró sin red).
+              </div>
+            )}
+            {!sale.photoUrl && sale.photoStatus === 'failed' && (
+              <div style={{
+                marginTop: 10, padding: '12px 14px', borderRadius: 10,
+                background: '#FBE9E5', border: `1px solid #F0C8BE`,
+                fontSize: 12.5, color: T.bad, fontWeight: 600, lineHeight: 1.5,
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <span style={{ fontSize: 16 }}>⚠</span>
+                <div>
+                  La foto del comprobante no se pudo subir tras varios intentos.
+                  {sale.photoFailedReason && (
+                    <div style={{ fontSize: 11, fontWeight: 500, color: T.neutral[600], marginTop: 4 }}>
+                      Detalle: {sale.photoFailedReason}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>

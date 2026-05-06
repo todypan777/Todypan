@@ -11,10 +11,20 @@ import {
   arrayUnion,
   getDoc,
 } from 'firebase/firestore'
+import { getClientTimestamp } from './utils/network'
 
 const saleRef = (id) => doc(firestoreDb, 'sales', id)
 
 const salesCol = () => collection(firestoreDb, 'sales')
+
+/**
+ * Devuelve los millis de un doc para ordenar.
+ * Prefiere createdAt (server) si ya sincronizo; cae a createdAtClient
+ * mientras la venta esta en cola offline.
+ */
+function timeOf(doc) {
+  return doc.createdAt?.toMillis?.() ?? doc.createdAtClient ?? 0
+}
 
 /**
  * Crea una venta nueva. payload:
@@ -34,6 +44,7 @@ export async function createSale(payload) {
   const data = {
     date: today,
     createdAt: serverTimestamp(),
+    createdAtClient: getClientTimestamp(),
     sessionId: payload.sessionId,
     branchId: payload.branchId,
     cashierUid: payload.cashierUid,
@@ -49,6 +60,11 @@ export async function createSale(payload) {
   }
   if (payload.photoUrl) {
     data.photoUrl = payload.photoUrl
+    data.photoStatus = 'uploaded'
+  } else if (payload.photoLocalId) {
+    // Foto encolada en IndexedDB: el worker la subira cuando haya red.
+    data.photoStatus = 'pending'
+    data.photoLocalId = payload.photoLocalId
   }
   if (payload.debtorId) {
     data.debtorId = payload.debtorId
@@ -73,11 +89,8 @@ export function watchSessionSales(sessionId, callback) {
     snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       // Ordenar por createdAt descendente (más recientes primero)
-      list.sort((a, b) => {
-        const ta = a.createdAt?.toMillis?.() ?? 0
-        const tb = b.createdAt?.toMillis?.() ?? 0
-        return tb - ta
-      })
+      // Usa createdAtClient como fallback mientras la venta esta en cola offline.
+      list.sort((a, b) => timeOf(b) - timeOf(a))
       callback(list)
     },
     err => {
@@ -160,6 +173,38 @@ export async function editSaleItems(saleId, payload) {
   })
 
   return { oldTotal, newTotal, sale }
+}
+
+/**
+ * Suscripción a las ventas de UNA cajera específica para UN día específico.
+ * Usada por la pantalla "Mis ventas" (Fase 9) — historial read-only.
+ *
+ * Filtramos por cashierUid + date (YYYY-MM-DD, zona Bogotá).
+ * Ordena por hora descendente (más reciente primero).
+ *
+ * IMPORTANTE: aunque las ventas tengan total, la UI debe NO mostrarlo
+ * (D21 anti-fraude). Esta función solo trae los docs; el filtrado visual
+ * lo hace la pantalla.
+ */
+export function watchCashierSalesByDate(cashierUid, dateStr, callback) {
+  if (!cashierUid || !dateStr) { callback([]); return () => {} }
+  const q = query(
+    salesCol(),
+    where('cashierUid', '==', cashierUid),
+    where('date', '==', dateStr),
+  )
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => timeOf(b) - timeOf(a))
+      callback(list)
+    },
+    err => {
+      console.error('[sales] watchCashierSalesByDate error:', err)
+      callback([])
+    }
+  )
 }
 
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */

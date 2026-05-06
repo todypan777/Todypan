@@ -11,6 +11,7 @@ import {
   getDocs,
 } from 'firebase/firestore'
 import { addMovement, getBogotaDateStr, setCashFloor } from './db'
+import { getClientTimestamp } from './utils/network'
 
 const sessionsCol = () => collection(firestoreDb, 'cashSessions')
 const sessionRef = (id) => doc(firestoreDb, 'cashSessions', id)
@@ -101,6 +102,7 @@ export async function openSession({
     openingFloat: Number(openingFloat) || 0,
     openingSource: openingSource || { type: 'empty' },
     openedAt: serverTimestamp(),
+    openedAtClient: getClientTimestamp(),
     status: 'open',
   }
   if (openingDispute) {
@@ -179,6 +181,7 @@ export async function closeSession(sessionId, payload) {
     declaredClosingCash: Number(payload.declaredClosingCash) || 0,
     handover: payload.handover,
     closedAt: serverTimestamp(),
+    closedAtClient: getClientTimestamp(),
     status: 'pending_close',
   }
   if (payload.closingNote) {

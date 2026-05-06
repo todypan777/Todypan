@@ -1,5 +1,10 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  getFirestore,
+} from 'firebase/firestore'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -12,7 +17,27 @@ const firebaseConfig = {
 }
 
 export const firebaseApp = initializeApp(firebaseConfig)
-export const firestoreDb = getFirestore(firebaseApp)
+
+// Persistencia offline: las lecturas siguen funcionando desde IndexedDB y las
+// escrituras se encolan automaticamente y se reproducen al volver la red.
+// persistentMultipleTabManager evita conflictos si la PWA esta abierta en
+// varias pestañas (celular + desktop a la vez).
+//
+// Si IndexedDB no esta disponible (modo incognito Safari, navegador raro),
+// caemos a getFirestore() en memoria — la app sigue funcionando online.
+let _firestoreDb
+try {
+  _firestoreDb = initializeFirestore(firebaseApp, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager(),
+    }),
+  })
+} catch (e) {
+  console.warn('[firebase] persistentLocalCache no disponible, usando memoria:', e?.message)
+  _firestoreDb = getFirestore(firebaseApp)
+}
+export const firestoreDb = _firestoreDb
+
 export const firebaseAuth = getAuth(firebaseApp)
 export const googleProvider = new GoogleAuthProvider()
 googleProvider.setCustomParameters({ prompt: 'select_account' })

@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App.jsx'
+import { startPhotoQueueWorker } from './utils/photoQueue'
 
 // ── Kill switch one-shot ──
 // Los celulares con SW viejo (sin skipWaiting) quedaban atascados sirviendo
@@ -43,5 +44,27 @@ cleanupOldServiceWorkers().then(() => {
     },
   })
 })
+
+// Worker de cola de fotos offline: vacia la cola al volver la red.
+startPhotoQueueWorker()
+
+// Pedir storage persistente: en PWA instalada esto se concede sin
+// preguntar y blinda IndexedDB ante limpiezas automaticas del SO cuando
+// el almacenamiento del dispositivo se llena. Sin esto, la cola de
+// ventas/fotos offline podria perderse en celulares con poco espacio.
+async function requestPersistentStorage() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+      const already = await navigator.storage.persisted?.()
+      if (!already) {
+        const granted = await navigator.storage.persist()
+        console.log('[storage] persistente:', granted ? 'concedido' : 'no concedido')
+      }
+    }
+  } catch (e) {
+    console.warn('[storage] no se pudo solicitar persistencia:', e?.message)
+  }
+}
+requestPersistentStorage()
 
 createRoot(document.getElementById('root')).render(<App />)

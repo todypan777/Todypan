@@ -36,7 +36,7 @@ La app actual (`todypan-app`) es el **panel de administración**. Vamos a añadi
 |---|---|
 | **D1** | Auth flow con **cola de aprobación** (B). Empleada se registra con Google, digita nombre+apellido, queda `pending`. Admin recibe popup al entrar a la app y aprueba desde pestaña Usuarios. |
 | **D2** | Productos nuevos creados por cajera: se guardan **al instante** en el catálogo con solo precio (sin costo). Quedan flagged `needsCostReview` para que el admin los complete. |
-| **D3** | Apertura de caja: el cierre anterior se transfiere automáticamente si el handover fue cajera→cajera. Si fue cajera→admin, la siguiente cajera abre en $0. |
+| **D3** | ~~Apertura de caja: el cierre anterior se transfiere automáticamente si el handover fue cajera→cajera. Si fue cajera→admin, la siguiente cajera abre en $0.~~ **OBSOLETA por D25** — el admin abre y cierra todos los turnos. |
 | **D4** | Fotos de comprobantes en **ImageBB** (gratis, público pero URL aleatoria). |
 | **D5** | **Solo un turno activo por panadería.** Cajera nueva no puede abrir si la anterior no cerró. |
 | **D6** | Edición/borrado de venta por cajera: solo deja **nota**. Admin decide qué hacer desde su lado. |
@@ -50,11 +50,12 @@ La app actual (`todypan-app`) es el **panel de administración**. Vamos a añadi
 | **D14** | Gastos de caja entran como **pendientes**. Admin aprueba/rechaza → al aprobar se convierten en `movement` tipo gasto con `origen: "caja"`. Sin opción de editar (rechazar y rehacer). |
 | **D15** | Pestaña **"Pendientes"** del admin que agrupa: usuarios pendientes, gastos de caja pendientes, solicitudes de edición/borrado de ventas, productos sin costo. |
 | **D16** | Modal de aprobación de cajera pide: nombre completo (editable), teléfono/WhatsApp (obligatorio), salario (opcional). |
-| **D17** | Apertura de caja: si la cajera receptora detecta que recibió **menos** de lo que la entregadora reportó, puede **disputar** declarando el monto real. Queda como `openingDispute.status = 'pending'` y se notifica al admin. La caja abre con el monto real declarado por la receptora. |
+| **D17** | ~~Apertura de caja: si la cajera receptora detecta que recibió menos…~~ **OBSOLETA por D25** — el admin abre cada turno con el monto que físicamente deja en caja, no hay disputas. |
 | **D18** | **Sobras al cierre** (declarado > esperado): el efectivo físico se entrega completo (modelo mezclado). El excedente se suma a un **fondo virtual `surplusFund`** del negocio que crece con cada cierre con sobra. Sirve como reserva contable para cubrir faltantes futuros u otros gastos. |
 | **D19** | **Faltas al cierre** (declarado < esperado): se registra como `closingDiscrepancy.status = 'pending'`. **El admin decide caso por caso** desde Pendientes — sin umbral fijo: o lo asume como pérdida del negocio (se cubre con `surplusFund` si hay saldo), o se descuenta a la cajera. |
 | **D20** | Si admin elige "descontar a la cajera", el monto se **integra automáticamente al sistema de nómina existente**: se resta del próximo pago en la pantalla Equipo / pago de nómina. La cajera puede agregar una **nota** explicativa al momento de cerrar el turno. |
-| **D21** | **Control anti-fraude:** la cajera **NUNCA** ve el monto esperado en caja, el total acumulado, ni la diferencia (sobra/falta) al cerrar. Declara a ciegas el efectivo físico que tiene; el sistema calcula y reporta al admin. Aplica en TODAS las fases: en cierre, durante el turno y mientras hay ventas activas (Fase 3+). La única excepción es el monto del **handover de apertura** (que ella vio físicamente al recibir y debe poder confirmar/disputar). |
+| **D21** | **Control anti-fraude:** la cajera **NUNCA** ve el monto esperado en caja, el total acumulado, ni la diferencia. Aplica durante todo el turno y en la lista de ventas. (Con D25 ya tampoco ve el cierre — el admin lo hace solo.) |
+| **D25** | **El admin abre y cierra todos los turnos** (cambio de modelo, 2026-05-06). La cajera solo vende y registra gastos: no abre, no cierra, no decide handover, no deja notas. Reemplaza a D3, D6 (parcial), D17. El admin gestiona todo desde el panel central del Dashboard ("Caja · N/M con turno"): un solo modal para `Abrir turno` (elige cajera + monto inicial) y un solo modal para `Cerrar caja` (cuenta físico + decide qué hacer con la plata + resuelve gastos pendientes y discrepancias en una sola operación). El estado `pending_close` ya no se genera; se mantiene solo para sesiones legacy. |
 
 ---
 
@@ -488,4 +489,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-06 — **Fases 1-9 + 9.5 (modo offline) completas.** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D24 cerradas.
+**Última actualización:** 2026-05-06 — **Fases 1-9 + 9.5 completas + D25 (admin abre/cierra todos los turnos).** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D25 cerradas (D3, D17 obsoletas por D25).

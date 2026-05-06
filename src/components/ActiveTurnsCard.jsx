@@ -1,31 +1,57 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { Card } from './Atoms'
+import { fmtCOP } from '../utils/format'
 import { useAuth } from '../context/AuthCtx'
-import { watchOpenSessions } from '../cashSessions'
+import {
+  watchOpenSessions,
+  openSession,
+  adminCloseSession,
+} from '../cashSessions'
+import { watchSessionSales } from '../sales'
+import {
+  watchSessionExpenses,
+  approveCashExpense,
+  rejectCashExpense,
+} from '../cashExpenses'
+import { watchAllUsers } from '../users'
+import { createDeduction } from '../cashierDeductions'
+import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import NewSale from '../screens/NewSale'
 
 /**
- * Tarjeta para el dashboard del admin: lista los turnos activos de las
- * cajeras y permite "Asistir" (hacer ventas en su turno mientras la cajera
- * está ausente).
+ * Panel central del admin (D25): controla TODOS los turnos.
  *
- * Solo visible si hay sesiones abiertas (status 'open' — sin pending_close
- * porque ahí ya cerró el turno).
+ * Lista cada panadería con su estado actual y permite:
+ *   - Abrir turno (panaderías sin sesión)
+ *   - Cerrar caja (sesiones open o legacy pending_close)
+ *   - Asistir (POS de la cajera mientras está ausente)
+ *
+ * Reemplaza el flujo anterior donde la cajera abría/cerraba.
  */
 export default function ActiveTurnsCard() {
   const { authUser, userDoc } = useAuth()
   const [openSessions, setOpenSessions] = useState([])
+  const [allUsers, setAllUsers] = useState([])
   const [assistingSession, setAssistingSession] = useState(null)
+  const [openingBranch, setOpeningBranch] = useState(null)
+  const [closingSession, setClosingSession] = useState(null)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
+  useEffect(() => watchAllUsers(setAllUsers), [])
 
-  // Solo turnos realmente abiertos (no los pending_close)
-  const activeTurns = openSessions.filter(s => s.status === 'open')
-
-  if (activeTurns.length === 0) return null
+  const branches = getData().branches || []
+  if (branches.length === 0) return null
 
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Admin'
+
+  // Por cada panadería, determinar su estado actual
+  const branchRows = branches.map(b => {
+    const session = openSessions.find(s => s.branchId === b.id)
+    return { branch: b, session }
+  })
+
+  const occupiedCount = branchRows.filter(r => r.session).length
 
   return (
     <>
@@ -41,56 +67,56 @@ export default function ActiveTurnsCard() {
             borderBottom: `1px solid ${T.neutral[100]}`,
           }}>
             <div style={{
-              width: 8, height: 8, borderRadius: 999, background: T.ok,
-              boxShadow: `0 0 0 4px ${T.ok}22`,
+              width: 8, height: 8, borderRadius: 999,
+              background: occupiedCount > 0 ? T.ok : T.neutral[300],
+              boxShadow: occupiedCount > 0 ? `0 0 0 4px ${T.ok}22` : 'none',
             }}/>
             <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-              Turnos activos · {activeTurns.length}
+              Caja · {occupiedCount}/{branches.length} con turno
             </div>
           </div>
-          {activeTurns.map((s, i) => (
-            <div key={s.id} style={{
-              padding: '12px 16px',
-              borderBottom: i < activeTurns.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-              display: 'flex', alignItems: 'center', gap: 10,
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontSize: 14, fontWeight: 700, color: T.neutral[900],
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {s.branchName || 'Panadería'}
-                </div>
-                <div style={{
-                  fontSize: 12, color: T.neutral[500], marginTop: 2,
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {s.cashierName || 'Cajera'}
-                </div>
-              </div>
-              <button
-                onClick={() => setAssistingSession(s)}
-                style={{
-                  padding: '8px 14px', borderRadius: 10,
-                  background: T.copper[500], color: '#fff',
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 12.5, fontWeight: 700,
-                  boxShadow: '0 2px 6px rgba(184,122,86,0.3)',
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  flexShrink: 0,
-                }}
-              >
-                Asistir
-                <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                  <path d="M3 1 L8 6 L3 11" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </button>
-            </div>
+
+          {branchRows.map((row, i) => (
+            <BranchRow
+              key={row.branch.id}
+              branch={row.branch}
+              session={row.session}
+              isLast={i === branchRows.length - 1}
+              onOpen={() => setOpeningBranch(row.branch)}
+              onClose={() => setClosingSession(row.session)}
+              onAssist={() => setAssistingSession(row.session)}
+            />
           ))}
         </Card>
       </div>
 
-      {/* Modal full-screen con el POS de la cajera */}
+      {/* Modal: abrir turno (admin elige cajera + monto inicial) */}
+      {openingBranch && (
+        <OpenShiftModal
+          branch={openingBranch}
+          allUsers={allUsers}
+          adminUid={authUser.uid}
+          onCancel={() => setOpeningBranch(null)}
+          onOpened={() => setOpeningBranch(null)}
+        />
+      )}
+
+      {/* Modal: cerrar caja (admin cuenta + decide handover + resuelve cuadre) */}
+      {closingSession && (
+        <CloseSessionModal
+          session={closingSession}
+          adminUid={authUser.uid}
+          allUsers={allUsers}
+          onCancel={() => setClosingSession(null)}
+          onClosed={(reopenWith) => {
+            setClosingSession(null)
+            // Si admin pidió "abrir nuevo turno ya", abrir el modal correspondiente
+            if (reopenWith?.branch) setOpeningBranch(reopenWith.branch)
+          }}
+        />
+      )}
+
+      {/* Modal: asistir (POS de la cajera) — sin cambios respecto al modelo anterior */}
       {assistingSession && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 80, background: T.neutral[50],
@@ -108,4 +134,988 @@ export default function ActiveTurnsCard() {
       )}
     </>
   )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Una fila por panadería, con estado y acciones contextuales
+// ──────────────────────────────────────────────────────────────
+function BranchRow({ branch, session, isLast, onOpen, onClose, onAssist }) {
+  const isLegacyPending = session?.status === 'pending_close'
+  const colorKey = branch.colorKey || 'copper'
+  const palette = T[colorKey] || T.copper
+
+  return (
+    <div style={{
+      padding: '12px 16px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <div style={{
+        width: 8, height: 8, borderRadius: 999, flexShrink: 0,
+        background: session ? (isLegacyPending ? T.warn : T.ok) : T.neutral[300],
+      }}/>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 14, fontWeight: 700, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {branch.name}
+        </div>
+        <div style={{
+          fontSize: 11.5, color: session ? T.neutral[600] : T.neutral[400], marginTop: 2,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {session
+            ? (isLegacyPending
+                ? `Cierre pendiente · ${session.cashierName || 'Cajera'}`
+                : `${session.cashierName || 'Cajera'} en turno`)
+            : 'Sin turno · disponible'}
+        </div>
+      </div>
+
+      {!session && (
+        <button
+          onClick={onOpen}
+          style={{
+            padding: '8px 12px', borderRadius: 10,
+            background: palette[500] || T.copper[500], color: '#fff',
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 700, flexShrink: 0,
+            boxShadow: `0 2px 6px ${(palette[500] || T.copper[500])}55`,
+          }}
+        >
+          Abrir turno
+        </button>
+      )}
+
+      {session && (
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {!isLegacyPending && (
+            <button
+              onClick={onAssist}
+              title="Asistir (vender por la cajera)"
+              style={{
+                padding: '8px 10px', borderRadius: 10,
+                background: '#fff', color: T.neutral[700],
+                border: `1px solid ${T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}
+            >
+              Asistir
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              padding: '8px 12px', borderRadius: 10,
+              background: T.neutral[900], color: '#fff',
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+            }}
+          >
+            Cerrar caja
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Abrir turno (admin elige cajera + monto inicial)
+// ──────────────────────────────────────────────────────────────
+function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
+  const cashFloor = getCashFloor(branch.id)
+  const [cashierUid, setCashierUid] = useState('')
+  const [amountStr, setAmountStr] = useState(String(cashFloor))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const cashiers = useMemo(
+    () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
+    [allUsers]
+  )
+
+  const selectedCashier = cashiers.find(c => c.uid === cashierUid)
+  const amount = Number(amountStr) || 0
+  const canConfirm = !busy && cashierUid && amount >= 0
+
+  async function handleOpen() {
+    if (!canConfirm) return
+    setBusy(true); setError(null)
+    try {
+      const cashierName = `${selectedCashier.nombre || ''} ${selectedCashier.apellido || ''}`.trim() || selectedCashier.email
+      // openingFloat = MONTO SOBRE LA BASE.
+      // - Si admin abre con cashFloor exacto → openingFloat = 0 (la base es implícita, type='empty')
+      // - Si admin abre con MÁS que la base (ej. cadena de turno con extras heredados) →
+      //   openingFloat = monto total ingresado, type='handover' (la base ya está incluida).
+      const isJustBase = amount === cashFloor
+      await openSession({
+        branchId: branch.id,
+        branchName: branch.name,
+        cashierUid: selectedCashier.uid,
+        cashierName,
+        openingFloat: isJustBase ? 0 : amount,
+        openingSource: isJustBase ? { type: 'empty' } : { type: 'handover' },
+      })
+      onOpened()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos abrir el turno. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell onClose={busy ? undefined : onCancel}>
+      <ModalTitle title="Abrir turno" subtitle={branch.name} />
+
+      <Field label="Cajera">
+        <select
+          value={cashierUid}
+          onChange={e => setCashierUid(e.target.value)}
+          disabled={busy}
+          style={selectStyle}
+        >
+          <option value="">Selecciona una cajera...</option>
+          {cashiers.map(c => (
+            <option key={c.uid} value={c.uid}>
+              {c.nombre} {c.apellido}
+            </option>
+          ))}
+        </select>
+        {cashiers.length === 0 && (
+          <div style={{ fontSize: 11.5, color: T.bad, marginTop: 6 }}>
+            No hay cajeras aprobadas. Aprueba primero en Usuarios.
+          </div>
+        )}
+      </Field>
+
+      <Field label={`Monto inicial en caja (base de ${fmtCOP(cashFloor)})`}>
+        <NumInput value={amountStr} onChange={setAmountStr} disabled={busy} />
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 6, lineHeight: 1.5 }}>
+          {amount === cashFloor && '✓ Arranca solo con la base'}
+          {amount > cashFloor && `Arranca con ${fmtCOP(amount - cashFloor)} sobre la base`}
+          {amount < cashFloor && `⚠ Arranca con ${fmtCOP(cashFloor - amount)} menos que la base`}
+        </div>
+      </Field>
+
+      {error && <ErrorBox text={error} />}
+
+      <ModalFooter>
+        <ModalBtnSecondary onClick={onCancel} disabled={busy}>Cancelar</ModalBtnSecondary>
+        <ModalBtnPrimary
+          onClick={handleOpen}
+          disabled={!canConfirm}
+          color={T.copper[500]}
+        >
+          {busy ? 'Abriendo...' : 'Abrir turno'}
+        </ModalBtnPrimary>
+      </ModalFooter>
+    </ModalShell>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Cerrar caja (admin cuenta + decide handover + resuelve cuadre)
+// ──────────────────────────────────────────────────────────────
+function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) {
+  // Datos en vivo del turno
+  const [sales, setSales] = useState([])
+  const [expenses, setExpenses] = useState([])
+  useEffect(() => watchSessionSales(session.id, setSales), [session.id])
+  useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
+
+  // Decisiones tentativas del admin sobre gastos pendientes
+  const [expenseDecisions, setExpenseDecisions] = useState({})
+
+  // Si la sesión es legacy pending_close (cajera ya declaró), pre-llenar con su declaración
+  const cashierLegacyDeclared = session.declaredClosingCash
+  const [declaredStr, setDeclaredStr] = useState(
+    cashierLegacyDeclared != null ? String(cashierLegacyDeclared) : ''
+  )
+
+  const [resolution, setResolution] = useState(null) // para shortage
+  const [handoverChoice, setHandoverChoice] = useState('admin') // 'admin' | 'cashier' | 'leave'
+  const [nextCashierUid, setNextCashierUid] = useState('') // si handoverChoice==='cashier'
+  const [reopenAfter, setReopenAfter] = useState(false) // checkbox para abrir nuevo turno después
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  // Cálculos en vivo
+  const activeSales = useMemo(
+    () => sales.filter(s => (s.status || 'active') !== 'deleted'),
+    [sales]
+  )
+  const salesByMethod = useMemo(() => {
+    const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0 }
+    activeSales.forEach(s => {
+      const m = s.paymentMethod || 'efectivo'
+      acc[m] = (acc[m] || 0) + (Number(s.total) || 0)
+    })
+    return acc
+  }, [activeSales])
+  const totalSales = activeSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0)
+
+  function effectiveStatus(exp) {
+    if (exp.status === 'approved' || exp.status === 'rejected') return exp.status
+    const dec = expenseDecisions[exp.id]
+    if (dec === 'approve') return 'approved'
+    if (dec === 'reject') return 'rejected'
+    return 'pending'
+  }
+  const approvedExpenseTotal = expenses.reduce((acc, e) =>
+    effectiveStatus(e) === 'approved' ? acc + (Number(e.amount) || 0) : acc, 0
+  )
+  const pendingExpensesCount = expenses.filter(e => effectiveStatus(e) === 'pending').length
+
+  const cashFloor = getCashFloor(session.branchId)
+  const openingFloat = Number(session.openingFloat) || 0
+  const baseAtOpen = session.openingSource?.type === 'empty' ? cashFloor : 0
+  const declared = Number(declaredStr) || 0
+  const expectedCash = baseAtOpen + openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal
+  const difference = declared - expectedCash
+  const hasShortage = difference < 0
+  const hasSurplus = difference > 0
+  const isExact = difference === 0
+  const baseLowered = declared < cashFloor
+  const baseShortfall = baseLowered ? cashFloor - declared : 0
+  const overBase = declared - cashFloor
+
+  // Decisión admin sobre la base reducida (si bajó)
+  const [floorAction, setFloorAction] = useState(null) // 'replenish' | 'reduce'
+
+  const cashiers = useMemo(
+    () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
+    [allUsers]
+  )
+
+  function setDecision(expenseId, decision) {
+    setExpenseDecisions(prev => ({ ...prev, [expenseId]: decision }))
+  }
+
+  // Validación
+  const canConfirm =
+    !busy &&
+    declaredStr.trim() !== '' &&
+    pendingExpensesCount === 0 &&
+    (!hasShortage || !!resolution) &&
+    (!baseLowered || !!floorAction) &&
+    (handoverChoice !== 'cashier' || !!nextCashierUid)
+
+  async function handleConfirm() {
+    if (!canConfirm) return
+    setBusy(true); setError(null)
+    try {
+      // 1. Aplicar decisiones de gastos pendientes
+      for (const exp of expenses) {
+        if (exp.status !== 'pending') continue
+        const dec = expenseDecisions[exp.id]
+        if (dec === 'approve') {
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          const movementId = addMovement({
+            type: 'expense',
+            amount: exp.amount,
+            date: today,
+            note: exp.description,
+            cat: 'otros_prov',
+            branch: exp.branchId || 'both',
+            origin: 'caja',
+            sessionId: exp.sessionId || null,
+            cashierName: exp.cashierName,
+          })
+          await approveCashExpense(exp.id, { reviewedBy: adminUid, movementId })
+        } else if (dec === 'reject') {
+          await rejectCashExpense(exp.id, { reviewedBy: adminUid, reviewNote: null })
+        }
+      }
+
+      // 2. Si hay falta a descontar a la cajera, crear deduction
+      let deductionId = null
+      if (hasShortage && resolution === 'cashier_deduction') {
+        const cashierUser = cashiers.find(u => u.uid === session.cashierUid)
+        const employeeId = cashierUser?.linkedEmployeeId || null
+        deductionId = await createDeduction({
+          cashierUid: session.cashierUid,
+          cashierName: session.cashierName,
+          employeeId,
+          amount: Math.abs(difference),
+          reason: 'cash_shortage',
+          sessionId: session.id,
+          createdBy: adminUid,
+        })
+      }
+
+      // 3. Construir handover
+      let handover = null
+      if (handoverChoice === 'admin') {
+        handover = {
+          type: 'admin',
+          toName: 'Administrador',
+          amount: declared,
+        }
+      } else if (handoverChoice === 'cashier') {
+        const next = cashiers.find(c => c.uid === nextCashierUid)
+        handover = {
+          type: 'cashier',
+          toUid: next.uid,
+          toName: `${next.nombre || ''} ${next.apellido || ''}`.trim() || next.email,
+          amount: declared,
+        }
+      } else {
+        handover = { type: 'none', amount: declared }
+      }
+
+      // 4. Cerrar la sesión (una sola operación que hace todo)
+      await adminCloseSession(session.id, {
+        reviewedBy: adminUid,
+        declaredClosingCash: declared,
+        expectedCash,
+        approveNote: note.trim() || null,
+        resolution: hasShortage ? resolution : null,
+        deductionId,
+        handover,
+        session,
+        nextCashFloor: baseLowered
+          ? (floorAction === 'reduce' ? declared : CASH_FLOOR_DEFAULT)
+          : null,
+      })
+
+      // 5. Si admin marcó "abrir nuevo turno ya", devolver el branch al padre
+      onClosed(reopenAfter ? { branch: { id: session.branchId, name: session.branchName, colorKey: getData().branches?.find(b => b.id === session.branchId)?.colorKey } } : null)
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos cerrar la caja. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell onClose={busy ? undefined : onCancel} wide>
+      <ModalTitle
+        title="Cerrar caja"
+        subtitle={`${session.cashierName || 'Cajera'} · ${session.branchName || 'Sin nombre'}`}
+      />
+
+      {/* Resumen del turno */}
+      <SectionLabel>Resumen del turno</SectionLabel>
+      <div style={blockStyle}>
+        {baseAtOpen > 0 && <Row label="Base de caja" value={fmtCOP(baseAtOpen)} muted />}
+        {openingFloat > 0 && <Row label="Apertura (recibido)" value={fmtCOP(openingFloat)} muted />}
+        <Row label={`Ventas (${activeSales.length})`} value={fmtCOP(totalSales)} muted />
+        <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
+          <Row label="Efectivo a caja" value={fmtCOP(salesByMethod.efectivo || 0)} bold />
+          <Row label="Nequi" value={fmtCOP(salesByMethod.nequi || 0)} muted />
+          <Row label="Daviplata" value={fmtCOP(salesByMethod.daviplata || 0)} muted />
+          {salesByMethod.deuda > 0 && (
+            <Row label="Deuda (a cobrar después)" value={fmtCOP(salesByMethod.deuda)} muted />
+          )}
+        </div>
+      </div>
+
+      {/* Gastos del turno */}
+      <SectionLabel>
+        Gastos del turno · {expenses.length}
+        {pendingExpensesCount > 0 && (
+          <span style={{ color: T.warn, marginLeft: 6 }}>
+            ({pendingExpensesCount} sin decidir)
+          </span>
+        )}
+      </SectionLabel>
+      {expenses.length === 0 ? (
+        <div style={emptyBlockStyle}>Sin gastos en este turno</div>
+      ) : (
+        <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {expenses.map(e => (
+            <ExpenseRow
+              key={e.id}
+              expense={e}
+              effectiveStatus={effectiveStatus(e)}
+              onApprove={() => setDecision(e.id, 'approve')}
+              onReject={() => setDecision(e.id, 'reject')}
+              disabled={busy}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Conteo físico (lo cuenta el ADMIN) */}
+      <SectionLabel>Cuenta física en caja</SectionLabel>
+      <div style={{
+        padding: '14px 16px', borderRadius: 12,
+        background: T.copper[50], border: `1.5px solid ${T.copper[100]}`,
+        marginBottom: 14,
+      }}>
+        <div style={{ fontSize: 12.5, color: T.neutral[700], marginBottom: 8, lineHeight: 1.5 }}>
+          {cashierLegacyDeclared != null
+            ? `La cajera declaró ${fmtCOP(cashierLegacyDeclared)}. Confirma o ajusta lo que cuentes físicamente.`
+            : 'Cuenta TODO el efectivo físico que hay en la caja (incluyendo la base) y digítalo:'}
+        </div>
+        <NumInput
+          value={declaredStr}
+          onChange={setDeclaredStr}
+          disabled={busy}
+          large
+          autoFocus
+        />
+      </div>
+
+      {/* Cuadre — solo si admin ya digitó algo */}
+      {declaredStr.trim() !== '' && (
+        <>
+          <SectionLabel>Cuadre</SectionLabel>
+          <div style={blockStyle}>
+            <Row label="Esperado" value={fmtCOP(expectedCash)} bold />
+            <Row label="Contado" value={fmtCOP(declared)} bold />
+            <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
+              {isExact && <Row label="✓ CUADRE EXACTO" value={fmtCOP(0)} highlight tone="ok" />}
+              {hasSurplus && <Row label="SOBRA" value={fmtCOP(Math.abs(difference))} highlight tone="ok" />}
+              {hasShortage && <Row label="FALTA" value={fmtCOP(Math.abs(difference))} highlight tone="bad" />}
+            </div>
+          </div>
+
+          {/* Acción física para el admin */}
+          <AdminActionCard declared={declared} cashFloor={cashFloor} handoverChoice={handoverChoice} />
+
+          {/* Si la base bajó, decisión sobre próximo turno */}
+          {baseLowered && (
+            <div style={{
+              padding: '12px 14px', borderRadius: 12,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              marginBottom: 14,
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: T.bad, marginBottom: 4 }}>
+                ¿Qué hacer con la base?
+              </div>
+              <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5, marginBottom: 10 }}>
+                La caja quedó por debajo de los {fmtCOP(cashFloor)}. Decide cómo arranca el próximo turno:
+              </div>
+              <RadioOption
+                selected={floorAction === 'replenish'}
+                onClick={() => setFloorAction('replenish')}
+                title={`Repongo ${fmtCOP(baseShortfall)} ahora`}
+                subtitle="El siguiente turno arranca con la base completa."
+              />
+              <RadioOption
+                selected={floorAction === 'reduce'}
+                onClick={() => setFloorAction('reduce')}
+                title={`Iniciar con base reducida (${fmtCOP(declared)})`}
+                subtitle="El siguiente turno arrancará con menos base."
+              />
+            </div>
+          )}
+
+          {/* Si hay FALTA: pide resolución */}
+          {hasShortage && (
+            <>
+              <SectionLabel>¿Qué hacer con la falta de {fmtCOP(Math.abs(difference))}?</SectionLabel>
+              <RadioOption
+                selected={resolution === 'business_loss'}
+                onClick={() => setResolution('business_loss')}
+                title="Asumir como pérdida del negocio"
+                subtitle="No afecta a la cajera. Solo se registra."
+              />
+              <RadioOption
+                selected={resolution === 'cashier_deduction'}
+                onClick={() => setResolution('cashier_deduction')}
+                title="Descontar a la cajera"
+                subtitle={`Se restará del próximo pago de ${session.cashierName}.`}
+              />
+            </>
+          )}
+
+          {/* Si hay SOBRA */}
+          {hasSurplus && (
+            <div style={{
+              padding: '12px 14px', borderRadius: 12,
+              background: '#E8F4E8', border: `1px solid #C2DDC1`,
+              fontSize: 12.5, color: T.ok, fontWeight: 600, lineHeight: 1.5,
+              marginBottom: 14,
+            }}>
+              Al cerrar, se registrará {fmtCOP(Math.abs(difference))} como ingreso "Sobra de cierre".
+            </div>
+          )}
+
+          {/* Handover: a quién entrega */}
+          <SectionLabel>¿Qué hacer con la caja?</SectionLabel>
+          <RadioOption
+            selected={handoverChoice === 'admin'}
+            onClick={() => setHandoverChoice('admin')}
+            title="Yo me llevo lo de encima de la base"
+            subtitle={`Te llevas ${fmtCOP(Math.max(0, overBase))}. La caja queda con $${cashFloor.toLocaleString('es-CO')}.`}
+          />
+          <RadioOption
+            selected={handoverChoice === 'leave'}
+            onClick={() => setHandoverChoice('leave')}
+            title="Dejar todo en la caja"
+            subtitle={`Quedan ${fmtCOP(declared)} para el próximo turno.`}
+          />
+          <RadioOption
+            selected={handoverChoice === 'cashier'}
+            onClick={() => setHandoverChoice('cashier')}
+            title="Transferir a otra cajera"
+            subtitle="La próxima cajera arranca con todo lo que hay."
+          />
+          {handoverChoice === 'cashier' && (
+            <div style={{ marginTop: 8, marginBottom: 8 }}>
+              <select
+                value={nextCashierUid}
+                onChange={e => setNextCashierUid(e.target.value)}
+                disabled={busy}
+                style={selectStyle}
+              >
+                <option value="">Selecciona la cajera entrante...</option>
+                {cashiers
+                  .filter(c => c.uid !== session.cashierUid)
+                  .map(c => (
+                    <option key={c.uid} value={c.uid}>
+                      {c.nombre} {c.apellido}
+                    </option>
+                  ))
+                }
+              </select>
+            </div>
+          )}
+
+          {/* Reabrir turno después */}
+          {handoverChoice !== 'cashier' && (
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '10px 12px', borderRadius: 10,
+              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+              fontSize: 13, color: T.neutral[700],
+              cursor: 'pointer', marginTop: 4, marginBottom: 12,
+            }}>
+              <input
+                type="checkbox"
+                checked={reopenAfter}
+                onChange={e => setReopenAfter(e.target.checked)}
+                disabled={busy}
+              />
+              Después de cerrar, abrir nuevo turno aquí
+            </label>
+          )}
+        </>
+      )}
+
+      {/* Nota interna */}
+      {declaredStr.trim() !== '' && (
+        <NoteInput value={note} onChange={setNote} placeholder="Nota interna del cierre (opcional)" disabled={busy} />
+      )}
+
+      {pendingExpensesCount > 0 && (
+        <div style={{
+          margin: '0 0 10px', padding: '10px 12px', borderRadius: 10,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`, color: T.warn,
+          fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+        }}>
+          Decide aprobar o rechazar todos los gastos antes de cerrar.
+        </div>
+      )}
+
+      {error && <ErrorBox text={error} />}
+
+      <ModalFooter>
+        <ModalBtnSecondary onClick={onCancel} disabled={busy}>Cancelar</ModalBtnSecondary>
+        <ModalBtnPrimary
+          onClick={handleConfirm}
+          disabled={!canConfirm}
+          color={T.ok}
+        >
+          {busy ? 'Cerrando...' : 'Cerrar caja'}
+        </ModalBtnPrimary>
+      </ModalFooter>
+    </ModalShell>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Acción al cerrar (mensaje claro al admin sobre qué hacer físicamente)
+// ──────────────────────────────────────────────────────────────
+function AdminActionCard({ declared, cashFloor, handoverChoice }) {
+  const baseLowered = declared < cashFloor
+  const overBase = declared - cashFloor
+
+  if (baseLowered) {
+    return (
+      <div style={{
+        padding: '14px 16px', borderRadius: 14,
+        background: '#FBE9E5', border: `1.5px solid ${T.bad}55`,
+        marginBottom: 14,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700, color: T.bad,
+          textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
+        }}>
+          Acción física
+        </div>
+        <div style={{ fontSize: 14.5, fontWeight: 700, color: T.neutral[900], lineHeight: 1.4, marginBottom: 6 }}>
+          La caja tiene <span style={{ color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</span>.
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
+          Repón <b style={{ color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(cashFloor - declared)}</b> para devolver la caja a {fmtCOP(cashFloor)}.
+        </div>
+      </div>
+    )
+  }
+
+  if (handoverChoice === 'cashier' || handoverChoice === 'leave') {
+    return (
+      <div style={{
+        padding: '14px 16px', borderRadius: 14,
+        background: T.copper[50], border: `1.5px solid ${T.copper[100]}`,
+        marginBottom: 14,
+      }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.copper[700], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+          Acción física
+        </div>
+        <div style={{ fontSize: 14, color: T.neutral[800], lineHeight: 1.5 }}>
+          Deja los <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</b> en la caja{handoverChoice === 'cashier' ? ' para la próxima cajera' : ''}.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      padding: '14px 16px', borderRadius: 14,
+      background: '#E8F4E8', border: `1.5px solid ${T.ok}55`,
+      marginBottom: 14,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.ok, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+        Acción física
+      </div>
+      <div style={{ fontSize: 14.5, fontWeight: 700, color: T.neutral[900], lineHeight: 1.4 }}>
+        Llévate <span style={{ color: T.ok, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(Math.max(0, overBase))}</span>.
+      </div>
+      <div style={{ fontSize: 13, color: T.neutral[600], lineHeight: 1.5, marginTop: 4 }}>
+        Deja los <b>{fmtCOP(cashFloor)}</b> de base intactos.
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Componentes UI auxiliares (locales al panel)
+// ──────────────────────────────────────────────────────────────
+function ModalShell({ onClose, wide, children }) {
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: wide ? 520 : 440,
+        maxHeight: '94vh', overflowY: 'auto',
+        background: '#fff', borderRadius: '20px 20px 0 0',
+        boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
+        padding: '20px 22px 24px',
+      }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ModalTitle({ title, subtitle }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+        {title}
+      </div>
+      {subtitle && (
+        <div style={{ fontSize: 13, color: T.neutral[500], marginTop: 3 }}>
+          {subtitle}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ModalFooter({ children }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
+      {children}
+    </div>
+  )
+}
+
+function ModalBtnPrimary({ onClick, disabled, color, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        flex: 1.4, padding: '13px', borderRadius: 12,
+        background: disabled ? T.neutral[200] : color,
+        color: disabled ? T.neutral[400] : '#fff',
+        border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit', fontSize: 14.5, fontWeight: 700,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ModalBtnSecondary({ onClick, disabled, children }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        flex: 1, padding: '13px', borderRadius: 12,
+        background: T.neutral[100], color: T.neutral[700],
+        border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+function NumInput({ value, onChange, disabled, large, autoFocus }) {
+  const [focused, setFocused] = useState(false)
+  function sanitize(raw) {
+    return raw.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
+  }
+  return (
+    <div style={{
+      border: `1.5px solid ${focused ? T.copper[400] : T.neutral[200]}`,
+      borderRadius: 12, background: '#fff',
+      padding: large ? '12px 14px' : '10px 12px',
+      display: 'flex', alignItems: 'center', gap: 6,
+    }}>
+      <span style={{ fontSize: large ? 22 : 16, fontWeight: 700, color: T.neutral[400] }}>$</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={e => onChange(sanitize(e.target.value))}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        disabled={disabled}
+        autoFocus={autoFocus}
+        placeholder="0"
+        style={{
+          flex: 1, border: 'none', outline: 'none', background: 'transparent',
+          fontFamily: 'inherit', fontSize: large ? 22 : 16, fontWeight: 700,
+          color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+        }}
+      />
+    </div>
+  )
+}
+
+function NoteInput({ value, onChange, placeholder, disabled }) {
+  return (
+    <textarea
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      disabled={disabled}
+      rows={2}
+      style={{
+        width: '100%', boxSizing: 'border-box',
+        padding: '10px 12px', borderRadius: 10,
+        border: `1.5px solid ${T.neutral[200]}`, background: '#fff',
+        fontFamily: 'inherit', fontSize: 13, color: T.neutral[800],
+        outline: 'none', resize: 'vertical', minHeight: 50,
+        marginBottom: 12,
+      }}
+    />
+  )
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{
+      fontSize: 11, fontWeight: 700, color: T.neutral[500],
+      textTransform: 'uppercase', letterSpacing: 0.5,
+      marginBottom: 8, marginTop: 4,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function Row({ label, value, muted, bold, highlight, tone }) {
+  const valueColor = highlight
+    ? tone === 'bad' ? T.bad : tone === 'ok' ? T.ok : T.neutral[900]
+    : muted ? T.neutral[600] : T.neutral[900]
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+      padding: '4px 0',
+      fontSize: highlight ? 14 : 13,
+      fontWeight: highlight || bold ? 700 : 500,
+    }}>
+      <span style={{ color: muted ? T.neutral[600] : T.neutral[800] }}>{label}</span>
+      <span style={{ color: valueColor, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+    </div>
+  )
+}
+
+function RadioOption({ selected, onClick, title, subtitle, disabled }) {
+  return (
+    <button
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      style={{
+        width: '100%', padding: '12px 14px', borderRadius: 12,
+        background: selected ? T.copper[50] : '#fff',
+        border: `1.5px solid ${selected ? T.copper[400] : T.neutral[200]}`,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit', textAlign: 'left',
+        display: 'flex', alignItems: 'center', gap: 10,
+        marginBottom: 6,
+      }}
+    >
+      <div style={{
+        width: 18, height: 18, borderRadius: 999, flexShrink: 0,
+        border: `2px solid ${selected ? T.copper[500] : T.neutral[300]}`,
+        background: selected ? T.copper[500] : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {selected && <div style={{ width: 6, height: 6, borderRadius: 999, background: '#fff' }}/>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1, lineHeight: 1.4 }}>{subtitle}</div>}
+      </div>
+    </button>
+  )
+}
+
+function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled }) {
+  const isApproved = effectiveStatus === 'approved'
+  const isRejected = effectiveStatus === 'rejected'
+  const isPending = effectiveStatus === 'pending'
+  const wasFinal = expense.status === 'approved' || expense.status === 'rejected'
+
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 10,
+      background: isApproved ? '#E8F4E8' : isRejected ? '#FBE9E5' : T.neutral[50],
+      border: `1px solid ${isApproved ? '#C2DDC1' : isRejected ? '#F0C8BE' : T.neutral[100]}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {expense.description}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+          {fmtCOP(expense.amount)}
+          {expense.photoUrl && (
+            <a href={expense.photoUrl} target="_blank" rel="noreferrer" style={{
+              marginLeft: 8, color: T.copper[600], fontWeight: 600,
+              textDecoration: 'underline', fontSize: 11,
+            }}>
+              📎 ver foto
+            </a>
+          )}
+        </div>
+      </div>
+      {isPending && (
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={onReject} disabled={disabled} style={{
+            padding: '5px 10px', borderRadius: 8,
+            background: 'transparent', color: T.bad,
+            border: `1px solid ${T.bad}55`,
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Rechazar
+          </button>
+          <button onClick={onApprove} disabled={disabled} style={{
+            padding: '5px 10px', borderRadius: 8,
+            background: T.ok, color: '#fff',
+            border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Aprobar
+          </button>
+        </div>
+      )}
+      {isApproved && !wasFinal && (
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: T.ok, color: '#fff',
+          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          ✓ Aprobado
+        </span>
+      )}
+      {isRejected && !wasFinal && (
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: T.bad, color: '#fff',
+          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          ✗ Rechazado
+        </span>
+      )}
+      {wasFinal && (
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: T.neutral[100], color: T.neutral[600],
+          fontSize: 10.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          {isApproved ? 'Antes' : 'Antes'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function ErrorBox({ text }) {
+  return (
+    <div style={{
+      marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+      background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+      fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+    }}>
+      {text}
+    </div>
+  )
+}
+
+const blockStyle = {
+  padding: '12px 14px', borderRadius: 12,
+  background: T.neutral[50], marginBottom: 14,
+}
+
+const emptyBlockStyle = {
+  padding: '12px', textAlign: 'center', borderRadius: 10,
+  background: T.neutral[50], color: T.neutral[500], fontSize: 12.5,
+  marginBottom: 14,
+}
+
+const selectStyle = {
+  width: '100%', padding: '12px 14px', borderRadius: 12,
+  border: `1.5px solid ${T.neutral[200]}`,
+  background: '#fff', color: T.neutral[900],
+  fontFamily: 'inherit', fontSize: 14, outline: 'none',
 }

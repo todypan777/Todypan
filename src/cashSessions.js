@@ -13,15 +13,27 @@ import {
 import { addMovement, getBogotaDateStr, setCashFloor } from './db'
 import { getClientTimestamp } from './utils/network'
 
+// ────────────────────────────────────────────────────────────────────────────
+// Modelo de turnos (D25 — actualizado 2026-05-06)
+//
+// El ADMIN abre y cierra todos los turnos. La cajera solo vende y registra
+// gastos. No declara montos, no decide handover, no deja notas de cierre.
+//
+// Estados:
+//   - 'open'         → turno activo (cajera atendiendo, admin asistiendo o ambos)
+//   - 'closed'       → cerrado por el admin
+//   - 'pending_close'→ LEGACY: sesiones cerradas por la cajera antes del cambio
+//                      de modelo. El admin las puede cerrar desde el panel
+//                      central con la misma UI que las nuevas.
+// ────────────────────────────────────────────────────────────────────────────
+
 const sessionsCol = () => collection(firestoreDb, 'cashSessions')
 const sessionRef = (id) => doc(firestoreDb, 'cashSessions', id)
 
 /**
  * Suscripción a TODAS las sesiones que bloquean la panadería:
- *  - 'open': cajera todavía atendiendo
- *  - 'pending_close': cajera ya cerró pero admin no ha aprobado
- *
- * Una panadería con cualquiera de estos estados NO puede recibir un nuevo turno.
+ *  - 'open': turno activo
+ *  - 'pending_close': LEGACY (cierre antiguo aún no procesado por el admin)
  */
 export function watchOpenSessions(callback) {
   const q = query(sessionsCol(), where('status', 'in', ['open', 'pending_close']))
@@ -57,9 +69,8 @@ export function watchMyOpenSession(uid, callback) {
 }
 
 /**
- * Última sesión cerrada de una panadería específica.
- * Se usa para detectar handover pendiente hacia la cajera actual.
- * Filtramos por branchId+status, ordenamos en cliente (evita índice compuesto).
+ * Última sesión cerrada de una panadería (para mostrarle al admin el contexto
+ * cuando va a abrir un nuevo turno).
  */
 export async function getLatestClosedSessionForBranch(branchId) {
   const q = query(
@@ -79,11 +90,13 @@ export async function getLatestClosedSessionForBranch(branchId) {
 }
 
 /**
- * Abre un nuevo turno.
- * - openingSource describe de dónde viene el dinero inicial:
- *     { type: 'empty' | 'handover' | 'handover_disputed', fromSessionId?, fromCashierName? }
- * - openingDispute (opcional): si la cajera receptora declara monto distinto al esperado.
- *     { expected, declared, difference, status: 'pending' }
+ * Abre un nuevo turno. La llama el ADMIN desde el panel central.
+ *
+ * - openingFloat: monto físicamente en caja al abrir (default = base $200k).
+ * - openingSource: { type: 'empty' | 'handover', fromSessionId?, fromCashierName? }
+ *     'empty'    → caja arranca con la base sola ($200k). openingFloat = 0.
+ *     'handover' → arranca con dinero ya presente (relevo en cadena por admin).
+ *                  openingFloat = lo físicamente recibido (incluye base).
  */
 export async function openSession({
   branchId,
@@ -92,7 +105,6 @@ export async function openSession({
   cashierName,
   openingFloat,
   openingSource,
-  openingDispute,
 }) {
   const data = {
     branchId,
@@ -105,45 +117,15 @@ export async function openSession({
     openedAtClient: getClientTimestamp(),
     status: 'open',
   }
-  if (openingDispute) {
-    data.openingDispute = {
-      expected: Number(openingDispute.expected) || 0,
-      declared: Number(openingDispute.declared) || 0,
-      difference: Number(openingDispute.expected || 0) - Number(openingDispute.declared || 0),
-      status: 'pending',
-      reportedAt: serverTimestamp(),
-    }
-  }
   const ref = await addDoc(sessionsCol(), data)
   return ref.id
 }
 
 /**
- * Resuelve una disputa de apertura (solo admin).
- * resolution: 'accept' (admin acepta el monto declarado por cajera receptora)
- *           | 'reject' (admin rechaza, cajera receptora debe asumir la diferencia)
- */
-export async function resolveOpeningDispute(sessionId, resolution, note, adminUid) {
-  const status = resolution === 'accept' ? 'resolved' : 'rejected'
-  await updateDoc(sessionRef(sessionId), {
-    'openingDispute.status': status,
-    'openingDispute.note': note || null,
-    'openingDispute.reviewedBy': adminUid,
-    'openingDispute.reviewedAt': serverTimestamp(),
-  })
-}
-
-/**
  * Resuelve una falta de cierre (closingDiscrepancy con type='shortage').
- * resolution:
- *   - 'business_loss': el negocio asume la pérdida, no afecta cajera
- *   - 'cashier_deduction': se le cobra a la cajera (crea entrada en cashierDeductions)
- *
- * payload:
- *   - resolution
- *   - note? (opcional)
- *   - reviewedBy (uid admin)
- *   - deductionId? (id en cashierDeductions, si resolution === 'cashier_deduction')
+ * LEGACY: solo se usa para discrepancias antiguas que quedaron en 'pending'
+ * antes del cambio de modelo. En el flujo nuevo el admin resuelve la
+ * discrepancia dentro de adminCloseSession.
  */
 export async function resolveClosingDiscrepancy(sessionId, payload) {
   await updateDoc(sessionRef(sessionId), {
@@ -157,80 +139,97 @@ export async function resolveClosingDiscrepancy(sessionId, payload) {
 }
 
 /**
- * La cajera cierra un turno con cuadre + handover.
+ * Lee de Firestore las sales y cashExpenses del turno y devuelve el snapshot:
+ *  - salesBreakdown: { efectivo, nequi, daviplata, deuda, total, count }
+ *  - expensesAtClose: { approvedTotal, pendingTotal, count }
  *
- * IMPORTANTE: el status NO pasa a 'closed' directo. Pasa a 'pending_close'
- * y la panadería sigue bloqueada hasta que el admin apruebe en Pendientes.
- *
- * payload: {
- *   declaredClosingCash, expectedCash, difference, handover,
- *   closingNote?,                    ← nota opcional de la cajera
- *   closingDiscrepancy?              ← cuando declarado != esperado
- * }
- * handover: { type: 'admin' | 'cashier', toUid?, toName, amount }
- *
- * closingDiscrepancy:
- *   { type: 'shortage' | 'surplus', amount, status, note? }
- *   status: 'pending' siempre al cerrar (admin resuelve junto con el cierre)
+ * Lectura puntual (getDocs), no watcher.
  */
-export async function closeSession(sessionId, payload) {
-  // Cierre desde la cajera: solo persiste lo declarado y a quien entrega.
-  // El expectedCash, difference y closingDiscrepancy los calcula el admin
-  // al aprobar (en ApproveCloseModal con desglose real de ventas y gastos).
-  const data = {
-    declaredClosingCash: Number(payload.declaredClosingCash) || 0,
-    handover: payload.handover,
-    closedAt: serverTimestamp(),
-    closedAtClient: getClientTimestamp(),
-    status: 'pending_close',
-  }
-  if (payload.closingNote) {
-    data.closingNote = payload.closingNote
-  }
-  await updateDoc(sessionRef(sessionId), data)
+async function buildSessionSnapshot(sessionId) {
+  const salesQ = query(collection(firestoreDb, 'sales'), where('sessionId', '==', sessionId))
+  const expensesQ = query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', sessionId))
+  const [salesSnap, expensesSnap] = await Promise.all([getDocs(salesQ), getDocs(expensesQ)])
+
+  const salesBreakdown = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
+  salesSnap.docs.forEach(d => {
+    const s = d.data()
+    if ((s.status || 'active') === 'deleted') return
+    const m = s.paymentMethod || 'efectivo'
+    const t = Number(s.total) || 0
+    salesBreakdown[m] = (salesBreakdown[m] || 0) + t
+    salesBreakdown.total += t
+    salesBreakdown.count += 1
+  })
+
+  const expensesAtClose = { approvedTotal: 0, pendingTotal: 0, rejectedTotal: 0, count: 0 }
+  expensesSnap.docs.forEach(d => {
+    const e = d.data()
+    const a = Number(e.amount) || 0
+    if (e.status === 'approved') expensesAtClose.approvedTotal += a
+    else if (e.status === 'rejected') expensesAtClose.rejectedTotal += a
+    else expensesAtClose.pendingTotal += a
+    expensesAtClose.count += 1
+  })
+
+  return { salesBreakdown, expensesAtClose }
 }
 
 /**
- * Solo admin: aprueba el cierre de un turno. El admin calcula expectedCash
- * en vivo (con desglose real de ventas + gastos del turno) y lo manda aquí.
+ * EL ADMIN cierra un turno (D25). Reemplaza a closeSession + approveSessionClose
+ * del modelo viejo: una sola operación que hace todo.
  *
- * Esta función:
- *  - Persiste expectedCash y difference calculados por el admin.
- *  - Crea closingDiscrepancy si hay diferencia (sobra o falta).
- *  - Si hay SOBRA: crea automáticamente un movimiento de ingreso
- *    (cat: 'sobra_caja') por el monto excedente.
- *  - Si hay FALTA con resolution='cashier_deduction': el caller debe
- *    crear la deduction antes y pasar deductionId.
- *  - Cambia status a 'closed' (libera la panadería para nuevo turno).
+ * Pasos:
+ *  - Persiste declaredClosingCash (lo que admin contó), handover, expectedCash, difference.
+ *  - Crea closingDiscrepancy si hay sobra/falta.
+ *  - Si hay SOBRA: registra movimiento de ingreso 'sobra_caja'.
+ *  - Si hay FALTA con resolution='cashier_deduction': caller debe pasar deductionId.
+ *  - Cambia status a 'closed' (libera la panadería).
  *
- * payload:
- *   - reviewedBy: uid del admin (requerido)
- *   - expectedCash: number calculado por el admin (apertura + ventas efectivo - gastos aprobados)
- *   - approveNote?: nota interna del admin
- *   - resolution?: 'business_loss' | 'cashier_deduction' (solo si hay falta)
- *   - deductionId?: id en cashierDeductions (si resolution === 'cashier_deduction')
- *   - session: el doc de la sesión (necesario para movimientos / nombres)
+ * payload requerido:
+ *   - reviewedBy: uid del admin
+ *   - declaredClosingCash: monto que contó físicamente el admin
+ *   - expectedCash: monto que el sistema calculó como esperado
+ *   - handover: { type: 'admin' | 'cashier' | 'none', toUid?, toName?, amount }
+ *       'admin'  → admin se lleva (declared - cashFloor), deja base
+ *       'cashier'→ admin transfiere todo a otra cajera (no recoge)
+ *       'none'   → admin deja todo intacto (sin cajera siguiente todavía)
+ *   - session: el doc de la sesión (necesario para cashierName, branch)
+ *
+ * payload opcional:
+ *   - approveNote: nota interna del admin
+ *   - resolution: 'business_loss' | 'cashier_deduction' (requerido si hay falta)
+ *   - deductionId: id en cashierDeductions (si resolution === 'cashier_deduction')
+ *   - nextCashFloor: si se pasa, persiste el cashFloor de la panadería
  */
-export async function approveSessionClose(sessionId, payload = {}) {
+export async function adminCloseSession(sessionId, payload = {}) {
   const session = payload.session || {}
+  const declared = Number(payload.declaredClosingCash) || 0
   const expectedCash = Number(payload.expectedCash) || 0
-  const declared = Number(session.declaredClosingCash) || 0
   const difference = declared - expectedCash
   const isSurplus = difference > 0
   const isShortage = difference < 0
 
+  // Snapshot final (después de que el admin aprobó/rechazó gastos pendientes)
+  const finalSnapshot = await buildSessionSnapshot(sessionId)
+
   const data = {
     status: 'closed',
+    declaredClosingCash: declared,
     expectedCash,
     difference,
+    handover: payload.handover || { type: 'none', amount: declared },
+    closedAt: serverTimestamp(),
+    closedAtClient: getClientTimestamp(),
     closeApprovedAt: serverTimestamp(),
     closeApprovedBy: payload.reviewedBy || null,
+    salesBreakdown: finalSnapshot.salesBreakdown,
+    expensesAtClose: finalSnapshot.expensesAtClose,
   }
   if (payload.approveNote) {
     data.closeApproveNote = payload.approveNote
   }
 
-  // Construir closingDiscrepancy según el resultado del cuadre
+  // closingDiscrepancy según el resultado del cuadre
   if (isSurplus) {
     data.closingDiscrepancy = {
       type: 'surplus',
@@ -241,7 +240,7 @@ export async function approveSessionClose(sessionId, payload = {}) {
     }
   } else if (isShortage) {
     if (!payload.resolution) {
-      throw new Error('Se requiere resolution (business_loss | cashier_deduction) para aprobar un cierre con FALTA')
+      throw new Error('Se requiere resolution (business_loss | cashier_deduction) para cerrar un turno con FALTA')
     }
     data.closingDiscrepancy = {
       type: 'shortage',
@@ -254,9 +253,8 @@ export async function approveSessionClose(sessionId, payload = {}) {
       deductionId: payload.deductionId || null,
     }
   }
-  // Si difference === 0: cuadre exacto, no se crea closingDiscrepancy.
 
-  // Si hay SOBRA, crear movimiento de ingreso "Sobra de cierre"
+  // Si hay SOBRA, registrar ingreso "Sobra de cierre"
   let surplusMovementId = null
   if (isSurplus) {
     try {
@@ -279,9 +277,7 @@ export async function approveSessionClose(sessionId, payload = {}) {
 
   await updateDoc(sessionRef(sessionId), data)
 
-  // Si el admin decidió actualizar la base de la panaderia (porque bajó),
-  // persistir el cambio. nextCashFloor: si vino el valor, se aplica;
-  // si es null/undefined, no se toca la base.
+  // Persistir cashFloor si admin cambió la base de la panadería
   if (payload.nextCashFloor != null && session.branchId != null) {
     try {
       setCashFloor(session.branchId, Number(payload.nextCashFloor))
@@ -294,10 +290,12 @@ export async function approveSessionClose(sessionId, payload = {}) {
 }
 
 /**
- * Watcher de sesiones que requieren acción del admin:
- *  - status 'pending_close': cierre esperando aprobación
- *  - openingDispute pendiente: disputa de apertura
- *  - closingDiscrepancy.shortage pendiente: residuos de cierres antiguos
+ * Watcher de items que requieren acción del admin en la pestaña Pendientes:
+ *  - closingDiscrepancy.shortage pendiente: faltas legacy sin resolver
+ *
+ * (En el modelo D25 los cierres se resuelven en una sola operación desde
+ * el panel central, así que ya no aparecen aquí. Este watcher queda para
+ * limpiar discrepancias antiguas que quedaron pendientes.)
  */
 export function watchSessionsWithPendingReview(callback) {
   const q = query(sessionsCol())
@@ -306,8 +304,6 @@ export function watchSessionsWithPendingReview(callback) {
     snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       const filtered = all.filter(s =>
-        s.status === 'pending_close' ||
-        s.openingDispute?.status === 'pending' ||
         s.closingDiscrepancy?.status === 'pending'
       )
       callback(filtered)
@@ -320,11 +316,8 @@ export function watchSessionsWithPendingReview(callback) {
 }
 
 /**
- * Suscripción a las sesiones cerradas o pendientes de cierre cuyo cierre cae
- * en una fecha específica (zona Bogotá). Usado por la pantalla Registro para
- * mostrar el historial de cierres del día.
- *
- * Filtramos en cliente porque closedAt es Timestamp (no string).
+ * Sesiones cerradas (o pending_close legacy) cuyo cierre cae en una fecha
+ * específica (zona Bogotá). Usado por la pantalla Registro.
  */
 export function watchClosedSessionsForDate(dateStr, callback) {
   if (!dateStr) { callback([]); return () => {} }
@@ -337,7 +330,6 @@ export function watchClosedSessionsForDate(dateStr, callback) {
         .filter(s => {
           const ts = s.closedAt?.toDate?.()
           if (!ts) return false
-          // Convertir a fecha Bogotá (YYYY-MM-DD)
           const bogotaDate = ts.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
           return bogotaDate === dateStr
         })

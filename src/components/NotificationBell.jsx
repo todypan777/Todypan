@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
-import { Card, UserAvatar } from './Atoms'
-import { fmtCOP } from '../utils/format'
+import { UserAvatar } from './Atoms'
 import { watchAllUsers } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchAllSales } from '../sales'
@@ -12,14 +11,13 @@ import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
 /**
  * Campana de notificaciones flotante (top-right) siempre visible para el admin.
  *
- * - Cuenta TODOS los pendientes: usuarios, cierres, disputas, faltas, gastos,
- *   ventas marcadas, productos sin costo
+ * - Cuenta pendientes: usuarios, faltas legacy, ventas marcadas, productos sin costo,
+ *   solicitudes de cambio, recordatorios vencidos, asistencia del día
  * - Muestra badge con el número total
  * - Click → navega a Pendientes
  *
- * Además, dispara popup automático cuando llegan items urgentes:
- * - Cierre de turno pendiente (pending_close)
- * - Usuario nuevo esperando aprobación
+ * En el modelo D25 los cierres y aperturas se manejan desde el panel central del
+ * Dashboard, no aquí — por eso ya no hay popup de "cierre por aprobar".
  */
 export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden }) {
   const [pendingUsers, setPendingUsers] = useState([])
@@ -28,10 +26,9 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   const [cashierProducts, setCashierProducts] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
-  // Para popups automáticos
-  const [closesPopup, setClosesPopup] = useState(null)
+  // Para popups automáticos (solo usuarios pendientes — los cierres ya no
+  // generan popup porque se cierran desde el panel central, no aquí).
   const [usersPopup, setUsersPopup] = useState(null)
-  const seenCloseIdsRef = useRef(new Set())
   const seenUserIdsRef = useRef(new Set())
 
   useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
@@ -41,8 +38,8 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   const flaggedSales = useMemo(() => allSales.filter(s => s.status === 'flagged'), [allSales])
-  const openingDisputes = pendingSessions.filter(s => s.openingDispute?.status === 'pending')
-  const pendingCloses = pendingSessions.filter(s => s.status === 'pending_close')
+  // (D25) Cierres y aperturas se manejan desde el panel central. Acá solo
+  // contamos las shortages legacy que quedaron pendientes.
   const orphanShortages = pendingSessions.filter(s =>
     s.status === 'closed' &&
     s.closingDiscrepancy?.status === 'pending' &&
@@ -71,29 +68,12 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
 
   const totalCount =
     pendingUsers.length +
-    pendingCloses.length +
-    openingDisputes.length +
     orphanShortages.length +
     flaggedSales.length +
     cashierProducts.length +
     changeRequests.length +
     overdueReminders.length +
     (needsAttendanceConfirm ? 1 : 0)
-
-  // Detectar cierres nuevos para popup
-  useEffect(() => {
-    const newOnes = pendingCloses.filter(s => !seenCloseIdsRef.current.has(s.id))
-    if (newOnes.length > 0) {
-      newOnes.forEach(s => seenCloseIdsRef.current.add(s.id))
-      setClosesPopup(prev => {
-        if (prev && prev.length > 0) {
-          const existingIds = new Set(prev.map(s => s.id))
-          return [...prev, ...newOnes.filter(s => !existingIds.has(s.id))]
-        }
-        return newOnes
-      })
-    }
-  }, [pendingCloses])
 
   // Detectar usuarios nuevos para popup
   useEffect(() => {
@@ -158,18 +138,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
       </button>
       )}
 
-      {/* Popup llamativo: cierres de turno pendientes */}
-      {closesPopup && closesPopup.length > 0 && (
-        <PendingClosesPopup
-          sessions={closesPopup}
-          onReview={() => {
-            setClosesPopup(null)
-            onOpenPendientes?.()
-          }}
-          onLater={() => setClosesPopup(null)}
-        />
-      )}
-
       {/* Popup: usuarios pendientes (solo al primer detect) */}
       {usersPopup && usersPopup.length > 0 && (
         <PendingUsersPopup
@@ -182,167 +150,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
         />
       )}
     </>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Popup grande para cierres de turno pendientes
-// ──────────────────────────────────────────────────────────────
-function PendingClosesPopup({ sessions, onReview, onLater }) {
-  const isPlural = sessions.length > 1
-
-  return (
-    <div
-      onClick={onLater}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 20,
-        animation: 'fadeIn 0.18s ease',
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: '100%', maxWidth: 440,
-          background: '#fff', borderRadius: 24,
-          boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
-          animation: 'pulseIn 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2)',
-          overflow: 'hidden',
-        }}
-      >
-        <div style={{
-          background: `linear-gradient(135deg, ${T.warn} 0%, #C08A3E 100%)`,
-          padding: '28px 24px 24px',
-          textAlign: 'center', position: 'relative',
-        }}>
-          <div style={{
-            width: 84, height: 84, borderRadius: 999,
-            background: 'rgba(255,255,255,0.2)',
-            border: '3px solid rgba(255,255,255,0.4)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            margin: '0 auto 14px',
-            animation: 'iconPulse 1.5s ease-in-out infinite',
-          }}>
-            <svg width="44" height="44" viewBox="0 0 32 32" fill="none">
-              <rect x="6" y="10" width="20" height="14" rx="2" stroke="#fff" strokeWidth="2.4" fill="none"/>
-              <path d="M11 10 V7 Q11 5 13 5 H19 Q21 5 21 7 V10" stroke="#fff" strokeWidth="2.4" fill="none"/>
-              <circle cx="16" cy="17" r="1.6" fill="#fff"/>
-              <path d="M16 18.5 V21" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <div style={{
-            fontSize: 11.5, fontWeight: 800, color: 'rgba(255,255,255,0.85)',
-            letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 6,
-          }}>
-            Acción requerida
-          </div>
-          <div style={{
-            fontSize: 22, fontWeight: 800, color: '#fff',
-            letterSpacing: -0.4, lineHeight: 1.2,
-          }}>
-            {isPlural
-              ? `${sessions.length} cierres de turno por aprobar`
-              : 'Cierre de turno por aprobar'}
-          </div>
-        </div>
-
-        <div style={{ padding: '20px 22px' }}>
-          <div style={{
-            fontSize: 13.5, color: T.neutral[600],
-            textAlign: 'center', lineHeight: 1.55, marginBottom: 16,
-          }}>
-            {isPlural
-              ? 'Hay panaderías bloqueadas esperando tu aprobación para liberarse.'
-              : 'Hay una panadería bloqueada esperando tu aprobación para liberarse.'}
-          </div>
-
-          <div style={{
-            background: T.neutral[50], borderRadius: 14,
-            padding: '4px 0', marginBottom: 18,
-            maxHeight: 240, overflowY: 'auto',
-          }}>
-            {sessions.slice(0, 4).map((s, i) => {
-              const cd = s.closingDiscrepancy
-              return (
-                <div key={s.id} style={{
-                  padding: '10px 14px',
-                  borderBottom: i < Math.min(sessions.length, 4) - 1
-                    ? `0.5px solid ${T.neutral[100]}`
-                    : 'none',
-                }}>
-                  <div style={{
-                    fontSize: 13, fontWeight: 700, color: T.neutral[900],
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {s.cashierName} · {s.branchName || 'Sin nombre'}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
-                    Esperado <b>{fmtCOP(s.expectedCash || 0)}</b> · Declaró <b>{fmtCOP(s.declaredClosingCash || 0)}</b>
-                  </div>
-                  {cd?.type === 'shortage' && (
-                    <Tag color={T.bad} bg="#FBE9E5">Falta {fmtCOP(cd.amount)}</Tag>
-                  )}
-                  {cd?.type === 'surplus' && (
-                    <Tag color={T.ok} bg="#E8F4E8">Sobra {fmtCOP(cd.amount)}</Tag>
-                  )}
-                  {!cd && <Tag color={T.ok} bg="#E8F4E8">Cuadre exacto</Tag>}
-                </div>
-              )
-            })}
-            {sessions.length > 4 && (
-              <div style={{
-                padding: '8px 14px', fontSize: 11.5,
-                color: T.neutral[500], textAlign: 'center',
-              }}>
-                + {sessions.length - 4} más
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onLater} style={{
-              flex: 1, padding: '14px', borderRadius: 14,
-              background: T.neutral[100], color: T.neutral[700],
-              border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
-            }}>
-              Después
-            </button>
-            <button onClick={onReview} style={{
-              flex: 1.6, padding: '14px', borderRadius: 14,
-              background: T.warn, color: '#fff',
-              border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 14.5, fontWeight: 800,
-              boxShadow: '0 4px 14px rgba(192,138,62,0.45)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}>
-              Revisar ahora
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        @keyframes pulseIn {
-          0%   { transform: scale(0.92); opacity: 0; }
-          50%  { transform: scale(1.02); }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        @keyframes iconPulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255,255,255,0.4); }
-          50%      { transform: scale(1.06); box-shadow: 0 0 0 12px rgba(255,255,255,0); }
-        }
-      `}</style>
-    </div>
   )
 }
 
@@ -427,15 +234,3 @@ function PendingUsersPopup({ users, onReview, onLater }) {
   )
 }
 
-function Tag({ children, color, bg }) {
-  return (
-    <div style={{
-      display: 'inline-block', marginTop: 4,
-      fontSize: 10.5, fontWeight: 700, color, background: bg,
-      padding: '2px 8px', borderRadius: 999,
-      letterSpacing: 0.4, textTransform: 'uppercase',
-    }}>
-      {children}
-    </div>
-  )
-}

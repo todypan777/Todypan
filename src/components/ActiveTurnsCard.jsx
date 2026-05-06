@@ -344,6 +344,7 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [showSales, setShowSales] = useState(false) // sub-modal con detalle de ventas
 
   // Cálculos en vivo
   const activeSales = useMemo(
@@ -514,7 +515,34 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
             <Row label="Deuda (a cobrar después)" value={fmtCOP(salesByMethod.deuda)} muted />
           )}
         </div>
+        {activeSales.length > 0 && (
+          <button
+            onClick={() => setShowSales(true)}
+            style={{
+              width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10,
+              background: '#fff', color: T.copper[700],
+              border: `1px solid ${T.copper[200]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12.5, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M2 4 H12 M2 7 H12 M2 10 H8" stroke={T.copper[600]} strokeWidth="1.6" strokeLinecap="round"/>
+            </svg>
+            Ver detalle de ventas ({activeSales.length})
+          </button>
+        )}
       </div>
+
+      {/* Sub-modal: lista detallada de ventas */}
+      {showSales && (
+        <SalesListModal
+          sales={activeSales}
+          totalSales={totalSales}
+          onClose={() => setShowSales(false)}
+        />
+      )}
 
       {/* Gastos del turno */}
       <SectionLabel>
@@ -805,18 +833,28 @@ function ModalShell({ onClose, wide, children }) {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '16px',
+      animation: 'fadeIn 0.15s ease',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: '100%', maxWidth: wide ? 520 : 440,
-        maxHeight: '94vh', overflowY: 'auto',
-        background: '#fff', borderRadius: '20px 20px 0 0',
-        boxShadow: '0 -8px 32px rgba(0,0,0,0.18)',
+        maxHeight: '90vh', overflowY: 'auto',
+        background: '#fff', borderRadius: 20,
+        boxShadow: '0 16px 48px rgba(0,0,0,0.22)',
         padding: '20px 22px 24px',
+        animation: 'fadeScaleIn 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.05)',
       }}>
         {children}
       </div>
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes fadeScaleIn {
+          from { opacity: 0; transform: scale(0.96) translateY(8px); }
+          to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
     </div>
   )
 }
@@ -1085,6 +1123,146 @@ function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled })
         }}>
           {isApproved ? 'Antes' : 'Antes'}
         </span>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Sub-modal: lista detallada de ventas del turno
+// ──────────────────────────────────────────────────────────────
+function SalesListModal({ sales, totalSales, onClose }) {
+  // Ordenar más recientes primero (las que vienen de watchSessionSales ya
+  // vienen ordenadas, pero por seguridad)
+  const sorted = [...sales]
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 110,
+      background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '16px',
+      animation: 'fadeIn 0.15s ease',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 460,
+        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
+        background: '#fff', borderRadius: 20,
+        boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+        overflow: 'hidden',
+        animation: 'fadeScaleIn 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.05)',
+      }}>
+        {/* Header sticky */}
+        <div style={{
+          padding: '18px 20px 14px',
+          borderBottom: `1px solid ${T.neutral[100]}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: T.neutral[900] }}>
+              Ventas del turno
+            </div>
+            <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
+              {sorted.length} {sorted.length === 1 ? 'venta' : 'ventas'} · Total {fmtCOP(totalSales)}
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            width: 32, height: 32, borderRadius: 999, border: 'none',
+            background: T.neutral[100], color: T.neutral[700],
+            cursor: 'pointer', fontSize: 18, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: 'inherit',
+          }}>×</button>
+        </div>
+
+        {/* Lista scrollable */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+          {sorted.map((s, i) => (
+            <SaleDetailRow key={s.id} sale={s} isLast={i === sorted.length - 1} />
+          ))}
+        </div>
+
+        {/* Footer con total */}
+        <div style={{
+          padding: '14px 20px',
+          background: T.copper[50], borderTop: `1px solid ${T.copper[100]}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
+            Total ventas
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(totalSales)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SaleDetailRow({ sale, isLast }) {
+  const time = sale.createdAt?.toDate?.() || sale.createdAtClient
+  const timeStr = time
+    ? new Date(time).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+    : '—'
+  const methodIcon = { efectivo: '💵', nequi: '📱', daviplata: '📲', deuda: '📋' }[sale.paymentMethod] || '·'
+  const methodLabel = { efectivo: 'Efectivo', nequi: 'Nequi', daviplata: 'Daviplata', deuda: 'Deuda' }[sale.paymentMethod] || sale.paymentMethod
+  const isFlagged = sale.status === 'flagged'
+
+  return (
+    <div style={{
+      padding: '12px 20px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <div style={{ fontSize: 16, flexShrink: 0 }}>{methodIcon}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[800] }}>
+            {timeStr} · {methodLabel}
+            {isFlagged && <span style={{ color: T.warn, marginLeft: 6, fontWeight: 700 }}>⚠ reportada</span>}
+          </div>
+          {sale.debtorName && (
+            <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
+              Deudor: {sale.debtorName}
+            </div>
+          )}
+        </div>
+        <div style={{
+          fontSize: 14, fontWeight: 800, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          {fmtCOP(sale.total || 0)}
+        </div>
+      </div>
+      {/* Items de la venta */}
+      {sale.items && sale.items.length > 0 && (
+        <div style={{
+          marginLeft: 26, padding: '6px 10px', borderRadius: 8,
+          background: T.neutral[50],
+        }}>
+          {sale.items.map((it, j) => (
+            <div key={j} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8,
+              fontSize: 12, color: T.neutral[700], padding: '2px 0',
+            }}>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {it.qty}× {it.name}
+              </span>
+              <span style={{ color: T.neutral[500], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                {fmtCOP(it.subtotal || (Number(it.unitPrice) || 0) * (Number(it.qty) || 0))}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {sale.photoUrl && (
+        <div style={{ marginLeft: 26, marginTop: 4 }}>
+          <a href={sale.photoUrl} target="_blank" rel="noreferrer" style={{
+            fontSize: 11, color: T.copper[600], fontWeight: 600, textDecoration: 'underline',
+          }}>
+            📎 ver comprobante
+          </a>
+        </div>
       )}
     </div>
   )

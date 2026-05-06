@@ -11,6 +11,9 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
   const today = todayStr()
   const month = currentMonth()
 
+  // Periodo del balance hero: 'month' (default) | 'day' (solo hoy)
+  const [period, setPeriod] = useState('month')
+
   // Ventas de cajeras (modelo devengado: cuentan como ingreso desde el día de la venta,
   // incluso si fueron a deuda)
   const [sales, setSales] = useState([])
@@ -20,15 +23,18 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
   const matchesSaleBranch = (s) => filter === 'all' || String(s.branchId) === String(filter)
   const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
 
-  const monthMovs = movements.filter(m => m.date.startsWith(month) && matchesBranch(m))
-  const monthSales = sales.filter(s =>
-    isActiveSale(s) && s.date?.startsWith(month) && matchesSaleBranch(s)
+  // Filtro temporal según el periodo elegido
+  const matchesPeriod = (dateStr) => period === 'day' ? dateStr === today : dateStr?.startsWith(month)
+
+  const periodMovs = movements.filter(m => matchesPeriod(m.date) && matchesBranch(m))
+  const periodSales = sales.filter(s =>
+    isActiveSale(s) && matchesPeriod(s.date) && matchesSaleBranch(s)
   )
 
-  const movIncome = monthMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
-  const salesIncome = monthSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
+  const movIncome = periodMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
+  const salesIncome = periodSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
   const income = movIncome + salesIncome
-  const expense = monthMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
+  const expense = periodMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
 
   const pendingByEmp = employees
     .filter(e => filter === 'all' || e.branch === filter)
@@ -114,8 +120,12 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
           background: `linear-gradient(145deg, ${T.neutral[800]} 0%, ${T.neutral[900]} 100%)`,
           color: '#fff',
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.8, color: T.copper[300], textTransform: 'uppercase' }}>
-            Balance del mes
+          {/* Header con label + toggle Mes/Día */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.8, color: T.copper[300], textTransform: 'uppercase' }}>
+              Balance {period === 'day' ? 'de hoy' : 'del mes'}
+            </div>
+            <PeriodToggle value={period} onChange={setPeriod} />
           </div>
           <div style={{ marginTop: 8, display: 'flex', alignItems: 'baseline', gap: 6 }}>
             <span style={{
@@ -294,6 +304,42 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
           </>
         )
       })()}
+    </div>
+  )
+}
+
+// Toggle compacto Mes/Día para el balance hero
+function PeriodToggle({ value, onChange }) {
+  const opts = [
+    { id: 'day', label: 'Hoy' },
+    { id: 'month', label: 'Mes' },
+  ]
+  return (
+    <div style={{
+      display: 'inline-flex', padding: 3, borderRadius: 999,
+      background: 'rgba(255,255,255,0.08)',
+      border: '1px solid rgba(255,255,255,0.1)',
+    }}>
+      {opts.map(o => {
+        const active = value === o.id
+        return (
+          <button
+            key={o.id}
+            onClick={() => onChange(o.id)}
+            style={{
+              padding: '5px 12px', borderRadius: 999, border: 'none',
+              background: active ? '#fff' : 'transparent',
+              color: active ? T.neutral[900] : 'rgba(255,255,255,0.7)',
+              fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700,
+              letterSpacing: 0.3,
+              cursor: 'pointer',
+              transition: 'background 0.15s, color 0.15s',
+            }}
+          >
+            {o.label}
+          </button>
+        )
+      })}
     </div>
   )
 }

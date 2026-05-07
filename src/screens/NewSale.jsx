@@ -70,9 +70,15 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const filtered = useMemo(() => {
     const q = normalizeName(query)
     if (!q) return catalog.slice(0, 12)
+    // Ordena por relevancia: el que empieza con la búsqueda va primero,
+    // el que solo la contiene va al final. Así "Pan" sale arriba aunque
+    // existan "Empanada", "Panela", etc.
     return catalog
-      .filter(p => normalizeName(p.name).includes(q))
+      .map(p => ({ p, score: scoreNameMatch(normalizeName(p.name), q) }))
+      .filter(x => x.score >= 0)
+      .sort((a, b) => a.score - b.score || a.p.name.localeCompare(b.p.name))
       .slice(0, 30)
+      .map(x => x.p)
   }, [catalog, query])
 
   const exactMatch = filtered.some(p => normalizeName(p.name) === normalizeName(query))
@@ -1271,13 +1277,16 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   const cashReceived = Number(cashReceivedStr) || 0
   const change = cashReceived - total
 
-  // Sugerencias de deudores existentes
+  // Sugerencias de deudores existentes (ordenadas por relevancia: prefijo > contiene)
   const debtorSuggestions = useMemo(() => {
     if (!debtorName.trim()) return []
     const q = normalizeName(debtorName)
     return debtors
-      .filter(d => normalizeName(d.name).includes(q))
+      .map(d => ({ d, score: scoreNameMatch(normalizeName(d.name), q) }))
+      .filter(x => x.score >= 0)
+      .sort((a, b) => a.score - b.score || a.d.name.localeCompare(b.d.name))
       .slice(0, 5)
+      .map(x => x.d)
   }, [debtors, debtorName])
 
   const isDigital = method === 'nequi' || method === 'daviplata'
@@ -1730,4 +1739,23 @@ function btnSecondary() {
     border: 'none', cursor: 'pointer',
     fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
   }
+}
+
+// Score de relevancia para búsqueda por nombre (menor = más relevante).
+//   0 → match exacto
+//   1 → el nombre empieza con la búsqueda  ("Pan" para "pan")
+//   2 → alguna palabra interna empieza con la búsqueda  ("Pan blanco" para "blanco")
+//   3 → solo contiene la búsqueda  ("Empanada" para "pan")
+//  -1 → no matchea (se filtra)
+//
+// Ambos parámetros deben venir ya normalizados (lowercase + sin tildes).
+function scoreNameMatch(name, query) {
+  if (!query) return 0
+  if (!name) return -1
+  if (name === query) return 0
+  if (name.startsWith(query)) return 1
+  // Palabra interna que empiece con query (separadores: espacio, guión, slash)
+  if (name.split(/[\s\-/]+/).some(w => w.startsWith(query))) return 2
+  if (name.includes(query)) return 3
+  return -1
 }

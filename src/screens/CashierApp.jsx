@@ -8,6 +8,7 @@ import { watchMyOpenSession } from '../cashSessions'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
+import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
 import { enqueuePhoto, makePhotoLocalId } from '../utils/photoQueue'
 import NewSale from './NewSale'
@@ -544,6 +545,7 @@ function ActiveSession({ session, userDoc, authUser }) {
   const [sessionExpenses, setSessionExpenses] = useState([])
   const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
+  const [myTasks, setMyTasks] = useState([])
   const branches = getData().branches || []
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
@@ -570,9 +572,26 @@ function ActiveSession({ session, userDoc, authUser }) {
     return unsub
   }, [authUser.uid])
 
+  useEffect(() => {
+    const unsub = watchTasksForCashier(authUser.uid, setMyTasks)
+    return unsub
+  }, [authUser.uid])
+
   // Mostrar últimas 15 ventas (D21: sin totales agregados)
   const recentSales = sessionSales.slice(0, 15)
   const pendingDeductions = myDeductions.filter(d => d.status === 'pending')
+
+  // Tareas relevantes para este turno:
+  //   - Pendientes que aplican a esta panadería (o sin panadería específica)
+  //   - Hechas que se completaron EN este turno (para verlas tachadas)
+  const turnTasks = useMemo(() => {
+    const branchOk = (t) => !t.branchId || String(t.branchId) === String(session.branchId)
+    return myTasks.filter(t => {
+      if (t.status === 'pending') return branchOk(t)
+      if (t.status === 'done' && t.completedInSessionId === session.id) return true
+      return false
+    })
+  }, [myTasks, session.id, session.branchId])
   const branch = branches.find(b => b.id === session.branchId) || { name: session.branchName, colorKey: 'copper' }
   const colorKey = branch.colorKey || 'copper'
   const palette = T[colorKey] || T.copper
@@ -707,6 +726,11 @@ function ActiveSession({ session, userDoc, authUser }) {
           </div>
         </div>
       </Card>
+
+      {/* Tareas del turno */}
+      {turnTasks.length > 0 && (
+        <CashierTaskList tasks={turnTasks} sessionId={session.id} />
+      )}
 
       {/* Últimas ventas (sin montos — D21) */}
       {recentSales.length > 0 && (
@@ -1652,4 +1676,213 @@ function btnSecondary() {
     border: 'none', cursor: 'pointer',
     fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Card "Tareas del turno" (vista cajera)
+// Lista compacta con checkbox tipo radio. Tap → chulea (con micro-animación).
+// Re-tap → des-chulea (mientras el turno siga abierto).
+// ──────────────────────────────────────────────────────────────
+function CashierTaskList({ tasks, sessionId }) {
+  // Las pendientes arriba, las completadas (en este turno) abajo tachadas
+  const sorted = useMemo(() => {
+    const pending = tasks.filter(t => t.status === 'pending')
+    const done = tasks.filter(t => t.status === 'done')
+    return [...pending, ...done]
+  }, [tasks])
+
+  const pendingCount = tasks.filter(t => t.status === 'pending').length
+  const doneCount = tasks.filter(t => t.status === 'done').length
+  const allDone = pendingCount === 0 && doneCount > 0
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        margin: '0 4px 8px', gap: 8,
+      }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          letterSpacing: 0.5, textTransform: 'uppercase',
+        }}>
+          Tus tareas
+        </div>
+        <div style={{
+          fontSize: 11, fontWeight: 700,
+          color: allDone ? T.ok : T.copper[700],
+        }}>
+          {allDone
+            ? '✓ Todas hechas'
+            : `${doneCount}/${pendingCount + doneCount} hechas`}
+        </div>
+      </div>
+
+      <Card padding={0} style={{
+        overflow: 'hidden',
+        background: allDone ? '#F5FBF5' : '#fff',
+        border: allDone ? `1px solid ${T.ok}40` : `1px solid ${T.neutral[100]}`,
+        transition: 'background 0.3s, border-color 0.3s',
+      }}>
+        {sorted.map((task, i) => (
+          <CashierTaskRow
+            key={task.id}
+            task={task}
+            sessionId={sessionId}
+            isLast={i === sorted.length - 1}
+          />
+        ))}
+      </Card>
+
+      <style>{`
+        @keyframes taskTickPop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          60%  { transform: scale(1.15); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes taskRowSlide {
+          from { background: #FFF8E0; }
+          to   { background: transparent; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function CashierTaskRow({ task, sessionId, isLast }) {
+  const [busy, setBusy] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const isDone = task.status === 'done'
+
+  async function handleToggle() {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (isDone) {
+        await unmarkTaskDone(task.id)
+      } else {
+        await markTaskDone(task.id, { sessionId })
+      }
+    } catch (err) {
+      console.error('[tasks] toggle failed:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Días restantes/vencido (solo si pending)
+  const dueInfo = useMemo(() => {
+    if (!task.dueDate || isDone) return null
+    const today = new Date().toISOString().slice(0, 10)
+    const diff = Math.ceil((new Date(task.dueDate + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000)
+    if (diff < 0) return { text: `Vencida hace ${-diff}d`, color: T.bad }
+    if (diff === 0) return { text: 'Hoy', color: T.warn }
+    if (diff === 1) return { text: 'Mañana', color: T.warn }
+    return null
+  }, [task.dueDate, isDone])
+
+  return (
+    <div
+      style={{
+        padding: '14px 14px 14px 12px',
+        borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+        background: isDone ? 'transparent' : '#fff',
+        transition: 'opacity 0.25s',
+        opacity: isDone ? 0.6 : 1,
+        cursor: task.description ? 'pointer' : 'default',
+      }}
+    >
+      {/* Checkbox */}
+      <button
+        onClick={(e) => { e.stopPropagation(); handleToggle() }}
+        disabled={busy}
+        aria-label={isDone ? 'Desmarcar tarea' : 'Marcar tarea como hecha'}
+        style={{
+          flexShrink: 0,
+          width: 26, height: 26, borderRadius: 8,
+          background: isDone ? T.ok : '#fff',
+          border: `2px solid ${isDone ? T.ok : T.neutral[300]}`,
+          cursor: busy ? 'wait' : 'pointer',
+          padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'background 0.18s, border-color 0.18s, transform 0.12s',
+          marginTop: 1,
+        }}
+        onMouseDown={e => { if (!busy) e.currentTarget.style.transform = 'scale(0.92)' }}
+        onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
+      >
+        {isDone && (
+          <svg
+            width="14" height="14" viewBox="0 0 14 14" fill="none"
+            style={{ animation: 'taskTickPop 0.32s cubic-bezier(0.2,0.9,0.3,1.4)' }}
+          >
+            <path d="M2.5 7.5 L5.5 10 L11 4" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        )}
+      </button>
+
+      {/* Contenido */}
+      <div
+        onClick={() => task.description && setExpanded(v => !v)}
+        style={{ flex: 1, minWidth: 0 }}
+      >
+        <div style={{
+          fontSize: 14.5, fontWeight: 700,
+          color: isDone ? T.neutral[500] : T.neutral[900],
+          textDecoration: isDone ? 'line-through' : 'none',
+          letterSpacing: -0.2,
+          lineHeight: 1.35,
+          transition: 'color 0.18s',
+        }}>
+          {task.title}
+        </div>
+
+        {/* Descripción colapsable */}
+        {task.description && (
+          <div style={{
+            fontSize: 12.5, color: T.neutral[600], marginTop: 4,
+            lineHeight: 1.45,
+            display: expanded ? 'block' : '-webkit-box',
+            WebkitLineClamp: expanded ? 'unset' : 1,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+            whiteSpace: 'pre-wrap',
+          }}>
+            {task.description}
+          </div>
+        )}
+
+        {/* Meta */}
+        {(dueInfo || task.branchName || task.createdByName) && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8, marginTop: 6,
+            flexWrap: 'wrap',
+          }}>
+            {dueInfo && (
+              <span style={{
+                fontSize: 11, fontWeight: 700, color: dueInfo.color,
+                background: `${dueInfo.color}15`,
+                padding: '2px 8px', borderRadius: 999,
+              }}>
+                ⏰ {dueInfo.text}
+              </span>
+            )}
+            {task.branchName && (
+              <span style={{
+                fontSize: 11, fontWeight: 600, color: T.neutral[500],
+              }}>
+                {task.branchName}
+              </span>
+            )}
+            {task.createdByName && !isDone && (
+              <span style={{ fontSize: 11, color: T.neutral[400] }}>
+                · {task.createdByName}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

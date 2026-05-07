@@ -22,6 +22,7 @@ import Registro from './screens/Registro'
 import Products from './screens/Products'
 import Pendientes from './screens/Pendientes'
 import Deudores from './screens/Deudores'
+import Tasks from './screens/Tasks'
 import Login from './screens/Login'
 import {
   RegistrationForm,
@@ -165,6 +166,9 @@ function AppShell() {
     } else if (target === 'deudores') {
       setMoreSub('deudores')
       setTab('more')
+    } else if (target === 'tasks') {
+      setMoreSub('tasks')
+      setTab('more')
     } else {
       setTab(target)
     }
@@ -176,7 +180,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'tasks'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -300,6 +304,12 @@ function AppShell() {
     } else if (moreSub === 'deudores') {
       content = (
         <Deudores
+          onBack={() => setMoreSub(null)}
+        />
+      )
+    } else if (moreSub === 'tasks') {
+      content = (
+        <Tasks
           onBack={() => setMoreSub(null)}
         />
       )

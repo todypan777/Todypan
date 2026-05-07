@@ -436,6 +436,53 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
+### ✅ Fase 11 — Sistema de tareas asignadas a cajeras
+**Objetivo:** Admin asigna tareas a una cajera; ella las chulea durante su turno; el cierre antiguo deja constancia de hechas y pendientes.
+
+**Modelo:** colección nueva `tasks/{id}` con `assignedToUid`, `title`, `description?`, `branchId?`, `dueDate?`, `status: pending|done|cancelled`, `completedInSessionId?`, `completedNote?`, etc.
+
+**Admin:**
+- [x] Pestaña **Tareas** en sidebar (desktop) y en Más (mobile) — icono cuadrado con check
+- [x] 3 tabs: Activas · Hechas · Canceladas (píldoras segmentadas con count)
+- [x] Botón "Nueva tarea" cobre arriba de la lista
+- [x] Modal de creación: título (req), descripción opcional, asignar a (chips de cajeras activas con avatar), panadería opcional (chips), fecha límite opcional
+- [x] Modal de detalle: estado pill, info compacta (asignada/panadería/creada/completada), notas, acciones (editar/cancelar/reactivar)
+- [x] Estados vacíos por tab con CTA cuando aplica
+
+**Cajera:**
+- [x] Card "Tus tareas" en home del turno (entre estado activo y últimas ventas)
+- [x] Lista con checkbox cuadrado, animación pop al chulear (`taskTickPop`), tachado + opacidad reducida cuando hecha
+- [x] Tap en checkbox → `markTaskDone` con `sessionId` del turno actual
+- [x] Re-tap → `unmarkTaskDone` (mientras turno siga abierto)
+- [x] Descripción colapsable (1 línea con line-clamp + tap para expandir)
+- [x] Badges de fecha: ⏰ Hoy / Mañana / Vencida con color
+- [x] Card cambia a fondo verde sutil cuando todas están hechas (✓ Todas hechas)
+
+**Cierre antiguo (admin):**
+- [x] Sección "Tareas del turno · X/N completadas" en `ClosureDetailModal` ([Registro.jsx](src/screens/Registro.jsx))
+- [x] Lista de tareas hechas (con hora y nota si tiene) y pendientes que aplicaban a ese turno
+- [x] Filtro: solo tareas pendientes creadas antes del cierre y que apliquen a la panadería
+
+**Decisiones cerradas:**
+- D26: Una tarea, una cajera. Sin "asignar a varias" — si quieres a 3, se crean 3.
+- D27: Las tareas no entran al banner global de Pendientes; tienen su propia pestaña con su contador.
+- D28: La cajera puede des-chulear mientras el turno siga abierto. Después del cierre, queda fija.
+- D29: Sin foto de evidencia por ahora. Si se necesita, se agrega después.
+
+**Pendiente de configuración manual:**
+- [ ] Actualizar reglas Firestore: cajera puede `update` en `tasks/{id}` solo si `request.auth.uid == resource.data.assignedToUid` y solo cambia status/completedAt/completedAtClient/completedInSessionId/completedNote. Admin lee/escribe todo.
+
+**Archivos creados/modificados:**
+- `src/tasks.js` (nuevo)
+- `src/screens/Tasks.jsx` (nuevo)
+- `src/App.jsx` (router)
+- `src/screens/More.jsx` (entrada mobile)
+- `src/components/Nav.jsx` (entrada sidebar)
+- `src/screens/CashierApp.jsx` (card "Tus tareas")
+- `src/screens/Registro.jsx` (sección en cierre antiguo)
+
+---
+
 ### 🔒 Fase 10 — Reglas Firestore con roles
 **Objetivo:** Endurecer seguridad. Lo dejamos último para no romper nada en desarrollo.
 
@@ -489,4 +536,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-06 — **Fases 1-9 + 9.5 completas + D25 (admin abre/cierra todos los turnos).** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D25 cerradas (D3, D17 obsoletas por D25).
+**Última actualización:** 2026-05-07 — **Fases 1-9 + 9.5 + 11 (Tareas) completas + D25-D29.** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D29 cerradas (D3, D17 obsoletas por D25).

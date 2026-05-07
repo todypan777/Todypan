@@ -32,6 +32,15 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'tasks', label: 'Tareas', desc: 'Asigna pendientes a tus cajeras',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <rect x="3" y="3" width="14" height="14" rx="3" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <path d="M6.5 10 L9 12.5 L13.5 7.5" stroke={T.copper[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'reports', label: 'Reportes', desc: 'Análisis del mes',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={T.copper[600]} strokeWidth="2" strokeLinecap="round"/><path d="M3 18 H17" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/></svg>

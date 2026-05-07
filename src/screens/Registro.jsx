@@ -7,6 +7,7 @@ import { getBogotaDateStr, isDayConfirmed, calcHourRate, getCashFloor } from '..
 import { watchClosedSessionsForDate } from '../cashSessions'
 import { watchSessionSales } from '../sales'
 import { watchSessionExpenses } from '../cashExpenses'
+import { watchTasksCompletedInSession, watchTasksForCashier } from '../tasks'
 
 // Registro es solo VISUALIZACIÓN + acceso al formulario de confirmación.
 // No permite edición inline — toda edición pasa por DailyConfirmation o DayEditModal.
@@ -470,9 +471,29 @@ function ClosureCard({ session }) {
 function ClosureDetailModal({ session, onClose }) {
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
+  const [completedTasks, setCompletedTasks] = useState([])
+  const [pendingTasksForCashier, setPendingTasksForCashier] = useState([])
 
   useEffect(() => watchSessionSales(session.id, setSales), [session.id])
   useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
+  useEffect(() => watchTasksCompletedInSession(session.id, setCompletedTasks), [session.id])
+  useEffect(() => {
+    if (!session.cashierUid) { setPendingTasksForCashier([]); return undefined }
+    return watchTasksForCashier(session.cashierUid, setPendingTasksForCashier)
+  }, [session.cashierUid])
+
+  // Tareas que quedaron sin hacer al cerrar el turno: pendientes asignadas
+  // a esta cajera, que aplicaban a esta panadería (o sin filtro de panadería)
+  // y que se crearon ANTES del cierre.
+  const closedAtMs = session.closedAt?.toMillis?.() ?? Number.MAX_SAFE_INTEGER
+  const unfinishedTasks = useMemo(() => {
+    return pendingTasksForCashier.filter(t => {
+      if (t.status !== 'pending') return false
+      const branchOk = !t.branchId || String(t.branchId) === String(session.branchId)
+      const createdMs = t.createdAt?.toMillis?.() ?? t.createdAtClient ?? 0
+      return branchOk && createdMs <= closedAtMs
+    })
+  }, [pendingTasksForCashier, session.branchId, closedAtMs])
 
   // Si la sesión tiene snapshot persistido, lo usamos. Si no, calculamos en vivo.
   const liveBreakdown = useMemo(() => {
@@ -625,6 +646,14 @@ function ClosureDetailModal({ session, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
               {expenses.map(e => <ExpenseDetailRow key={e.id} expense={e} />)}
             </div>
+          )}
+
+          {/* Tareas del turno */}
+          {(completedTasks.length > 0 || unfinishedTasks.length > 0) && (
+            <ClosureTasksSection
+              completedTasks={completedTasks}
+              unfinishedTasks={unfinishedTasks}
+            />
           )}
 
           {/* Acción al cerrar */}
@@ -894,4 +923,78 @@ function actionBtn(bg, color, border) {
     background: bg, color,
     fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Sección de tareas dentro del cierre antiguo
+// ──────────────────────────────────────────────────────────────
+function ClosureTasksSection({ completedTasks, unfinishedTasks }) {
+  const total = completedTasks.length + unfinishedTasks.length
+  return (
+    <>
+      <DetailSectionLabel>
+        Tareas del turno · {completedTasks.length}/{total} completadas
+      </DetailSectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+        {completedTasks.map(t => (
+          <ClosureTaskRow key={t.id} task={t} done />
+        ))}
+        {unfinishedTasks.map(t => (
+          <ClosureTaskRow key={t.id} task={t} done={false} />
+        ))}
+      </div>
+    </>
+  )
+}
+
+function ClosureTaskRow({ task, done }) {
+  const completedAt = task.completedAt?.toDate?.()
+  const completedTime = completedAt
+    ? completedAt.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+    : null
+
+  const tone = done
+    ? { bg: '#E8F4E8', border: '#C2DDC1', icon: '✓', iconColor: T.ok, label: 'Hecha', labelColor: T.ok }
+    : { bg: '#FFF7E6', border: '#F4E0BC', icon: '⏳', iconColor: T.warn, label: 'Pendiente', labelColor: T.warn }
+
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 10,
+      background: tone.bg, border: `1px solid ${tone.border}`,
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+    }}>
+      <div style={{
+        width: 22, height: 22, borderRadius: 999, flexShrink: 0,
+        background: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 12, fontWeight: 800, color: tone.iconColor,
+      }}>
+        {tone.icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          textDecoration: done ? 'line-through' : 'none',
+          opacity: done ? 0.7 : 1,
+          lineHeight: 1.35,
+        }}>
+          {task.title}
+        </div>
+        {(completedTime || task.completedNote) && (
+          <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 3, lineHeight: 1.4 }}>
+            {completedTime && <>Hecha a las {completedTime}</>}
+            {task.completedNote && <> · "{task.completedNote}"</>}
+          </div>
+        )}
+      </div>
+      <span style={{
+        padding: '3px 8px', borderRadius: 999,
+        background: tone.labelColor, color: '#fff',
+        fontSize: 10, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        {tone.label}
+      </span>
+    </div>
+  )
 }

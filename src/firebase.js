@@ -2,7 +2,6 @@ import { initializeApp } from 'firebase/app'
 import {
   initializeFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
   getFirestore,
 } from 'firebase/firestore'
 import {
@@ -10,7 +9,6 @@ import {
   GoogleAuthProvider,
   setPersistence,
   browserLocalPersistence,
-  indexedDBLocalPersistence,
 } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -24,19 +22,14 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig)
 
-// Persistencia offline: las lecturas siguen funcionando desde IndexedDB y las
-// escrituras se encolan automaticamente y se reproducen al volver la red.
-// persistentMultipleTabManager evita conflictos si la PWA esta abierta en
-// varias pestañas (celular + desktop a la vez).
-//
-// Si IndexedDB no esta disponible (modo incognito Safari, navegador raro),
-// caemos a getFirestore() en memoria — la app sigue funcionando online.
+// Persistencia offline para Firestore. Antes usábamos persistentMultipleTabManager
+// pero dejaba locks colgados cuando la cajera cerraba la PWA abruptamente, lo que
+// trababa la siguiente apertura por minutos. Sin él, una pestaña a la vez (caso
+// real de las cajeras), zero locks.
 let _firestoreDb
 try {
   _firestoreDb = initializeFirestore(firebaseApp, {
-    localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
-    }),
+    localCache: persistentLocalCache(),
   })
 } catch (e) {
   console.warn('[firebase] persistentLocalCache no disponible, usando memoria:', e?.message)
@@ -48,11 +41,12 @@ export const firebaseAuth = getAuth(firebaseApp)
 export const googleProvider = new GoogleAuthProvider()
 googleProvider.setCustomParameters({ prompt: 'select_account' })
 
-// Persistencia explícita: en PWA standalone (Android Chrome / iOS Safari) el
-// flujo de signInWithRedirect a veces deja la sesión en una pestaña distinta
-// del navegador. Con persistencia en IndexedDB (con fallback a localStorage),
-// cuando el usuario vuelve a abrir la PWA, Firebase encuentra la sesión y
-// onAuthStateChanged dispara automáticamente.
-setPersistence(firebaseAuth, indexedDBLocalPersistence)
-  .catch(() => setPersistence(firebaseAuth, browserLocalPersistence))
+// Persistencia de Auth en localStorage (browserLocalPersistence) en lugar de
+// IndexedDB. Razones:
+// - iOS Safari PWA borra IndexedDB tras 7 días sin uso → la cajera abre la app
+//   un lunes y aparece deslogueada sin haber cerrado sesión. localStorage no
+//   sufre esa purga.
+// - Android Chrome purga IndexedDB antes que localStorage bajo presión de storage.
+// - Es lo que usan Horión y (vía default) Mercado Negro, que NO tienen este bug.
+setPersistence(firebaseAuth, browserLocalPersistence)
   .catch(err => console.warn('[firebase] No se pudo setear persistencia:', err?.message))

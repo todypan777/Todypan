@@ -30,11 +30,24 @@ export function AuthProvider({ children }) {
       }
     })
 
+    // Safety-net: si Firebase Auth no resuelve el estado en 5s (lock de
+    // IndexedDB colgado, SW interceptando /__/auth/, redirect roto, lo que
+    // sea), liberamos el splash para que la cajera al menos vea el Login
+    // y pueda reintentar. Sin esto la pantalla "Verificando sesión..." se
+    // queda eterna y la cajera no puede hacer nada.
+    const safetyNet = setTimeout(() => {
+      setAuthLoading(prev => {
+        if (prev) console.warn('[Auth] safety-net: liberando loading tras 5s')
+        return false
+      })
+      setDocLoading(false)
+    }, 5000)
+
     // PWA standalone: cuando el usuario regresa a la app después de un
     // redirect (Android Chrome a menudo abre el OAuth en una Custom Tab y
     // la PWA queda "atrás"), re-consumir el redirect y forzar a Firebase
     // a re-leer su estado persistido. Sin esto, la PWA puede quedarse en
-    // pantalla de login aunque la sesión ya esté guardada en IndexedDB.
+    // pantalla de login aunque la sesión ya esté guardada.
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         consumeRedirectResult().catch(() => {})
@@ -44,6 +57,7 @@ export function AuthProvider({ children }) {
     window.addEventListener('focus', handleVisibility)
 
     return () => {
+      clearTimeout(safetyNet)
       unsub()
       document.removeEventListener('visibilitychange', handleVisibility)
       window.removeEventListener('focus', handleVisibility)

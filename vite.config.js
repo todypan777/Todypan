@@ -32,11 +32,13 @@ export default defineConfig({
         // El handler de Firebase Auth (/__/auth/*) NO debe ser interceptado
         // por el SW: rompería el flujo de login con Google en PWA.
         navigateFallbackDenylist: [/^\/__\/auth\//],
-        // Activar la nueva versión del SW de inmediato (sin esperar a que se
-        // cierren todas las pestañas). Crítico para que un fix llegue a los
-        // celulares ya cacheados.
-        skipWaiting: true,
-        clientsClaim: true,
+        // skipWaiting + clientsClaim removidos a propósito: cuando estaban
+        // activos, cada deploy a Vercel mientras una cajera vendía hacía que
+        // el SW nuevo tomara control inmediato y rompiera el refresh de token
+        // de Firebase Auth → la cajera quedaba deslogueada en medio de la venta.
+        // Ahora el SW nuevo se instala en background pero solo toma control en
+        // el siguiente arranque limpio de la app (cerrar y volver a abrir),
+        // sin interrumpir la sesión activa.
         cleanupOutdatedCaches: true,
       },
     }),

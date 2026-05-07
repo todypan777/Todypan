@@ -23,18 +23,21 @@ function describeAuthError(code) {
   }
 }
 
-// Detecta si la app está corriendo como PWA standalone (instalada) — en ese
-// caso el flujo OAuth abre el navegador externo y le explicamos al usuario.
-function isStandalonePWA() {
+// Solo iOS PWA usa redirect (WebKit bloquea popup). En ese caso Google sale
+// fuera de la PWA y a veces queda colgado, así que mostramos un aviso.
+// Android PWA usa popup directo (no necesita aviso).
+function isIOSPWA() {
   if (typeof window === 'undefined') return false
-  return window.matchMedia?.('(display-mode: standalone)').matches
+  const isStandalone = window.matchMedia?.('(display-mode: standalone)').matches
     || window.navigator.standalone === true
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent || '') && !window.MSStream
+  return isStandalone && isIOS
 }
 
 export default function Login({ unauthorizedEmail = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [isPWA] = useState(isStandalonePWA())
+  const [isPWA] = useState(isIOSPWA())
 
   // Al montar: si volvimos de un redirect con error, mostrarlo
   useEffect(() => {

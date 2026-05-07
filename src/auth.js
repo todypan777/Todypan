@@ -9,30 +9,58 @@ import { firebaseAuth, googleProvider } from './firebase'
 
 export const ADMIN_EMAIL = 'todypan777@gmail.com'
 
-// Solo usamos redirect cuando la app está instalada como PWA standalone:
-// ahí no se puede abrir un popup. En navegador normal (incluido mobile web),
-// signInWithPopup funciona perfectamente.
 const isStandalonePWA = () => {
   if (typeof window === 'undefined') return false
   return window.matchMedia?.('(display-mode: standalone)').matches
     || window.navigator.standalone === true
 }
 
+const isIOS = () => {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  return /iPad|iPhone|iPod/.test(ua) && !window.MSStream
+}
+
 const REDIRECT_ERROR_KEY = 'todypan_auth_redirect_error'
 
+// Errores de popup que justifican caer al redirect (popup bloqueado, no soportado,
+// o cerrado por el navegador). NO cae a redirect si el usuario simplemente cerró
+// el popup adrede — ahí solo devuelve null y el botón vuelve a estar disponible.
+const POPUP_FALLBACK_CODES = new Set([
+  'auth/popup-blocked',
+  'auth/operation-not-supported-in-this-environment',
+  'auth/internal-error',
+])
+
 export async function signInWithGoogle() {
-  // PWA instalada: redirect es la única opción
-  if (isStandalonePWA()) {
-    try {
-      sessionStorage.removeItem(REDIRECT_ERROR_KEY)
-    } catch {}
+  try {
+    sessionStorage.removeItem(REDIRECT_ERROR_KEY)
+  } catch {}
+
+  // iOS PWA standalone: el popup está bloqueado por WebKit, redirect directo.
+  // En el resto de casos (Android Chrome PWA incluido) intentamos popup primero
+  // porque evita el bug de storage partitioning donde el redirect aterriza en
+  // el navegador y no en la PWA, dejando a la cajera en bucle de login.
+  if (isStandalonePWA() && isIOS()) {
     await signInWithRedirect(firebaseAuth, googleProvider)
-    return null // el resultado llega tras la redirección
+    return null
   }
 
-  // Navegador (mobile o desktop): popup
-  const result = await signInWithPopup(firebaseAuth, googleProvider)
-  return result.user
+  try {
+    const result = await signInWithPopup(firebaseAuth, googleProvider)
+    return result.user
+  } catch (err) {
+    // Cancelación voluntaria: no es error, no caemos a redirect.
+    if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+      throw err
+    }
+    // Popup imposible en este entorno: caemos a redirect.
+    if (POPUP_FALLBACK_CODES.has(err?.code)) {
+      await signInWithRedirect(firebaseAuth, googleProvider)
+      return null
+    }
+    throw err
+  }
 }
 
 /**

@@ -72,9 +72,42 @@ export function AuthProvider({ children }) {
   const [docLoading, setDocLoading] = useState(!!initialUser && !initialDoc)
   const bootstrappedFor = useRef(null)
 
+  // Si ya tenemos initialUser síncrono, persistir su uid en el caché de
+  // inmediato. Esto cubre el caso donde Firebase ya cargó la sesión antes
+  // del primer render — sin esto, la próxima recarga sin internet no podría
+  // distinguir "tenía sesión" de "nunca tuvo sesión".
+  if (initialUser) writeAuthUidCache(initialUser.uid)
+
   // 1. Auth listener (Firebase Auth)
   useEffect(() => {
     consumeRedirectResult()
+
+    // authStateReady() garantiza que Firebase haya terminado de leer su
+    // almacenamiento persistente (localStorage). Es más robusto que
+    // depender del primer onAuthStateChanged, que en algunos celulares
+    // Android lentos puede tardar varios segundos en disparar al inicio.
+    // Si después de authStateReady currentUser es null Y estamos offline
+    // Y teníamos sesión cacheada → Firebase no logró validar y debemos
+    // esperar reconexión, NO tirar la sesión.
+    if (firebaseAuth.authStateReady) {
+      firebaseAuth.authStateReady().then(() => {
+        const u = firebaseAuth.currentUser
+        if (u) {
+          setAuthUser(u)
+          writeAuthUidCache(u.uid)
+          setAuthLoading(false)
+        } else if (!navigator.onLine && readAuthUidCache()) {
+          // Sesión cacheada pero Firebase no terminó de validar offline.
+          // Liberamos el splash para que App.jsx muestre la pantalla de
+          // "Sin conexión - reconectando..." en lugar de "Verificando sesión...".
+          setAuthLoading(false)
+        } else {
+          // Online sin user, o nunca hubo sesión: continuamos al Login.
+          setAuthLoading(false)
+        }
+      }).catch(() => {})
+    }
+
     const unsub = onAuthChange(u => {
       // Cuando llega null pero estamos offline Y teníamos sesión cacheada,
       // lo más probable es que sea un fluke transitorio mientras Firebase

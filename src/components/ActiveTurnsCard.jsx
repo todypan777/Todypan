@@ -344,7 +344,9 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-  const [showSales, setShowSales] = useState(false) // sub-modal con detalle de ventas
+  // Sub-modal con detalle de ventas. Si methodFilter está seteado, solo muestra
+  // ventas de ese método (efectivo / nequi / daviplata / deuda). null = todas.
+  const [salesView, setSalesView] = useState(null) // null | { methodFilter: string|null }
 
   // Cálculos en vivo
   const activeSales = useMemo(
@@ -508,16 +510,41 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
         {openingFloat > 0 && <Row label="Apertura (recibido)" value={fmtCOP(openingFloat)} muted />}
         <Row label={`Ventas (${activeSales.length})`} value={fmtCOP(totalSales)} muted />
         <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 6, paddingTop: 6 }}>
-          <Row label="Efectivo a caja" value={fmtCOP(salesByMethod.efectivo || 0)} bold />
-          <Row label="Nequi" value={fmtCOP(salesByMethod.nequi || 0)} muted />
-          <Row label="Daviplata" value={fmtCOP(salesByMethod.daviplata || 0)} muted />
+          <ClickableMethodRow
+            label="Efectivo a caja"
+            method="efectivo"
+            sales={activeSales}
+            amount={salesByMethod.efectivo || 0}
+            onOpen={(m) => setSalesView({ methodFilter: m })}
+            bold
+          />
+          <ClickableMethodRow
+            label="Nequi"
+            method="nequi"
+            sales={activeSales}
+            amount={salesByMethod.nequi || 0}
+            onOpen={(m) => setSalesView({ methodFilter: m })}
+          />
+          <ClickableMethodRow
+            label="Daviplata"
+            method="daviplata"
+            sales={activeSales}
+            amount={salesByMethod.daviplata || 0}
+            onOpen={(m) => setSalesView({ methodFilter: m })}
+          />
           {salesByMethod.deuda > 0 && (
-            <Row label="Deuda (a cobrar después)" value={fmtCOP(salesByMethod.deuda)} muted />
+            <ClickableMethodRow
+              label="Deuda (a cobrar después)"
+              method="deuda"
+              sales={activeSales}
+              amount={salesByMethod.deuda}
+              onOpen={(m) => setSalesView({ methodFilter: m })}
+            />
           )}
         </div>
         {activeSales.length > 0 && (
           <button
-            onClick={() => setShowSales(true)}
+            onClick={() => setSalesView({ methodFilter: null })}
             style={{
               width: '100%', marginTop: 10, padding: '10px 12px', borderRadius: 10,
               background: '#fff', color: T.copper[700],
@@ -530,17 +557,18 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M2 4 H12 M2 7 H12 M2 10 H8" stroke={T.copper[600]} strokeWidth="1.6" strokeLinecap="round"/>
             </svg>
-            Ver detalle de ventas ({activeSales.length})
+            Ver todas las ventas ({activeSales.length})
           </button>
         )}
       </div>
 
-      {/* Sub-modal: lista detallada de ventas */}
-      {showSales && (
+      {/* Sub-modal: lista detallada de ventas (todas o filtradas por método) */}
+      {salesView && (
         <SalesListModal
           sales={activeSales}
           totalSales={totalSales}
-          onClose={() => setShowSales(false)}
+          methodFilter={salesView.methodFilter}
+          onClose={() => setSalesView(null)}
         />
       )}
 
@@ -1129,12 +1157,84 @@ function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled })
 }
 
 // ──────────────────────────────────────────────────────────────
-// Sub-modal: lista detallada de ventas del turno
+// Fila de método clickeable. Si hay ventas en ese método, abre el sub-modal
+// filtrado para mostrar quién pagó/debe.
 // ──────────────────────────────────────────────────────────────
-function SalesListModal({ sales, totalSales, onClose }) {
+function ClickableMethodRow({ label, method, sales, amount, onOpen, bold }) {
+  const matching = sales.filter(s => (s.paymentMethod || 'efectivo') === method)
+  const count = matching.length
+  const hasContent = count > 0
+  const muted = !bold
+
+  // Por defecto el botón se ve como una Row normal; si tiene ventas, se hace
+  // clickeable con caret a la derecha.
+  return (
+    <button
+      type="button"
+      onClick={hasContent ? () => onOpen(method) : undefined}
+      disabled={!hasContent}
+      style={{
+        width: '100%',
+        background: 'transparent', border: 'none', padding: '4px 0',
+        fontFamily: 'inherit', textAlign: 'left',
+        cursor: hasContent ? 'pointer' : 'default',
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        fontSize: 13,
+        fontWeight: bold ? 700 : 500,
+        color: muted ? T.neutral[600] : T.neutral[900],
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        {label}
+        {hasContent && (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: T.copper[700], background: T.copper[50],
+            padding: '1px 7px', borderRadius: 999, letterSpacing: 0.3,
+          }}>
+            {count} ›
+          </span>
+        )}
+      </span>
+      <span style={{
+        color: muted ? T.neutral[600] : T.neutral[900],
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {fmtCOP(amount)}
+      </span>
+    </button>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Sub-modal: lista detallada de ventas del turno
+// methodFilter (opcional): si se pasa, solo muestra ventas de ese método.
+// ──────────────────────────────────────────────────────────────
+function SalesListModal({ sales, totalSales, methodFilter, onClose }) {
   // Ordenar más recientes primero (las que vienen de watchSessionSales ya
   // vienen ordenadas, pero por seguridad)
-  const sorted = [...sales]
+  const filtered = methodFilter
+    ? sales.filter(s => (s.paymentMethod || 'efectivo') === methodFilter)
+    : [...sales]
+
+  // Para deuda mostramos el grupo por deudor (suma por persona) además de la
+  // lista de ventas — es más útil para "ver quiénes deben".
+  const debtorSummary = methodFilter === 'deuda'
+    ? Object.values(filtered.reduce((acc, s) => {
+        const key = (s.debtorName || 'Sin nombre').trim() || 'Sin nombre'
+        if (!acc[key]) acc[key] = { name: key, total: 0, count: 0 }
+        acc[key].total += Number(s.total) || 0
+        acc[key].count += 1
+        return acc
+      }, {})).sort((a, b) => b.total - a.total)
+    : null
+
+  const filteredTotal = filtered.reduce((acc, s) => acc + (Number(s.total) || 0), 0)
+  const headerLabel = {
+    efectivo: { title: 'Ventas en efectivo', icon: '💵' },
+    nequi: { title: 'Ventas por Nequi', icon: '📱' },
+    daviplata: { title: 'Ventas por Daviplata', icon: '📲' },
+    deuda: { title: 'Deudores del turno', icon: '📋' },
+  }[methodFilter] || { title: 'Ventas del turno', icon: '🧾' }
 
   return (
     <div onClick={onClose} style={{
@@ -1160,10 +1260,10 @@ function SalesListModal({ sales, totalSales, onClose }) {
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.neutral[900] }}>
-              Ventas del turno
+              <span style={{ marginRight: 6 }}>{headerLabel.icon}</span>{headerLabel.title}
             </div>
             <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
-              {sorted.length} {sorted.length === 1 ? 'venta' : 'ventas'} · Total {fmtCOP(totalSales)}
+              {filtered.length} {filtered.length === 1 ? 'venta' : 'ventas'} · Total {fmtCOP(methodFilter ? filteredTotal : totalSales)}
             </div>
           </div>
           <button onClick={onClose} style={{
@@ -1175,11 +1275,57 @@ function SalesListModal({ sales, totalSales, onClose }) {
           }}>×</button>
         </div>
 
+        {/* Si es vista de deuda, mostrar resumen por deudor arriba */}
+        {debtorSummary && debtorSummary.length > 0 && (
+          <div style={{
+            padding: '12px 20px',
+            background: '#FFF7E6', borderBottom: `1px solid #F4E0BC`,
+          }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: T.warn,
+              textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+            }}>
+              Quiénes deben ({debtorSummary.length})
+            </div>
+            {debtorSummary.map((d, i) => (
+              <div key={d.name} style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '4px 0',
+                borderBottom: i < debtorSummary.length - 1 ? `0.5px solid #F4E0BC` : 'none',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[900] }}>
+                    {d.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: T.neutral[600] }}>
+                    {d.count} {d.count === 1 ? 'venta' : 'ventas'}
+                  </div>
+                </div>
+                <div style={{
+                  fontSize: 14, fontWeight: 800, color: T.bad,
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {fmtCOP(d.total)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Lista scrollable */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-          {sorted.map((s, i) => (
-            <SaleDetailRow key={s.id} sale={s} isLast={i === sorted.length - 1} />
-          ))}
+          {filtered.length === 0 ? (
+            <div style={{
+              padding: '32px 20px', textAlign: 'center',
+              fontSize: 13, color: T.neutral[500],
+            }}>
+              Sin ventas en este método
+            </div>
+          ) : (
+            filtered.map((s, i) => (
+              <SaleDetailRow key={s.id} sale={s} isLast={i === filtered.length - 1} />
+            ))
+          )}
         </div>
 
         {/* Footer con total */}
@@ -1189,10 +1335,10 @@ function SalesListModal({ sales, totalSales, onClose }) {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-            Total ventas
+            Total
           </div>
           <div style={{ fontSize: 18, fontWeight: 800, color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>
-            {fmtCOP(totalSales)}
+            {fmtCOP(methodFilter ? filteredTotal : totalSales)}
           </div>
         </div>
       </div>

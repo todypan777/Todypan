@@ -23,9 +23,18 @@ function describeAuthError(code) {
   }
 }
 
+// Detecta si la app está corriendo como PWA standalone (instalada) — en ese
+// caso el flujo OAuth abre el navegador externo y le explicamos al usuario.
+function isStandalonePWA() {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia?.('(display-mode: standalone)').matches
+    || window.navigator.standalone === true
+}
+
 export default function Login({ unauthorizedEmail = null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const [isPWA] = useState(isStandalonePWA())
 
   // Al montar: si volvimos de un redirect con error, mostrarlo
   useEffect(() => {
@@ -136,6 +145,19 @@ export default function Login({ unauthorizedEmail = null }) {
               <GoogleLogo />
               {busy ? 'Conectando...' : 'Continuar con Google'}
             </button>
+
+            {isPWA && (
+              <div style={{
+                marginTop: 14, padding: '10px 12px', borderRadius: 10,
+                background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+                fontSize: 12, color: T.copper[700], lineHeight: 1.5, textAlign: 'center',
+              }}>
+                <b>¿Ya iniciaste pero te devuelve aquí?</b> En la app instalada,
+                Google a veces abre el navegador y deja la sesión allá. Cierra
+                este aviso, espera unos segundos y la app debería entrar sola.
+                Si no, ciérrala y ábrela de nuevo.
+              </div>
+            )}
 
             {error && (
               <div style={{

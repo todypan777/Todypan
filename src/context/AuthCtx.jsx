@@ -29,7 +29,25 @@ export function AuthProvider({ children }) {
         setDocLoading(false)
       }
     })
-    return unsub
+
+    // PWA standalone: cuando el usuario regresa a la app después de un
+    // redirect (Android Chrome a menudo abre el OAuth en una Custom Tab y
+    // la PWA queda "atrás"), re-consumir el redirect y forzar a Firebase
+    // a re-leer su estado persistido. Sin esto, la PWA puede quedarse en
+    // pantalla de login aunque la sesión ya esté guardada en IndexedDB.
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        consumeRedirectResult().catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('focus', handleVisibility)
+
+    return () => {
+      unsub()
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('focus', handleVisibility)
+    }
   }, [])
 
   // 2. User doc listener (Firestore)

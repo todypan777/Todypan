@@ -5,7 +5,13 @@ import {
   persistentMultipleTabManager,
   getFirestore,
 } from 'firebase/firestore'
-import { getAuth, GoogleAuthProvider } from 'firebase/auth'
+import {
+  getAuth,
+  GoogleAuthProvider,
+  setPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
+} from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: "AIzaSyCQxi5ZWQYcpfdFX0db7UNeDRX-Oht8gEQ",
@@ -41,3 +47,12 @@ export const firestoreDb = _firestoreDb
 export const firebaseAuth = getAuth(firebaseApp)
 export const googleProvider = new GoogleAuthProvider()
 googleProvider.setCustomParameters({ prompt: 'select_account' })
+
+// Persistencia explícita: en PWA standalone (Android Chrome / iOS Safari) el
+// flujo de signInWithRedirect a veces deja la sesión en una pestaña distinta
+// del navegador. Con persistencia en IndexedDB (con fallback a localStorage),
+// cuando el usuario vuelve a abrir la PWA, Firebase encuentra la sesión y
+// onAuthStateChanged dispara automáticamente.
+setPersistence(firebaseAuth, indexedDBLocalPersistence)
+  .catch(() => setPersistence(firebaseAuth, browserLocalPersistence))
+  .catch(err => console.warn('[firebase] No se pudo setear persistencia:', err?.message))

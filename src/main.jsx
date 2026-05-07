@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App.jsx'
 import { startPhotoQueueWorker } from './utils/photoQueue'
+import { applyDataSaverOnBoot } from './utils/network'
 
 // ── Kill switch one-shot ──
 // Los celulares con SW viejo (sin skipWaiting) quedaban atascados sirviendo
@@ -66,5 +67,10 @@ async function requestPersistentStorage() {
   }
 }
 requestPersistentStorage()
+
+// Si la cajera dejó "Modo ahorro de datos" activado y recargó la app,
+// aplicar el corte de red ANTES del primer render para que Firestore no
+// queme datos buscando snapshots frescos.
+applyDataSaverOnBoot()
 
 createRoot(document.getElementById('root')).render(<App />)

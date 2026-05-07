@@ -1494,9 +1494,9 @@ function LastSaleNotice({ lastSaleAt, salesCount }) {
   const cfg = {
     ok:    { bg: '#E8F0E5', border: '#BCD2B6', fg: '#3D6F3B', icon: '🕒', hint: null },
     warn:  { bg: '#FFF4DD', border: '#F0D699', fg: '#8A5E12', icon: '⚠️',
-             hint: 'Si la cajera tuvo problemas de internet, asegúrate de que esté conectada antes de cerrar para que sus últimas ventas se sincronicen.' },
+             hint: 'Si la cajera tiene activado "Modo ahorro de datos" o problemas de internet, pídele que toque "Sincronizar ahora" antes de cerrar.' },
     alert: { bg: '#FBE4DF', border: '#E8B5AB', fg: '#8A3625', icon: '🚨',
-             hint: 'Hace bastante rato sin ventas nuevas. Verifica con la cajera que el celular tenga conexión y que no haya ventas pendientes por subir antes de cerrar.' },
+             hint: 'Hace bastante rato sin ventas nuevas. Pídele a la cajera que sincronice (banner de "Modo ahorro" o conectar a internet) antes de cerrar — puede tener ventas pendientes en el celular.' },
   }[level]
 
   const agoLabel =

@@ -15,7 +15,7 @@ import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import MissingPricesPanel from '../components/MissingPricesPanel'
 import ProductCatalogPanel from '../components/ProductCatalogPanel'
 import ConnectionChip from '../components/ConnectionChip'
-import { useOnlineStatus } from '../utils/network'
+import { useOnlineStatus, useDataSaver } from '../utils/network'
 import MyHistoricalSales from './MyHistoricalSales'
 import {
   watchCashierProducts,
@@ -49,7 +49,7 @@ export default function CashierApp({ authUser, userDoc }) {
         branches={getData().branches || []}
       />
 
-      <OfflineBanner />
+      <ConnectivityBanner />
 
       {mySession ? (
         <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
@@ -60,34 +60,90 @@ export default function CashierApp({ authUser, userDoc }) {
   )
 }
 
-// Banner amarillo prominente cuando la cajera está sin internet. Se muestra
-// debajo del top bar y le aclara que puede seguir trabajando — sus ventas
-// se encolan localmente y se subirán cuando vuelva la señal. Crítico para
-// que no entre en pánico ni vuelva a hacer login (que sin red falla y la
-// dejaría atascada).
-function OfflineBanner() {
+// Banner que aparece debajo del top bar cuando la cajera está sin red Y/O
+// con "Modo ahorro de datos" activado. Tres estados:
+//   - Sin red real (online=false): banner gris/amarillo
+//   - Modo ahorro activo (online=true pero el corte es voluntario): banner
+//     copper con botón "Sincronizar ahora"
+//   - Todo OK (online + sin modo ahorro): no se muestra nada
+function ConnectivityBanner() {
   const online = useOnlineStatus()
-  if (online) return null
-  return (
-    <div style={{
-      background: '#FFF4DD',
-      borderBottom: `1px solid #F0D699`,
-      padding: '10px 16px',
-      display: 'flex', alignItems: 'flex-start', gap: 10,
-    }}>
-      <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📵</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 13, fontWeight: 800, color: '#8A5E12', marginBottom: 2,
-        }}>
-          Sin conexión
-        </div>
-        <div style={{ fontSize: 12, color: '#8A5E12', lineHeight: 1.4 }}>
-          Puedes seguir vendiendo. Tus ventas se guardarán y se subirán solas cuando vuelva la señal.
+  const { enabled: dataSaver, syncNow } = useDataSaver()
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null) // {ok, error}
+
+  async function handleSyncNow() {
+    setSyncing(true); setSyncResult(null)
+    const r = await syncNow()
+    setSyncResult(r)
+    setSyncing(false)
+    if (r.ok) {
+      setTimeout(() => setSyncResult(null), 3000)
+    }
+  }
+
+  if (!online && !dataSaver) {
+    return (
+      <div style={bannerStyle('#FFF4DD', '#F0D699', '#8A5E12')}>
+        <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📵</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+            Sin conexión
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+            Puedes seguir vendiendo. Tus ventas se guardarán y se subirán solas cuando vuelva la señal.
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  if (dataSaver) {
+    return (
+      <div style={bannerStyle('#FFEFE2', '#F0C8A8', '#8A4A1A')}>
+        <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>💾</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+            Modo ahorro activo
+          </div>
+          <div style={{ fontSize: 11.5, lineHeight: 1.4, marginBottom: 8 }}>
+            {syncResult?.ok
+              ? '✅ Listo, todo sincronizado.'
+              : syncResult?.error
+                ? `⚠️ ${syncResult.error}. Reintentar.`
+                : 'Sin gastar datos. Toca "Sincronizar" antes de cerrar el turno.'}
+          </div>
+          <button
+            onClick={handleSyncNow}
+            disabled={syncing || !online}
+            style={{
+              padding: '7px 14px', borderRadius: 999,
+              background: !online ? T.neutral[200] : T.copper[500],
+              color: !online ? T.neutral[500] : '#fff',
+              border: 'none', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+              cursor: syncing || !online ? 'wait' : 'pointer',
+              opacity: syncing ? 0.7 : 1,
+            }}
+          >
+            {syncing ? 'Sincronizando...' : !online ? 'Necesitas datos para sincronizar' : 'Sincronizar ahora'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return null
+}
+
+function bannerStyle(bg, border, fg) {
+  return {
+    background: bg,
+    borderBottom: `1px solid ${border}`,
+    color: fg,
+    padding: '10px 16px',
+    display: 'flex', alignItems: 'flex-start', gap: 10,
+  }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -157,6 +213,7 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
+  const [dataSaverConfirm, setDataSaverConfirm] = useState(null) // null | 'turn-on' | 'turn-off'
 
   return (
     <div style={{
@@ -202,6 +259,7 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
           userDoc={userDoc}
           onCancel={() => setMenuOpen(false)}
           onOpenCatalog={() => { setMenuOpen(false); setCatalogOpen(true) }}
+          onToggleDataSaver={(intent) => { setMenuOpen(false); setDataSaverConfirm(intent) }}
           onSignOut={() => { setMenuOpen(false); setConfirmSignOut(true) }}
         />
       )}
@@ -210,6 +268,13 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
         <SignOutModal
           onCancel={() => setConfirmSignOut(false)}
           onConfirm={async () => { await signOut() }}
+        />
+      )}
+
+      {dataSaverConfirm && (
+        <DataSaverModal
+          intent={dataSaverConfirm}
+          onClose={() => setDataSaverConfirm(null)}
         />
       )}
 
@@ -227,7 +292,8 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
   )
 }
 
-function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onSignOut }) {
+function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onToggleDataSaver, onSignOut }) {
+  const { enabled: dataSaverOn } = useDataSaver()
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={{
@@ -268,6 +334,29 @@ function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onSignOut }) {
           </svg>
         </button>
 
+        <button onClick={() => onToggleDataSaver(dataSaverOn ? 'turn-off' : 'turn-on')} style={menuItemStyle()}>
+          <span style={{ fontSize: 18, lineHeight: 1, width: 20, textAlign: 'center' }}>💾</span>
+          <span style={{ flex: 1 }}>
+            <div>Modo ahorro de datos</div>
+            <div style={{ fontSize: 11, fontWeight: 500, color: dataSaverOn ? T.copper[600] : T.neutral[500], marginTop: 2 }}>
+              {dataSaverOn ? 'Activo · sin gastar datos' : 'Desactivado'}
+            </div>
+          </span>
+          <span style={{
+            width: 36, height: 20, borderRadius: 999,
+            background: dataSaverOn ? T.copper[500] : T.neutral[300],
+            position: 'relative', flexShrink: 0,
+            transition: 'background 0.15s',
+          }}>
+            <span style={{
+              position: 'absolute', top: 2, left: dataSaverOn ? 18 : 2,
+              width: 16, height: 16, borderRadius: 999, background: '#fff',
+              transition: 'left 0.15s',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            }}/>
+          </span>
+        </button>
+
         <button onClick={onSignOut} style={menuItemStyle({ danger: true })}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
             <path d="M8 4 L4 4 L4 16 L8 16" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
@@ -301,6 +390,102 @@ function menuItemStyle({ danger = false } = {}) {
     display: 'flex', alignItems: 'center', gap: 14,
     textAlign: 'left',
   }
+}
+
+// Modal de confirmación para activar/desactivar Modo Ahorro. Cuando intent
+// es 'turn-on' explica qué pasa al activar; al desactivar avisa que va a
+// sincronizar todo lo encolado (puede tomar unos segundos según volumen).
+function DataSaverModal({ intent, onClose }) {
+  const { enabled, turnOn, turnOff, syncNow } = useDataSaver()
+  const online = useOnlineStatus()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const turningOn = intent === 'turn-on'
+
+  async function handleConfirm() {
+    setBusy(true); setError(null)
+    try {
+      if (turningOn) {
+        // Antes de cortar la red, intentar subir lo pendiente para arrancar
+        // el modo ahorro con la cola limpia.
+        if (online) {
+          await syncNow() // ya respeta el ahorro (vuelve a desconectar al final)
+        }
+        await turnOn()
+      } else {
+        // Al desactivar: enableNetwork (que es lo que turnOff hace internamente)
+        // sube la cola sola. waitForPendingWrites antes de cerrar el modal
+        // para mostrar el estado real al usuario.
+        await turnOff()
+      }
+      onClose()
+    } catch (e) {
+      setError(e?.message || 'No se pudo cambiar el modo. Intenta de nuevo.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 360, background: '#fff', borderRadius: 20,
+        padding: '24px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+      }}>
+        <div style={{ fontSize: 36, textAlign: 'center', marginBottom: 8 }}>
+          {turningOn ? '💾' : '📡'}
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: T.neutral[900], textAlign: 'center', marginBottom: 8 }}>
+          {turningOn ? 'Activar modo ahorro' : 'Desactivar modo ahorro'}
+        </div>
+        <div style={{
+          fontSize: 13, color: T.neutral[600], textAlign: 'center',
+          lineHeight: 1.55, marginBottom: 18,
+        }}>
+          {turningOn
+            ? 'La app dejará de gastar datos. Puedes seguir vendiendo normal — todo se guarda en el celular. Antes de cerrar el turno, toca "Sincronizar ahora" en el banner para que el admin vea todas tus ventas.'
+            : 'La app volverá a usar datos móviles para sincronizar en tiempo real. Tus ventas pendientes se subirán automáticamente.'}
+        </div>
+
+        {!online && turningOn && (
+          <div style={{
+            marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+            background: '#FFF4DD', border: `1px solid #F0D699`, color: '#8A5E12',
+            fontSize: 12, lineHeight: 1.45,
+          }}>
+            Estás sin conexión. Se activará el modo ahorro de todas formas — al volver la red podrás sincronizar manualmente.
+          </div>
+        )}
+
+        {error && (
+          <div style={{
+            marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onClose} disabled={busy} style={btnSecondary()}>
+            Cancelar
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={busy}
+            style={{
+              ...btnPrimary(turningOn ? T.copper[500] : T.ok),
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {busy ? (turningOn ? 'Activando...' : 'Activando red...') : (turningOn ? 'Activar ahorro' : 'Reconectar')}
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
 }
 
 function SignOutModal({ onCancel, onConfirm }) {

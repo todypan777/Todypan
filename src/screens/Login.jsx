@@ -95,7 +95,7 @@ export default function Login({ unauthorizedEmail = null }) {
         <div style={{
           fontSize: 14, color: T.neutral[500], fontWeight: 500, textAlign: 'center',
         }}>
-          Panel de gestión · v2
+          Gestión de panaderías
         </div>
       </div>
 

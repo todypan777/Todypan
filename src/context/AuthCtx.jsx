@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { onAuthChange, consumeRedirectResult, ADMIN_EMAIL } from '../auth'
+import { firebaseAuth } from '../firebase'
 import { watchUserDoc, bootstrapAdminIfNeeded } from '../users'
 
 const AuthCtx = createContext({
@@ -11,11 +12,46 @@ const AuthCtx = createContext({
   status: null,
 })
 
+// Caché del documento de usuario en localStorage. Permite que la cajera entre
+// de inmediato a su cuenta cuando está offline (sin esperar al servidor) si
+// previamente ya había iniciado sesión en este celular.
+const USERDOC_CACHE_KEY = 'todypan_userdoc_cache_v1'
+
+function readUserDocCache(uid) {
+  if (!uid) return null
+  try {
+    const raw = localStorage.getItem(USERDOC_CACHE_KEY)
+    if (!raw) return null
+    const cached = JSON.parse(raw)
+    if (cached.uid !== uid) return null
+    return cached.doc || null
+  } catch {
+    return null
+  }
+}
+
+function writeUserDocCache(uid, doc) {
+  try {
+    if (uid && doc) {
+      localStorage.setItem(USERDOC_CACHE_KEY, JSON.stringify({ uid, doc }))
+    } else {
+      localStorage.removeItem(USERDOC_CACHE_KEY)
+    }
+  } catch {}
+}
+
 export function AuthProvider({ children }) {
-  const [authUser, setAuthUser] = useState(null)
-  const [userDoc, setUserDoc] = useState(null)
-  const [authLoading, setAuthLoading] = useState(true)
-  const [docLoading, setDocLoading] = useState(true)
+  // Inicialización SÍNCRONA: si Firebase ya cargó la sesión de localStorage al
+  // arrancar, partimos con esa sesión en mano — sin pasar por "Verificando
+  // sesión...". Si además tenemos el userDoc cacheado, también arrancamos
+  // con él. Resultado: la cajera entra inmediata aunque no haya internet.
+  const initialUser = firebaseAuth.currentUser
+  const initialDoc = readUserDocCache(initialUser?.uid)
+
+  const [authUser, setAuthUser] = useState(initialUser)
+  const [userDoc, setUserDoc] = useState(initialDoc)
+  const [authLoading, setAuthLoading] = useState(!initialUser)
+  const [docLoading, setDocLoading] = useState(!!initialUser && !initialDoc)
   const bootstrappedFor = useRef(null)
 
   // 1. Auth listener (Firebase Auth)
@@ -27,6 +63,7 @@ export function AuthProvider({ children }) {
       if (!u) {
         setUserDoc(null)
         setDocLoading(false)
+        writeUserDocCache(null, null)
       }
     })
 
@@ -64,13 +101,16 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
-  // 2. User doc listener (Firestore)
+  // 2. User doc listener (Firestore). Va a devolver desde el caché offline
+  // de Firestore si no hay red, así que normalmente resuelve aunque no haya
+  // internet. El caché de localStorage que escribimos aquí es un respaldo
+  // adicional para el primer arranque.
   useEffect(() => {
     if (!authUser) return
-    setDocLoading(true)
     const unsub = watchUserDoc(authUser.uid, doc => {
       setUserDoc(doc)
       setDocLoading(false)
+      writeUserDocCache(authUser.uid, doc)
 
       // Si es admin email y no tiene doc → bootstrap
       if (!doc && authUser.email === ADMIN_EMAIL && bootstrappedFor.current !== authUser.uid) {

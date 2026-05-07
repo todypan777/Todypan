@@ -15,6 +15,7 @@ import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import MissingPricesPanel from '../components/MissingPricesPanel'
 import ProductCatalogPanel from '../components/ProductCatalogPanel'
 import ConnectionChip from '../components/ConnectionChip'
+import { useOnlineStatus } from '../utils/network'
 import MyHistoricalSales from './MyHistoricalSales'
 import {
   watchCashierProducts,
@@ -48,11 +49,43 @@ export default function CashierApp({ authUser, userDoc }) {
         branches={getData().branches || []}
       />
 
+      <OfflineBanner />
+
       {mySession ? (
         <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
       ) : (
         <NoShiftAssigned userDoc={userDoc} />
       )}
+    </div>
+  )
+}
+
+// Banner amarillo prominente cuando la cajera está sin internet. Se muestra
+// debajo del top bar y le aclara que puede seguir trabajando — sus ventas
+// se encolan localmente y se subirán cuando vuelva la señal. Crítico para
+// que no entre en pánico ni vuelva a hacer login (que sin red falla y la
+// dejaría atascada).
+function OfflineBanner() {
+  const online = useOnlineStatus()
+  if (online) return null
+  return (
+    <div style={{
+      background: '#FFF4DD',
+      borderBottom: `1px solid #F0D699`,
+      padding: '10px 16px',
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+    }}>
+      <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📵</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 800, color: '#8A5E12', marginBottom: 2,
+        }}>
+          Sin conexión
+        </div>
+        <div style={{ fontSize: 12, color: '#8A5E12', lineHeight: 1.4 }}>
+          Puedes seguir vendiendo. Tus ventas se guardarán y se subirán solas cuando vuelva la señal.
+        </div>
+      </div>
     </div>
   )
 }

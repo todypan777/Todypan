@@ -353,6 +353,19 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
     () => sales.filter(s => (s.status || 'active') !== 'deleted'),
     [sales]
   )
+
+  // Hora de la última venta sincronizada al servidor. Usamos createdAt si ya
+  // resolvió (server timestamp) o createdAtClient como fallback. Sirve para
+  // que el admin vea de un golpe si la cajera tuvo poca actividad reciente
+  // — y por tanto pueda haber ventas offline que aún no se han subido.
+  const lastSaleAt = useMemo(() => {
+    let max = 0
+    for (const s of activeSales) {
+      const t = s.createdAt?.toMillis?.() ?? s.createdAtClient ?? 0
+      if (t > max) max = t
+    }
+    return max || null
+  }, [activeSales])
   const salesByMethod = useMemo(() => {
     const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0 }
     activeSales.forEach(s => {
@@ -502,6 +515,10 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
         title="Cerrar caja"
         subtitle={`${session.cashierName || 'Cajera'} · ${session.branchName || 'Sin nombre'}`}
       />
+
+      {/* Aviso pre-cierre: hora de la última venta vista. Si fue hace mucho
+          rato, puede ser que la cajera tenga ventas offline aún por subir. */}
+      <LastSaleNotice lastSaleAt={lastSaleAt} salesCount={activeSales.length} />
 
       {/* Resumen del turno */}
       <SectionLabel>Resumen del turno</SectionLabel>
@@ -1442,4 +1459,74 @@ const selectStyle = {
   border: `1.5px solid ${T.neutral[200]}`,
   background: '#fff', color: T.neutral[900],
   fontFamily: 'inherit', fontSize: 14, outline: 'none',
+}
+
+// Aviso visual al admin antes de cerrar: hora de la última venta vista en el
+// servidor. El admin desde su panel solo ve lo sincronizado — si la cajera
+// estuvo offline, sus ventas más recientes aún no aparecerán hasta que tenga
+// señal. Tres niveles según hace cuánto fue la última venta:
+//   < 30min  → tono neutro (todo normal)
+//   30-120min → amarillo (revisar con la cajera)
+//   > 2h     → rojo (probablemente faltan ventas por sincronizar)
+function LastSaleNotice({ lastSaleAt, salesCount }) {
+  if (salesCount === 0) {
+    return (
+      <div style={{
+        padding: '10px 12px', borderRadius: 10, marginBottom: 14,
+        background: T.neutral[50], border: `1px solid ${T.neutral[200]}`,
+        fontSize: 12.5, color: T.neutral[600], lineHeight: 1.5,
+      }}>
+        Sin ventas registradas en este turno.
+      </div>
+    )
+  }
+  if (!lastSaleAt) return null
+
+  const minsAgo = Math.max(0, Math.round((Date.now() - lastSaleAt) / 60000))
+  const time = new Date(lastSaleAt).toLocaleTimeString('es-CO', {
+    hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota',
+  })
+
+  let level = 'ok'
+  if (minsAgo >= 120) level = 'alert'
+  else if (minsAgo >= 30) level = 'warn'
+
+  const cfg = {
+    ok:    { bg: '#E8F0E5', border: '#BCD2B6', fg: '#3D6F3B', icon: '🕒', hint: null },
+    warn:  { bg: '#FFF4DD', border: '#F0D699', fg: '#8A5E12', icon: '⚠️',
+             hint: 'Si la cajera tuvo problemas de internet, asegúrate de que esté conectada antes de cerrar para que sus últimas ventas se sincronicen.' },
+    alert: { bg: '#FBE4DF', border: '#E8B5AB', fg: '#8A3625', icon: '🚨',
+             hint: 'Hace bastante rato sin ventas nuevas. Verifica con la cajera que el celular tenga conexión y que no haya ventas pendientes por subir antes de cerrar.' },
+  }[level]
+
+  const agoLabel =
+    minsAgo < 1 ? 'hace menos de 1 min' :
+    minsAgo < 60 ? `hace ${minsAgo} min` :
+    `hace ${Math.floor(minsAgo / 60)}h ${minsAgo % 60}m`
+
+  return (
+    <div style={{
+      padding: '12px 14px', borderRadius: 12, marginBottom: 14,
+      background: cfg.bg, border: `1px solid ${cfg.border}`,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: cfg.hint ? 6 : 0,
+      }}>
+        <div style={{ fontSize: 18, lineHeight: 1 }}>{cfg.icon}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: cfg.fg, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            Última venta vista
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: cfg.fg, fontVariantNumeric: 'tabular-nums' }}>
+            {time} · {agoLabel}
+          </div>
+        </div>
+      </div>
+      {cfg.hint && (
+        <div style={{ fontSize: 12, color: cfg.fg, lineHeight: 1.5, paddingLeft: 28 }}>
+          {cfg.hint}
+        </div>
+      )}
+    </div>
+  )
 }

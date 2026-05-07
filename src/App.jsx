@@ -6,8 +6,9 @@ import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
 import { DesktopCtx } from './context/DesktopCtx'
-import { AuthProvider, useAuth } from './context/AuthCtx'
+import { AuthProvider, useAuth, readAuthUidCache, readUserDocCache } from './context/AuthCtx'
 import { ADMIN_EMAIL } from './auth'
+import { useOnlineStatus } from './utils/network'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
 import AddMovement from './screens/AddMovement'
@@ -53,13 +54,38 @@ export default function App() {
 }
 
 function AuthGate() {
-  const { authUser, userDoc, loading, isAdmin, isCashier } = useAuth()
+  const { authUser, userDoc: ctxUserDoc, loading, isAdmin: ctxIsAdmin, isCashier: ctxIsCashier } = useAuth()
+  const online = useOnlineStatus()
+
+  // Fallback al caché de localStorage cuando AuthCtx aún no nos dio userDoc.
+  // Esto evita el "frame" de RegistrationForm que la cajera ve cuando vuelve
+  // la red y authUser llega antes que el snapshot del listener de Firestore.
+  const cachedDoc = !ctxUserDoc && authUser ? readUserDocCache(authUser.uid) : null
+  const userDoc = ctxUserDoc || cachedDoc
+  const isAdmin = ctxIsAdmin || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
+  const isCashier = ctxIsCashier || (!!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved')
 
   if (loading) return <LoadingScreen label="Verificando sesión..." />
-  if (!authUser) return <Login />
+
+  // Sin authUser:
+  //   - Si offline Y este celular tuvo sesión antes → es muy probable que
+  //     Firebase Auth no haya terminado de cargar la sesión por falta de
+  //     red. Mostrar Login no ayuda porque el botón de Google fallaría.
+  //     En su lugar, mostrar splash "Sin conexión, esperando..." hasta que
+  //     vuelva la red.
+  //   - Si online o nunca hubo sesión → Login normal.
+  if (!authUser) {
+    if (!online && readAuthUidCache()) {
+      return <LoadingScreen label="Sin conexión — reconectando tu sesión..." />
+    }
+    return <Login />
+  }
 
   // Admin email pero todavía sin doc → bootstrap automático en AuthCtx
   if (!userDoc) {
+    if (!online) {
+      return <LoadingScreen label="Sin conexión — cargando tu cuenta..." />
+    }
     if (authUser.email === ADMIN_EMAIL) return <BootstrappingAdmin />
     return <RegistrationForm authUser={authUser} />
   }

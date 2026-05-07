@@ -12,12 +12,19 @@ const AuthCtx = createContext({
   status: null,
 })
 
-// Caché del documento de usuario en localStorage. Permite que la cajera entre
-// de inmediato a su cuenta cuando está offline (sin esperar al servidor) si
-// previamente ya había iniciado sesión en este celular.
+// ─── Cachés en localStorage ──────────────────────────────────────────────
+//
+// Dos cachés:
+//   - userdoc: el documento completo del user en Firestore.
+//   - authuid: el uid del último user que estuvo logueado.
+//
+// El authuid permite distinguir entre "este celular nunca tuvo sesión"
+// (el botón de Login es la pantalla correcta) y "tenía sesión y se cayó
+// la red" (esperar reconexión es lo correcto, NO mostrar Login).
 const USERDOC_CACHE_KEY = 'todypan_userdoc_cache_v1'
+const AUTHUID_CACHE_KEY = 'todypan_authuid_v1'
 
-function readUserDocCache(uid) {
+export function readUserDocCache(uid) {
   if (!uid) return null
   try {
     const raw = localStorage.getItem(USERDOC_CACHE_KEY)
@@ -40,11 +47,22 @@ function writeUserDocCache(uid, doc) {
   } catch {}
 }
 
+export function readAuthUidCache() {
+  try { return localStorage.getItem(AUTHUID_CACHE_KEY) || null } catch { return null }
+}
+
+function writeAuthUidCache(uid) {
+  try {
+    if (uid) localStorage.setItem(AUTHUID_CACHE_KEY, uid)
+    else localStorage.removeItem(AUTHUID_CACHE_KEY)
+  } catch {}
+}
+
 export function AuthProvider({ children }) {
-  // Inicialización SÍNCRONA: si Firebase ya cargó la sesión de localStorage al
-  // arrancar, partimos con esa sesión en mano — sin pasar por "Verificando
-  // sesión...". Si además tenemos el userDoc cacheado, también arrancamos
-  // con él. Resultado: la cajera entra inmediata aunque no haya internet.
+  // Inicialización SÍNCRONA. Si Firebase ya cargó la sesión antes del primer
+  // render (browserLocalPersistence puede ser síncrono o no según el browser),
+  // partimos con esos datos. Si no, intentamos con el caché de userDoc — eso
+  // es suficiente para mostrar la app sin pasar por "Verificando sesión...".
   const initialUser = firebaseAuth.currentUser
   const initialDoc = readUserDocCache(initialUser?.uid)
 
@@ -58,23 +76,36 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     consumeRedirectResult()
     const unsub = onAuthChange(u => {
+      // Cuando llega null pero estamos offline Y teníamos sesión cacheada,
+      // lo más probable es que sea un fluke transitorio mientras Firebase
+      // intenta refrescar el token. Si lo aceptamos, mostraríamos Login y
+      // la cajera no podría entrar (sin red el botón de Google falla).
+      // Mejor mantener el authUser anterior y esperar a que vuelva la red.
+      if (!u && !navigator.onLine && readAuthUidCache()) {
+        console.warn('[Auth] onAuthChange(null) ignorado: estamos offline y había sesión cacheada')
+        setAuthLoading(false)
+        return
+      }
       setAuthUser(u)
       setAuthLoading(false)
-      if (!u) {
+      if (u) {
+        writeAuthUidCache(u.uid)
+      } else {
+        // Logout real (online): limpiar todo
         setUserDoc(null)
         setDocLoading(false)
         writeUserDocCache(null, null)
+        writeAuthUidCache(null)
       }
     })
 
     // Safety-net: si Firebase Auth no resuelve el estado en 5s (lock de
     // IndexedDB colgado, SW interceptando /__/auth/, redirect roto, lo que
-    // sea), liberamos el splash para que la cajera al menos vea el Login
-    // y pueda reintentar. Sin esto la pantalla "Verificando sesión..." se
-    // queda eterna y la cajera no puede hacer nada.
+    // sea), liberamos el splash. Si tenemos caché de userDoc, también
+    // liberamos docLoading aunque el listener no haya respondido aún.
     const safetyNet = setTimeout(() => {
       setAuthLoading(prev => {
-        if (prev) console.warn('[Auth] safety-net: liberando loading tras 5s')
+        if (prev) console.warn('[Auth] safety-net: liberando authLoading tras 5s')
         return false
       })
       setDocLoading(false)
@@ -104,19 +135,28 @@ export function AuthProvider({ children }) {
   // 2. User doc listener (Firestore). Va a devolver desde el caché offline
   // de Firestore si no hay red, así que normalmente resuelve aunque no haya
   // internet. El caché de localStorage que escribimos aquí es un respaldo
-  // adicional para el primer arranque.
-  //
-  // IMPORTANTE: solo escribimos al caché cuando llega un doc real. Cuando
-  // llega null (snapshot vacío = doc no existe) no borramos el caché para
-  // no dejar a la cajera sin respaldo si lo del null es un fluke transitorio
-  // (cosa que watchUserDoc ahora ya filtra ignorando errores, pero por si
-  // acaso). El caché solo se limpia cuando hay logout explícito (u=null
-  // arriba en onAuthChange).
+  // adicional: lo leemos ANTES de iniciar el listener para que la cajera
+  // entre de inmediato aunque Firestore tarde en responder offline.
   useEffect(() => {
     if (!authUser) return
+
+    // Hidratar desde caché si aún no tenemos doc en estado.
+    if (!userDoc) {
+      const cached = readUserDocCache(authUser.uid)
+      if (cached) {
+        setUserDoc(cached)
+        setDocLoading(false)
+      }
+    }
+
     const unsub = watchUserDoc(authUser.uid, doc => {
-      setUserDoc(doc)
       setDocLoading(false)
+      // Solo aceptamos null si online (significa que el doc realmente no existe).
+      // Offline + null = error transitorio; mantener lo que ya teníamos.
+      if (!doc && !navigator.onLine && userDoc) {
+        return
+      }
+      setUserDoc(doc)
       if (doc) writeUserDocCache(authUser.uid, doc)
 
       // Si es admin email y no tiene doc → bootstrap
@@ -128,6 +168,9 @@ export function AuthProvider({ children }) {
       }
     })
     return unsub
+    // userDoc en deps adrede: si llega vacío y luego llenamos por caché,
+    // el listener no se reconfigura — solo `authUser` es la dep que importa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser])
 
   const loading = authLoading || (authUser && docLoading)

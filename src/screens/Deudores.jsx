@@ -5,6 +5,7 @@ import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
 import { watchDebtors, registerDebtorPayment } from '../debtors'
+import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
 import { useAuth } from '../context/AuthCtx'
 
@@ -243,7 +244,18 @@ function DebtorRow({ debtor, isLast, onClick }) {
 // ──────────────────────────────────────────────────────────────
 function DebtorDetailModal({ debtor, onClose }) {
   const [paying, setPaying] = useState(false)
+  const [debtorSales, setDebtorSales] = useState([])
   const isPaid = debtor.status === 'paid' || (debtor.totalOwed || 0) <= 0
+
+  // Cargar ventas asociadas al deudor para mostrar qué productos compró
+  // en cada entry de historial.
+  useEffect(() => watchSalesByDebtor(debtor.id, setDebtorSales), [debtor.id])
+
+  const salesById = useMemo(() => {
+    const map = {}
+    debtorSales.forEach(s => { map[s.id] = s })
+    return map
+  }, [debtorSales])
 
   // Historial ordenado por fecha desc
   const history = (debtor.history || []).slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
@@ -322,7 +334,12 @@ function DebtorDetailModal({ debtor, onClose }) {
               padding: '4px 0', maxHeight: 320, overflowY: 'auto',
             }}>
               {history.map((h, i) => (
-                <HistoryItem key={i} entry={h} isLast={i === history.length - 1} />
+                <HistoryItem
+                  key={i}
+                  entry={h}
+                  sale={h.saleId ? salesById[h.saleId] : null}
+                  isLast={i === history.length - 1}
+                />
               ))}
             </div>
           )}
@@ -343,8 +360,12 @@ function DebtorDetailModal({ debtor, onClose }) {
   )
 }
 
-function HistoryItem({ entry, isLast }) {
+function HistoryItem({ entry, sale, isLast }) {
   const isPayment = entry.type === 'payment'
+  const isSale = entry.type === 'sale'
+  const isAdjustment = entry.type === 'adjustment'
+  const [expanded, setExpanded] = useState(false)
+
   const date = entry.date
     ? new Date(entry.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
     : '—'
@@ -352,49 +373,142 @@ function HistoryItem({ entry, isLast }) {
     ? { efectivo: '💵 Efectivo', nequi: '📱 NEQUI', daviplata: '📱 DAVIPLATA' }[entry.method] || entry.method
     : null
 
+  const items = isSale && sale?.items ? sale.items : null
+  const hasItems = items && items.length > 0
+  const itemsSummary = hasItems
+    ? items.map(it => `${it.qty}× ${it.name}`).join(' · ')
+    : null
+
+  // Solo es clickeable si tiene items para expandir
+  const clickable = hasItems
+
+  // Color e icono según tipo
+  const tone = isPayment
+    ? { bg: '#E8F4E8', color: T.ok, icon: '↓' }
+    : isAdjustment
+      ? { bg: T.neutral[100], color: T.neutral[600], icon: '✎' }
+      : { bg: '#FBE9E5', color: T.bad, icon: '↑' }
+
+  const titleLabel = isPayment
+    ? 'Abono / Pago'
+    : isAdjustment
+      ? 'Ajuste'
+      : 'Venta a crédito'
+
   return (
-    <div style={{
-      padding: '10px 12px',
-      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
-      display: 'flex', alignItems: 'center', gap: 10,
-    }}>
-      <div style={{
-        width: 32, height: 32, borderRadius: 999, flexShrink: 0,
-        background: isPayment ? '#E8F4E8' : '#FBE9E5',
-        color: isPayment ? T.ok : T.bad,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 14, fontWeight: 800,
-      }}>
-        {isPayment ? '↓' : '↑'}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[900] }}>
-          {isPayment ? 'Abono / Pago' : 'Venta a crédito'}
+    <div
+      onClick={clickable ? () => setExpanded(v => !v) : undefined}
+      style={{
+        padding: '10px 12px',
+        borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+        cursor: clickable ? 'pointer' : 'default',
+        transition: 'background 0.12s',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 999, flexShrink: 0,
+          background: tone.bg, color: tone.color,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 14, fontWeight: 800, marginTop: 1,
+        }}>
+          {tone.icon}
         </div>
-        <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
-          {date}
-          {methodLabel && ` · ${methodLabel}`}
-        </div>
-        {entry.note && (
-          <div style={{ fontSize: 11.5, color: T.neutral[600], fontStyle: 'italic', marginTop: 3 }}>
-            "{entry.note}"
-          </div>
-        )}
-        {entry.photoUrl && (
-          <a href={entry.photoUrl} target="_blank" rel="noreferrer" style={{
-            fontSize: 11, color: T.copper[600], textDecoration: 'underline', fontWeight: 600,
-            marginTop: 3, display: 'inline-block',
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
           }}>
-            📎 Ver comprobante
-          </a>
-        )}
-      </div>
-      <div style={{
-        fontSize: 14, fontWeight: 800,
-        color: isPayment ? T.ok : T.bad,
-        fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-      }}>
-        {isPayment ? '−' : '+'}{fmtCOP(entry.amount)}
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.neutral[900] }}>
+              {titleLabel}
+            </span>
+            {hasItems && !expanded && (
+              <span style={{
+                fontSize: 10.5, fontWeight: 700, color: T.copper[700],
+                background: T.copper[50], padding: '1px 7px', borderRadius: 999,
+              }}>
+                {items.length} {items.length === 1 ? 'producto' : 'productos'}
+              </span>
+            )}
+          </div>
+
+          <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2 }}>
+            {date}
+            {methodLabel && ` · ${methodLabel}`}
+            {clickable && (
+              <span style={{ marginLeft: 6, color: T.copper[600], fontWeight: 600 }}>
+                {expanded ? '▴ Ocultar' : '▾ Ver productos'}
+              </span>
+            )}
+          </div>
+
+          {/* Resumen compacto cuando NO está expandido */}
+          {hasItems && !expanded && (
+            <div style={{
+              fontSize: 12, color: T.neutral[700], marginTop: 4, lineHeight: 1.4,
+              display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+            }}>
+              {itemsSummary}
+            </div>
+          )}
+
+          {/* Lista detallada cuando está expandido */}
+          {hasItems && expanded && (
+            <div style={{
+              marginTop: 8, padding: '8px 10px', borderRadius: 10,
+              background: '#fff', border: `1px solid ${T.neutral[100]}`,
+            }}>
+              {items.map((it, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                  padding: '3px 0',
+                  borderBottom: i < items.length - 1 ? `0.5px dashed ${T.neutral[100]}` : 'none',
+                  gap: 8,
+                }}>
+                  <span style={{ fontSize: 12, color: T.neutral[800], minWidth: 0 }}>
+                    <span style={{ fontWeight: 700, color: T.copper[700], marginRight: 6 }}>
+                      {it.qty}×
+                    </span>
+                    {it.name}
+                  </span>
+                  <span style={{
+                    fontSize: 12, color: T.neutral[600], fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}>
+                    {fmtCOP(it.subtotal || 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {entry.note && (
+            <div style={{ fontSize: 11.5, color: T.neutral[600], fontStyle: 'italic', marginTop: 3 }}>
+              "{entry.note}"
+            </div>
+          )}
+          {entry.photoUrl && (
+            <a
+              href={entry.photoUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{
+                fontSize: 11, color: T.copper[600], textDecoration: 'underline', fontWeight: 600,
+                marginTop: 3, display: 'inline-block',
+              }}
+            >
+              📎 Ver comprobante
+            </a>
+          )}
+        </div>
+        <div style={{
+          fontSize: 14, fontWeight: 800,
+          color: isPayment ? T.ok : isAdjustment ? T.neutral[600] : T.bad,
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          {isPayment ? '−' : isAdjustment && entry.delta < 0 ? '−' : '+'}{fmtCOP(Math.abs(entry.amount || entry.delta || 0))}
+        </div>
       </div>
     </div>
   )

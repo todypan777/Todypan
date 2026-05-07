@@ -80,6 +80,28 @@ export async function createSale(payload) {
   return ref.id
 }
 
+/**
+ * Suscripción a las ventas a crédito asociadas a un deudor específico.
+ * Usado por el modal de detalle del deudor para mostrar qué productos
+ * compró en cada venta.
+ */
+export function watchSalesByDebtor(debtorId, callback) {
+  if (!debtorId) { callback([]); return () => {} }
+  const q = query(salesCol(), where('debtorId', '==', debtorId))
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => timeOf(b) - timeOf(a))
+      callback(list)
+    },
+    err => {
+      console.error('[sales] watchSalesByDebtor error:', err)
+      callback([])
+    }
+  )
+}
+
 /** Suscripción a las ventas de una sesión específica (para vista cajera). */
 export function watchSessionSales(sessionId, callback) {
   if (!sessionId) { callback([]); return () => {} }

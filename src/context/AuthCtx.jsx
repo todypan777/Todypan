@@ -105,12 +105,19 @@ export function AuthProvider({ children }) {
   // de Firestore si no hay red, así que normalmente resuelve aunque no haya
   // internet. El caché de localStorage que escribimos aquí es un respaldo
   // adicional para el primer arranque.
+  //
+  // IMPORTANTE: solo escribimos al caché cuando llega un doc real. Cuando
+  // llega null (snapshot vacío = doc no existe) no borramos el caché para
+  // no dejar a la cajera sin respaldo si lo del null es un fluke transitorio
+  // (cosa que watchUserDoc ahora ya filtra ignorando errores, pero por si
+  // acaso). El caché solo se limpia cuando hay logout explícito (u=null
+  // arriba en onAuthChange).
   useEffect(() => {
     if (!authUser) return
     const unsub = watchUserDoc(authUser.uid, doc => {
       setUserDoc(doc)
       setDocLoading(false)
-      writeUserDocCache(authUser.uid, doc)
+      if (doc) writeUserDocCache(authUser.uid, doc)
 
       // Si es admin email y no tiene doc → bootstrap
       if (!doc && authUser.email === ADMIN_EMAIL && bootstrappedFor.current !== authUser.uid) {

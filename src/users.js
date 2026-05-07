@@ -26,8 +26,15 @@ export function watchUserDoc(uid, callback) {
     userRef(uid),
     snap => callback(snap.exists() ? { uid: snap.id, ...snap.data() } : null),
     err => {
-      console.error('[users] error en watchUserDoc:', err)
-      callback(null)
+      // CRÍTICO: NO llamamos callback(null) aquí. Antes lo hacíamos y eso
+      // causaba que cuando la cajera se quedaba sin internet en medio del
+      // turno, este listener disparara error → AuthCtx recibía null →
+      // setUserDoc(null) → la app la mandaba a RegistrationForm o Login
+      // y "le cerraba la sesión" desde su perspectiva. El error suele ser
+      // transitorio (red caída, lock momentáneo, etc.) — el snapshot
+      // posterior trae el doc real. Mantener el último valor del callback
+      // permite que la cajera siga trabajando offline.
+      console.error('[users] watchUserDoc error (manteniendo último valor):', err?.message || err)
     }
   )
 }

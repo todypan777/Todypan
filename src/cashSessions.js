@@ -62,8 +62,11 @@ export function watchMyOpenSession(uid, callback) {
       else callback({ id: snap.docs[0].id, ...snap.docs[0].data() })
     },
     err => {
-      console.error('[cashSessions] watchMyOpenSession error:', err)
-      callback(null)
+      // Mismo razonamiento que watchUserDoc: no llamamos callback(null) en
+      // error porque eso le diría a CashierApp "no hay turno" → se mostraría
+      // pantalla "Sin turno asignado" aunque la cajera SÍ tenga turno abierto.
+      // Mantener el último valor permite seguir vendiendo offline.
+      console.error('[cashSessions] watchMyOpenSession error (manteniendo último valor):', err?.message || err)
     }
   )
 }

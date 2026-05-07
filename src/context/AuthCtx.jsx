@@ -14,15 +14,15 @@ const AuthCtx = createContext({
 
 // ─── Cachés en localStorage ──────────────────────────────────────────────
 //
-// Dos cachés:
-//   - userdoc: el documento completo del user en Firestore.
-//   - authuid: el uid del último user que estuvo logueado.
+// userDoc: el documento completo del user en Firestore.
 //
-// El authuid permite distinguir entre "este celular nunca tuvo sesión"
-// (el botón de Login es la pantalla correcta) y "tenía sesión y se cayó
-// la red" (esperar reconexión es lo correcto, NO mostrar Login).
+// Para detectar "este celular tuvo sesión antes" NO usamos un caché
+// propio (que requeriría que un commit anterior lo hubiera escrito).
+// En cambio, leemos DIRECTO de las keys que Firebase Auth guarda en
+// localStorage (`firebase:authUser:...`). Eso funciona sin importar
+// qué versión del código creó la sesión, y no depende de timing del
+// onAuthStateChanged.
 const USERDOC_CACHE_KEY = 'todypan_userdoc_cache_v1'
-const AUTHUID_CACHE_KEY = 'todypan_authuid_v1'
 
 export function readUserDocCache(uid) {
   if (!uid) return null
@@ -47,15 +47,23 @@ function writeUserDocCache(uid, doc) {
   } catch {}
 }
 
-export function readAuthUidCache() {
-  try { return localStorage.getItem(AUTHUID_CACHE_KEY) || null } catch { return null }
-}
-
-function writeAuthUidCache(uid) {
+/**
+ * True si Firebase Auth tiene una sesión guardada en localStorage. Detecta
+ * la presencia de cualquier key `firebase:authUser:...` que Firebase escribe
+ * al hacer setPersistence(browserLocalPersistence) + signIn exitoso. Esto
+ * sobrevive entre deploys y entre versiones del código — no depende de
+ * que nuestro código haya hecho algo "primero".
+ */
+export function hasCachedFirebaseSession() {
   try {
-    if (uid) localStorage.setItem(AUTHUID_CACHE_KEY, uid)
-    else localStorage.removeItem(AUTHUID_CACHE_KEY)
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('firebase:authUser:')) {
+        return true
+      }
+    }
   } catch {}
+  return false
 }
 
 export function AuthProvider({ children }) {
@@ -71,12 +79,6 @@ export function AuthProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(!initialUser)
   const [docLoading, setDocLoading] = useState(!!initialUser && !initialDoc)
   const bootstrappedFor = useRef(null)
-
-  // Si ya tenemos initialUser síncrono, persistir su uid en el caché de
-  // inmediato. Esto cubre el caso donde Firebase ya cargó la sesión antes
-  // del primer render — sin esto, la próxima recarga sin internet no podría
-  // distinguir "tenía sesión" de "nunca tuvo sesión".
-  if (initialUser) writeAuthUidCache(initialUser.uid)
 
   // 1. Auth listener (Firebase Auth)
   useEffect(() => {
@@ -94,9 +96,8 @@ export function AuthProvider({ children }) {
         const u = firebaseAuth.currentUser
         if (u) {
           setAuthUser(u)
-          writeAuthUidCache(u.uid)
           setAuthLoading(false)
-        } else if (!navigator.onLine && readAuthUidCache()) {
+        } else if (!navigator.onLine && hasCachedFirebaseSession()) {
           // Sesión cacheada pero Firebase no terminó de validar offline.
           // Liberamos el splash para que App.jsx muestre la pantalla de
           // "Sin conexión - reconectando..." en lugar de "Verificando sesión...".
@@ -114,21 +115,18 @@ export function AuthProvider({ children }) {
       // intenta refrescar el token. Si lo aceptamos, mostraríamos Login y
       // la cajera no podría entrar (sin red el botón de Google falla).
       // Mejor mantener el authUser anterior y esperar a que vuelva la red.
-      if (!u && !navigator.onLine && readAuthUidCache()) {
+      if (!u && !navigator.onLine && hasCachedFirebaseSession()) {
         console.warn('[Auth] onAuthChange(null) ignorado: estamos offline y había sesión cacheada')
         setAuthLoading(false)
         return
       }
       setAuthUser(u)
       setAuthLoading(false)
-      if (u) {
-        writeAuthUidCache(u.uid)
-      } else {
+      if (!u) {
         // Logout real (online): limpiar todo
         setUserDoc(null)
         setDocLoading(false)
         writeUserDocCache(null, null)
-        writeAuthUidCache(null)
       }
     })
 

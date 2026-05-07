@@ -6,7 +6,7 @@ import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
 import { DesktopCtx } from './context/DesktopCtx'
-import { AuthProvider, useAuth, readAuthUidCache, readUserDocCache } from './context/AuthCtx'
+import { AuthProvider, useAuth, hasCachedFirebaseSession, readUserDocCache } from './context/AuthCtx'
 import { ADMIN_EMAIL } from './auth'
 import { useOnlineStatus } from './utils/network'
 import Dashboard from './screens/Dashboard'
@@ -75,7 +75,7 @@ function AuthGate() {
   //     vuelva la red.
   //   - Si online o nunca hubo sesión → Login normal.
   if (!authUser) {
-    if (!online && readAuthUidCache()) {
+    if (!online && hasCachedFirebaseSession()) {
       return <LoadingScreen label="Sin conexión — reconectando tu sesión..." />
     }
     return <Login />

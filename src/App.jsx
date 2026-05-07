@@ -31,6 +31,7 @@ import {
   BootstrappingAdmin,
 } from './screens/AccountStates'
 import CashierApp from './screens/CashierApp'
+import CookApp from './screens/CookApp'
 
 const SIDEBAR_W = 230
 
@@ -55,7 +56,7 @@ export default function App() {
 }
 
 function AuthGate() {
-  const { authUser, userDoc: ctxUserDoc, loading, isAdmin: ctxIsAdmin, isCashier: ctxIsCashier } = useAuth()
+  const { authUser, userDoc: ctxUserDoc, loading, isAdmin: ctxIsAdmin, isCashier: ctxIsCashier, isCook: ctxIsCook } = useAuth()
   const online = useOnlineStatus()
 
   // Fallback al caché de localStorage cuando AuthCtx aún no nos dio userDoc.
@@ -65,6 +66,7 @@ function AuthGate() {
   const userDoc = ctxUserDoc || cachedDoc
   const isAdmin = ctxIsAdmin || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
   const isCashier = ctxIsCashier || (!!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved')
+  const isCook = ctxIsCook || (!!userDoc && userDoc.role === 'cook' && userDoc.status === 'approved')
 
   if (loading) return <LoadingScreen label="Verificando sesión..." />
 
@@ -94,14 +96,12 @@ function AuthGate() {
   if (userDoc.status === 'pending') return <PendingApproval authUser={authUser} userDoc={userDoc} />
   if (userDoc.status === 'inactive') return <Deactivated authUser={authUser} userDoc={userDoc} />
 
-  if (isAdmin || isCashier) {
-    return (
-      <ApprovedAppLoader>
-        {isAdmin
-          ? <AppShell />
-          : <CashierApp authUser={authUser} userDoc={userDoc} />}
-      </ApprovedAppLoader>
-    )
+  if (isAdmin || isCashier || isCook) {
+    let approvedApp
+    if (isAdmin) approvedApp = <AppShell />
+    else if (isCashier) approvedApp = <CashierApp authUser={authUser} userDoc={userDoc} />
+    else approvedApp = <CookApp authUser={authUser} userDoc={userDoc} />
+    return <ApprovedAppLoader>{approvedApp}</ApprovedAppLoader>
   }
 
   // Estado inesperado (rol vacío, status raro): mostrar Login fallback

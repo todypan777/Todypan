@@ -52,7 +52,11 @@ export function watchAllUsers(callback) {
   )
 }
 
-/** Crea un user pendiente (cajera nueva auto-registrándose). */
+/**
+ * Crea un user pendiente. El rol final lo decide el admin al aprobar; mientras
+ * tanto guardamos 'cashier' como default histórico — al aprobar se sobrescribe
+ * con 'cashier' o 'cook' según escoja el admin.
+ */
 export async function createPendingUser(authUser, nombre, apellido) {
   const data = {
     email: authUser.email,
@@ -92,7 +96,8 @@ export async function bootstrapAdminIfNeeded(authUser) {
 
 /**
  * Aprueba un user pendiente y crea su empleado vinculado.
- * employeeData: { nombre, apellido, telefono, cargo, branch, restDay, rate }
+ * employeeData: { nombre, apellido, telefono, cargo, branch, restDay, rate, role }
+ *   role: 'cashier' | 'cook'  (default 'cashier' por compatibilidad)
  */
 export async function approveUserAndCreateEmployee(uid, employeeData, approvedByUid) {
   const fullName = `${employeeData.nombre.trim()} ${employeeData.apellido.trim()}`.trim()
@@ -109,9 +114,12 @@ export async function approveUserAndCreateEmployee(uid, employeeData, approvedBy
   }
   const employeeId = addEmployee(empPayload)
 
+  const userRole = employeeData.role === 'cook' ? 'cook' : 'cashier'
+
   await updateDoc(userRef(uid), {
     nombre: employeeData.nombre.trim(),
     apellido: employeeData.apellido.trim(),
+    role: userRole,
     status: 'approved',
     approvedAt: serverTimestamp(),
     approvedBy: approvedByUid,

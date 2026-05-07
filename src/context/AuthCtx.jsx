@@ -9,6 +9,7 @@ const AuthCtx = createContext({
   loading: true,
   isAdmin: false,
   isCashier: false,
+  isCook: false,
   status: null,
 })
 
@@ -207,6 +208,7 @@ export function AuthProvider({ children }) {
   const loading = authLoading || (authUser && docLoading)
   const isAdmin = !!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved'
   const isCashier = !!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved'
+  const isCook = !!userDoc && userDoc.role === 'cook' && userDoc.status === 'approved'
 
   const value = {
     authUser,
@@ -214,6 +216,7 @@ export function AuthProvider({ children }) {
     loading,
     isAdmin,
     isCashier,
+    isCook,
     status: userDoc?.status || null,
   }
 

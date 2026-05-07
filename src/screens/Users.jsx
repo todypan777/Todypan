@@ -241,6 +241,7 @@ function primaryBtn() {
 
 // ─── Modal de aprobación ──────────────────────────────────────
 export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
+  const [role, setRole] = useState('cashier') // 'cashier' | 'cook'
   const [nombre, setNombre] = useState(user.nombre || '')
   const [apellido, setApellido] = useState(user.apellido || '')
   const [telefono, setTelefono] = useState('')
@@ -269,6 +270,7 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
           branch: 'both',
           restDay,
           rate: Number(salario),
+          role,
         },
         adminUid,
       )
@@ -295,7 +297,7 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
             Aprobar y crear empleada
           </div>
           <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4 }}>
-            Esta acción crea su registro en Equipo automáticamente.
+            Define su rol y datos. Se crea su registro en Equipo automáticamente.
           </div>
         </div>
 
@@ -316,9 +318,45 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
         </div>
 
         <div style={{ padding: '16px 22px 20px' }}>
+          {/* Selector de rol — define qué app verá la persona */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 8 }}>
+              ¿Qué rol va a tener?
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <RoleCard
+                selected={role === 'cashier'}
+                onClick={() => !busy && setRole('cashier')}
+                disabled={busy}
+                title="Cajera"
+                subtitle="Vende y maneja caja"
+                icon={
+                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                    <rect x="3" y="6" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none"/>
+                    <path d="M3 10 H19" stroke="currentColor" strokeWidth="1.6"/>
+                    <circle cx="7" cy="14" r="1.2" fill="currentColor"/>
+                  </svg>
+                }
+              />
+              <RoleCard
+                selected={role === 'cook'}
+                onClick={() => !busy && setRole('cook')}
+                disabled={busy}
+                title="Cocinera"
+                subtitle="Producción y cocina"
+                icon={
+                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                    <path d="M6 11 V18 H16 V11" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+                    <path d="M5 11 Q3 11 3 9 Q3 6 6 6 Q7 4 11 4 Q15 4 16 6 Q19 6 19 9 Q19 11 17 11" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+                  </svg>
+                }
+              />
+            </div>
+          </div>
+
           <ModalField label="Nombre" value={nombre} onChange={setNombre} placeholder="Ej. María" disabled={busy} autoFocus />
           <ModalField label="Apellido" value={apellido} onChange={setApellido} placeholder="Ej. González" disabled={busy} />
-          <ModalField label="Cargo" value={cargo} onChange={setCargo} placeholder="Ej. Panadera" disabled={busy} />
+          <ModalField label="Cargo" value={cargo} onChange={setCargo} placeholder={role === 'cook' ? 'Ej. Panadera de turno noche' : 'Ej. Cajera Panadería Iglesia'} disabled={busy} />
 
           {/* Día de descanso */}
           <div style={{ marginBottom: 12 }}>
@@ -484,5 +522,46 @@ function ModalOverlay({ onClose, children }) {
     }}>
       {children}
     </div>
+  )
+}
+
+// ─── Card de selección de rol (cajera/cocinera) ──────────────────────
+function RoleCard({ selected, onClick, disabled, title, subtitle, icon }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: '14px 12px', borderRadius: 14,
+        background: selected ? T.copper[50] : '#fff',
+        border: `1.5px solid ${selected ? T.copper[400] : T.neutral[200]}`,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit', textAlign: 'left',
+        display: 'flex', alignItems: 'center', gap: 10,
+        opacity: disabled ? 0.6 : 1,
+        transition: 'background 0.15s, border-color 0.15s',
+      }}
+    >
+      <div style={{
+        width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+        background: selected ? T.copper[100] : T.neutral[100],
+        color: selected ? T.copper[700] : T.neutral[600],
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background 0.15s, color 0.15s',
+      }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13.5, fontWeight: 700,
+          color: selected ? T.copper[700] : T.neutral[800],
+        }}>
+          {title}
+        </div>
+        <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2, lineHeight: 1.35 }}>
+          {subtitle}
+        </div>
+      </div>
+    </button>
   )
 }

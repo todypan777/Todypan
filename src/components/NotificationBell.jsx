@@ -186,8 +186,11 @@ function PendingUsersPopup({ users, onClose, onAllResolved }) {
     }
   }
 
+  // Si hay un user en proceso de aprobación, ocultamos el popup chico para
+  // que solo se vea el ApprovalModal arriba — evita el efecto "dos modales".
   return (
     <>
+    {!approving && (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 95,
       background: 'rgba(0,0,0,0.5)',
@@ -252,6 +255,7 @@ function PendingUsersPopup({ users, onClose, onAllResolved }) {
         }}>Después</button>
       </div>
     </div>
+    )}
 
     {/* Modal de aprobación con todos los datos (rol, nombre, salario, etc.) */}
     {approving && (

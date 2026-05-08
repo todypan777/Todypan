@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
-import { getData, setProductPriceForBranch, getBogotaDateStr } from '../db'
+import { getData, setProductPriceForBranch } from '../db'
+import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
@@ -21,7 +22,7 @@ import {
   isTableNumberTaken,
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
-import { watchDailyMenu } from '../menu'
+import { watchDailyMenu, watchMenuItems, getCorrienteState } from '../menu'
 import LunchPickerModal from '../components/LunchPickerModal'
 import SpecialLunchModal from '../components/SpecialLunchModal'
 
@@ -78,31 +79,59 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const [openTabs, setOpenTabs] = useState([])
   useEffect(() => watchOpenTabsForSession(session.id, setOpenTabs), [session.id])
 
-  // Listener del menú del día (para inyectar "Almuerzo Especial" como producto
-  // virtual cuando la cocinera lo active).
+  // Fecha REACTIVA — al cruzar medianoche, el watcher del dailyMenu salta al
+  // doc del día nuevo (que estará vacío hasta que la cocinera lo configure).
+  const today = useBogotaDate()
+
+  // Listeners del menú del día y el catálogo de opciones (para evaluar si el
+  // corriente está disponible: precio + sopas/proteínas/jugos activos).
   const [dailyMenu, setDailyMenu] = useState(null)
-  useEffect(() => watchDailyMenu(getBogotaDateStr(), setDailyMenu), [])
+  const [allMenuItems, setAllMenuItems] = useState([])
+  useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
+  useEffect(() => watchMenuItems(setAllMenuItems), [])
 
   const branchId = session.branchId
 
   const total = cart.reduce((s, it) => s + it.qty * it.unitPrice, 0)
 
-  // Catálogo enriquecido: si la cocinera activó el especial, inyecta un item
-  // virtual al inicio. La cajera lo ve como un producto más.
+  // Catálogo enriquecido con productos VIRTUALES de almuerzo:
+  //   - "Almuerzo Corriente" si está disponible (precio + opciones suficientes)
+  //   - "Almuerzo Especial" si la cocinera lo activó hoy
+  // Ambos definidos por la cocinera en el menú del día. NO vienen del admin.
+  //
+  // Defensiva: si por error histórico hay productos del admin con isLunch=true
+  // (de pruebas anteriores), se filtran del catálogo regular para que solo
+  // aparezcan los virtuales.
   const enrichedCatalog = useMemo(() => {
-    const sp = dailyMenu?.special
-    if (!sp?.active) return catalog
-    const specialItem = {
-      id: '__lunch_special__',
-      source: 'special',
-      name: 'Almuerzo Especial',
-      isLunch: true,
-      lunchKind: 'special',
-      priceMesa: Number(sp.priceMesa) || 0,
-      priceLlevar: Number(sp.priceLlevar) || Number(sp.priceMesa) || 0,
+    const baseCatalog = catalog.filter(p => p.isLunch !== true)
+    const extras = []
+    const corriente = getCorrienteState(dailyMenu, allMenuItems)
+    if (corriente.available) {
+      extras.push({
+        id: '__lunch_corriente__',
+        source: 'corriente',
+        name: 'Almuerzo Corriente',
+        isLunch: true,
+        lunchKind: 'menu',
+        priceMesa: Number(corriente.priceMesa) || 0,
+        priceLlevar: Number(corriente.priceLlevar) || Number(corriente.priceMesa) || 0,
+      })
     }
-    return [specialItem, ...catalog]
-  }, [catalog, dailyMenu?.special])
+    const sp = dailyMenu?.special
+    if (sp?.active && Number(sp.priceMesa) > 0) {
+      extras.push({
+        id: '__lunch_special__',
+        source: 'special',
+        name: 'Almuerzo Especial',
+        isLunch: true,
+        lunchKind: 'special',
+        priceMesa: Number(sp.priceMesa) || 0,
+        priceLlevar: Number(sp.priceLlevar) || Number(sp.priceMesa) || 0,
+      })
+    }
+    if (extras.length === 0) return baseCatalog
+    return [...extras, ...baseCatalog]
+  }, [catalog, dailyMenu, allMenuItems])
 
   const filtered = useMemo(() => {
     const q = normalizeName(query)

@@ -1,12 +1,14 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { UserAvatar } from './Atoms'
-import { watchAllUsers } from '../users'
+import { watchAllUsers, rejectPendingUser } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchAllSales } from '../sales'
 import { watchCashierProducts } from '../products'
 import { watchPendingChangeRequests } from '../productChangeRequests'
 import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
+import { useAuth } from '../context/AuthCtx'
+import { ApprovalModal } from '../screens/Users'
 
 /**
  * Campana de notificaciones flotante (top-right) siempre visible para el admin.
@@ -138,98 +140,208 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
       </button>
       )}
 
-      {/* Popup: usuarios pendientes (solo al primer detect) */}
+      {/* Popup: usuarios pendientes (solo al primer detect).
+          Aprobar/Rechazar directo aquí — sin pasos intermedios. */}
       {usersPopup && usersPopup.length > 0 && (
         <PendingUsersPopup
           users={usersPopup}
-          onReview={() => {
-            setUsersPopup(null)
-            onOpenUsers?.()
-          }}
-          onLater={() => setUsersPopup(null)}
+          onClose={() => setUsersPopup(null)}
+          onAllResolved={() => setUsersPopup(null)}
         />
       )}
     </>
   )
 }
 
-function PendingUsersPopup({ users, onReview, onLater }) {
+function PendingUsersPopup({ users, onClose, onAllResolved }) {
+  const { authUser } = useAuth()
+  // Lista local mutable: cuando se aprueba/rechaza uno, lo quitamos del popup
+  const [pending, setPending] = useState(users)
+  // user que está siendo aprobado (abre ApprovalModal)
+  const [approving, setApproving] = useState(null)
+  // user que está siendo rechazado (pide confirmación inline)
+  const [rejecting, setRejecting] = useState(null)
+  const [busyUid, setBusyUid] = useState(null)
+
+  // Si ya no quedan, cerrar
+  useEffect(() => {
+    if (pending.length === 0) onAllResolved?.()
+  }, [pending.length, onAllResolved])
+
+  function removeUser(uid) {
+    setPending(prev => prev.filter(u => u.uid !== uid))
+  }
+
+  async function handleReject(user) {
+    if (busyUid) return
+    setBusyUid(user.uid)
+    try {
+      await rejectPendingUser(user.uid)
+      removeUser(user.uid)
+      setRejecting(null)
+    } catch (err) {
+      console.error('[NotificationBell] reject failed:', err)
+    } finally {
+      setBusyUid(null)
+    }
+  }
+
   return (
-    <div onClick={onLater} style={{
+    <>
+    <div onClick={onClose} style={{
       position: 'fixed', inset: 0, zIndex: 95,
       background: 'rgba(0,0,0,0.5)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 24,
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 380,
+        width: '100%', maxWidth: 420,
         background: '#fff', borderRadius: 22,
-        padding: '28px 24px 22px',
+        padding: '24px 22px 18px',
         boxShadow: '0 20px 60px rgba(0,0,0,0.25)',
         animation: 'fadeScaleIn 0.22s ease',
+        maxHeight: '92vh', overflowY: 'auto',
       }}>
         <div style={{
-          width: 68, height: 68, borderRadius: 999,
+          width: 60, height: 60, borderRadius: 999,
           background: T.copper[50], border: `1px solid ${T.copper[100]}`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 16px',
+          margin: '0 auto 12px',
         }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="9" r="4" stroke={T.copper[600]} strokeWidth="1.8" fill="none"/>
             <path d="M4 21 Q4 14 12 14 Q20 14 20 21" stroke={T.copper[600]} strokeWidth="1.8" fill="none"/>
           </svg>
         </div>
         <div style={{
-          fontSize: 19, fontWeight: 800, color: T.neutral[900],
-          textAlign: 'center', marginBottom: 6,
+          fontSize: 18, fontWeight: 800, color: T.neutral[900],
+          textAlign: 'center', marginBottom: 4, letterSpacing: -0.3,
         }}>
-          {users.length === 1 ? 'Una solicitud nueva' : `${users.length} solicitudes nuevas`}
+          {pending.length === 1 ? 'Una solicitud nueva' : `${pending.length} solicitudes nuevas`}
         </div>
         <div style={{
-          fontSize: 13.5, color: T.neutral[600], textAlign: 'center',
-          marginBottom: 18, lineHeight: 1.5,
+          fontSize: 12.5, color: T.neutral[500], textAlign: 'center',
+          marginBottom: 16, lineHeight: 1.4,
         }}>
-          {users.length === 1
-            ? 'Una persona quiere acceso a TodyPan.'
-            : 'Varias personas quieren acceso a TodyPan.'}
+          Aprueba o rechaza desde aquí mismo.
         </div>
+
         <div style={{
-          maxHeight: 220, overflowY: 'auto',
-          background: T.neutral[50], borderRadius: 12,
-          padding: '4px 0', marginBottom: 18,
+          display: 'flex', flexDirection: 'column', gap: 8,
+          marginBottom: 14,
         }}>
-          {users.slice(0, 4).map((u, i) => (
-            <div key={u.uid} style={{
-              padding: '10px 14px',
-              display: 'flex', alignItems: 'center', gap: 10,
-              borderBottom: i < Math.min(users.length, 4) - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-            }}>
-              <UserAvatar user={u} size={32} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[900] }}>
-                  {u.nombre} {u.apellido}
-                </div>
-                <div style={{ fontSize: 11, color: T.neutral[500] }}>{u.email}</div>
-              </div>
-            </div>
+          {pending.map(u => (
+            <PendingUserRow
+              key={u.uid}
+              user={u}
+              busy={busyUid === u.uid}
+              isRejecting={rejecting?.uid === u.uid}
+              onApprove={() => setApproving(u)}
+              onAskReject={() => setRejecting(u)}
+              onCancelReject={() => setRejecting(null)}
+              onConfirmReject={() => handleReject(u)}
+            />
           ))}
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onLater} style={{
-            flex: 1, padding: '12px', borderRadius: 12,
-            background: T.neutral[100], color: T.neutral[700],
-            border: 'none', cursor: 'pointer',
-            fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
-          }}>Después</button>
-          <button onClick={onReview} style={{
-            flex: 1.4, padding: '12px', borderRadius: 12,
-            background: T.copper[500], color: '#fff',
-            border: 'none', cursor: 'pointer',
-            fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
-            boxShadow: '0 3px 10px rgba(184,122,86,0.3)',
-          }}>Revisar</button>
+
+        <button onClick={onClose} style={{
+          width: '100%', padding: '11px', borderRadius: 12,
+          background: T.neutral[100], color: T.neutral[700],
+          border: 'none', cursor: 'pointer',
+          fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+        }}>Después</button>
+      </div>
+    </div>
+
+    {/* Modal de aprobación con todos los datos (rol, nombre, salario, etc.) */}
+    {approving && (
+      <ApprovalModal
+        user={approving}
+        adminUid={authUser.uid}
+        onCancel={() => setApproving(null)}
+        onDone={() => {
+          removeUser(approving.uid)
+          setApproving(null)
+        }}
+      />
+    )}
+    </>
+  )
+}
+
+function PendingUserRow({ user, busy, isRejecting, onApprove, onAskReject, onCancelReject, onConfirmReject }) {
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 14,
+      background: '#fff', border: `1px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        marginBottom: isRejecting ? 10 : 8,
+      }}>
+        <UserAvatar user={user} size={36} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {user.nombre} {user.apellido}
+          </div>
+          <div style={{
+            fontSize: 11.5, color: T.neutral[500],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {user.email}
+          </div>
         </div>
       </div>
+
+      {isRejecting ? (
+        <div style={{
+          padding: '10px 12px', borderRadius: 10,
+          background: '#FBE9E5', border: `1px solid #F0C8BE`,
+        }}>
+          <div style={{ fontSize: 12.5, color: T.bad, fontWeight: 700, marginBottom: 8 }}>
+            ¿Rechazar la solicitud?
+          </div>
+          <div style={{ fontSize: 11.5, color: T.neutral[700], marginBottom: 10, lineHeight: 1.4 }}>
+            La cuenta queda inactiva. Podrás reactivarla luego desde Equipo.
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={onCancelReject} disabled={busy} style={{
+              flex: 1, padding: '8px', borderRadius: 8,
+              background: '#fff', color: T.neutral[700],
+              border: `1px solid ${T.neutral[200]}`,
+              cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+            }}>No</button>
+            <button onClick={onConfirmReject} disabled={busy} style={{
+              flex: 1.4, padding: '8px', borderRadius: 8,
+              background: T.bad, color: '#fff',
+              border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+              opacity: busy ? 0.7 : 1,
+            }}>{busy ? 'Rechazando...' : 'Sí, rechazar'}</button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={onAskReject} disabled={busy} style={{
+            flex: 1, padding: '9px 10px', borderRadius: 10,
+            background: 'transparent', color: T.bad,
+            border: `1.5px solid ${T.bad}55`,
+            cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 700,
+          }}>Rechazar</button>
+          <button onClick={onApprove} disabled={busy} style={{
+            flex: 1.6, padding: '9px 10px', borderRadius: 10,
+            background: T.copper[500], color: '#fff',
+            border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 800,
+            boxShadow: '0 3px 10px rgba(184,122,86,0.35)',
+          }}>✓ Aprobar</button>
+        </div>
+      )}
     </div>
   )
 }

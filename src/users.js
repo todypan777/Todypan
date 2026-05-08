@@ -129,6 +129,21 @@ export async function approveUserAndCreateEmployee(uid, employeeData, approvedBy
   return employeeId
 }
 
+/**
+ * Cambia el rol de un usuario aprobado entre 'cashier' y 'cook'.
+ * Útil cuando se aprobó por error (ej: marcaron Cajera siendo Cocinera).
+ * NO permite cambiar el rol del admin ni asignar 'admin'.
+ */
+export async function changeUserRole(uid, newRole) {
+  if (newRole !== 'cashier' && newRole !== 'cook') {
+    throw new Error('Rol inválido')
+  }
+  await updateDoc(userRef(uid), {
+    role: newRole,
+    roleChangedAt: serverTimestamp(),
+  })
+}
+
 /** Desactiva un usuario (sin borrar). */
 export async function deactivateUser(uid) {
   await updateDoc(userRef(uid), {

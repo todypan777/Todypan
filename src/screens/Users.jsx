@@ -241,7 +241,10 @@ function primaryBtn() {
 
 // ─── Modal de aprobación ──────────────────────────────────────
 export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
-  const [role, setRole] = useState('cashier') // 'cashier' | 'cook'
+  // Sin default — el admin DEBE elegir el rol explícitamente. Evita el bug
+  // de aprobar una cocinera por error como cajera y que vea pantalla "sin
+  // turno asignado".
+  const [role, setRole] = useState(null) // null | 'cashier' | 'cook'
   const [nombre, setNombre] = useState(user.nombre || '')
   const [apellido, setApellido] = useState(user.apellido || '')
   const [telefono, setTelefono] = useState('')
@@ -251,7 +254,8 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  const valid = nombre.trim().length >= 2
+  const valid = role !== null
+    && nombre.trim().length >= 2
     && apellido.trim().length >= 2
     && telefono.trim().length >= 7
     && cargo.trim().length >= 2
@@ -318,10 +322,22 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
         </div>
 
         <div style={{ padding: '16px 22px 20px' }}>
-          {/* Selector de rol — define qué app verá la persona */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 8 }}>
-              ¿Qué rol va a tener?
+          {/* Selector de rol — OBLIGATORIO, define qué app verá la persona.
+              Sin default para que el admin no apruebe por error como cajera. */}
+          <div style={{
+            marginBottom: 14, padding: role === null ? '12px 14px 14px' : 0,
+            background: role === null ? '#FFF7E6' : 'transparent',
+            border: role === null ? `1.5px solid ${T.warn}55` : 'none',
+            borderRadius: role === null ? 12 : 0,
+            transition: 'background 0.2s, border-color 0.2s',
+          }}>
+            <label style={{
+              fontSize: 12, fontWeight: 700,
+              color: role === null ? T.warn : T.neutral[600],
+              display: 'block', marginBottom: 8,
+              letterSpacing: 0.2,
+            }}>
+              {role === null ? '⚠ Escoge el rol primero' : '¿Qué rol va a tener?'}
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <RoleCard

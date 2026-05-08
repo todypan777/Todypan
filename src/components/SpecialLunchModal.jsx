@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { watchDailyMenu } from '../menu'
-import { getBogotaDateStr } from '../db'
+import { useBogotaDate } from '../utils/useBogotaDate'
 
 // ──────────────────────────────────────────────────────────────────
 // Modal de "Almuerzo Especial".
@@ -12,7 +12,7 @@ import { getBogotaDateStr } from '../db'
 // Si la cocinera no activó el especial hoy, muestra mensaje y NO permite agregar.
 // ──────────────────────────────────────────────────────────────────
 export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 }) {
-  const today = getBogotaDateStr()
+  const today = useBogotaDate()
   const [dailyMenu, setDailyMenu] = useState(null)
   const [destination, setDestination] = useState('mesa')
   const [description, setDescription] = useState('')

@@ -6,9 +6,18 @@ import { ScreenHeader } from '../components/Nav'
 import { addEmployee, updateEmployee, deleteEmployee, togglePaid, payAllPending, getData } from '../db'
 import { generatePayrollPDF } from '../utils/pdf'
 import { watchPendingDeductionsForEmployee, applyDeductions } from '../cashierDeductions'
-import { watchAllUsers, deactivateUser, reactivateUser, rejectPendingUser } from '../users'
+import { watchAllUsers, deactivateUser, reactivateUser, rejectPendingUser, changeUserRole } from '../users'
 import { useAuth } from '../context/AuthCtx'
 import { ApprovalModal, ConfirmUserModal } from './Users'
+
+// Etiqueta visible del rol del usuario. Mantiene "Empleado" como fallback
+// cuando no hay rol definido (datos viejos).
+function roleBadge(role) {
+  if (role === 'admin') return 'Admin'
+  if (role === 'cook') return 'Cocinera'
+  if (role === 'cashier') return 'Cajera'
+  return 'Empleado'
+}
 
 export default function Team({ filter, setFilter, employees, attendance, onRefresh, initialEmpId, onClearEmpId }) {
   const { authUser } = useAuth()
@@ -206,12 +215,12 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
                             background: T.copper[50], padding: '2px 6px', borderRadius: 999,
                             letterSpacing: 0.4, textTransform: 'uppercase',
                           }}>
-                            {x.linkedUser.role === 'admin' ? 'Admin' : 'Cajera'}
+                            {roleBadge(x.linkedUser.role)}
                           </span>
                         )}
                       </div>
                       <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {x.emp.role || (x.linkedUser ? 'Cajera' : 'Empleado')} · <BranchChip branch={x.emp.branch} size="sm"/>
+                        {x.emp.role || (x.linkedUser ? roleBadge(x.linkedUser.role) : 'Empleado')} · <BranchChip branch={x.emp.branch} size="sm"/>
                       </div>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -438,6 +447,8 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
   const [showConfirmPay, setShowConfirmPay] = useState(false)
   const [pendingDeductions, setPendingDeductions] = useState([])
   const [confirmDeactivate, setConfirmDeactivate] = useState(false)
+  const [confirmRoleChange, setConfirmRoleChange] = useState(null) // 'cashier' | 'cook'
+  const [changingRole, setChangingRole] = useState(false)
   const att = attendance[emp.id] || {}
 
   // Buscar la cuenta vinculada (si existe)
@@ -566,7 +577,7 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
                   color: linkedUser.status === 'inactive' ? T.neutral[500] : T.copper[700],
                   letterSpacing: 0.5, textTransform: 'uppercase',
                 }}>
-                  Cuenta {linkedUser.role === 'admin' ? 'Administrador' : 'Cajera'}
+                  Cuenta {roleBadge(linkedUser.role)}
                 </div>
                 <div style={{
                   fontSize: 13, fontWeight: 600, color: T.neutral[800], marginTop: 2,
@@ -615,6 +626,32 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
                 ) : null
               )}
             </div>
+
+            {/* Cambio de rol — solo para cuentas activas que NO sean admin */}
+            {linkedUser.role !== 'admin' && linkedUser.status === 'approved' && (
+              <div style={{
+                marginTop: 10, paddingTop: 10,
+                borderTop: `1px dashed ${T.copper[200]}`,
+                display: 'flex', alignItems: 'center', gap: 8,
+              }}>
+                <div style={{ flex: 1, fontSize: 11.5, color: T.neutral[600] }}>
+                  ¿Te equivocaste de rol al aprobar?
+                </div>
+                <button
+                  onClick={() => setConfirmRoleChange(linkedUser.role === 'cook' ? 'cashier' : 'cook')}
+                  disabled={changingRole}
+                  style={{
+                    padding: '7px 12px', borderRadius: 10,
+                    background: '#fff', color: T.copper[700],
+                    border: `1px solid ${T.copper[300]}`,
+                    cursor: changingRole ? 'wait' : 'pointer', fontFamily: 'inherit',
+                    fontSize: 11.5, fontWeight: 700, flexShrink: 0,
+                  }}
+                >
+                  Cambiar a {linkedUser.role === 'cook' ? 'Cajera' : 'Cocinera'}
+                </button>
+              </div>
+            )}
           </Card>
         </div>
       )}
@@ -861,6 +898,58 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
               background: T.bad, color: '#fff',
               fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
             }}>Desactivar</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirmar cambio de rol */}
+      {confirmRoleChange && linkedUser && (
+        <Modal onClose={() => !changingRole && setConfirmRoleChange(null)} title="¿Cambiar rol?">
+          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8, lineHeight: 1.5 }}>
+            <b>{linkedUser.nombre} {linkedUser.apellido}</b> pasa de
+            <b style={{ color: T.copper[700] }}> {roleBadge(linkedUser.role)}</b> a
+            <b style={{ color: T.copper[700] }}> {roleBadge(confirmRoleChange)}</b>.
+          </div>
+          <div style={{
+            padding: '10px 12px', borderRadius: 10, marginBottom: 18,
+            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            fontSize: 12.5, color: T.copper[700], lineHeight: 1.5,
+          }}>
+            {confirmRoleChange === 'cook'
+              ? '🍳 Verá la pantalla de Cocina (catálogo, menú del día, pedidos).'
+              : '💼 Verá la pantalla de Cajera (ventas y caja).'}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={() => setConfirmRoleChange(null)} disabled={changingRole} style={{
+              flex: 1, padding: 13, borderRadius: 12, border: 'none',
+              background: T.neutral[100], color: T.neutral[700],
+              fontSize: 15, fontWeight: 600,
+              cursor: changingRole ? 'wait' : 'pointer', fontFamily: 'inherit',
+            }}>Cancelar</button>
+            <button
+              onClick={async () => {
+                setChangingRole(true)
+                try {
+                  await changeUserRole(linkedUser.uid, confirmRoleChange)
+                  setConfirmRoleChange(null)
+                  onRefresh?.()
+                } catch (err) {
+                  console.error('[Team] changeUserRole failed:', err)
+                } finally {
+                  setChangingRole(false)
+                }
+              }}
+              disabled={changingRole}
+              style={{
+                flex: 1, padding: 13, borderRadius: 12, border: 'none',
+                background: T.copper[500], color: '#fff',
+                fontSize: 15, fontWeight: 700,
+                cursor: changingRole ? 'wait' : 'pointer', fontFamily: 'inherit',
+                opacity: changingRole ? 0.7 : 1,
+              }}
+            >
+              {changingRole ? 'Cambiando...' : 'Sí, cambiar'}
+            </button>
           </div>
         </Modal>
       )}

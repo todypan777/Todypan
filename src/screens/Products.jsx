@@ -866,9 +866,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
   const branches = getData().branches || []
   const [name,            setName]            = useState(initial?.name || '')
   const [freeAmount,      setFreeAmount]      = useState(initial?.freeAmount === true)
-  const [isLunch,         setIsLunch]         = useState(initial?.isLunch === true)
-  const [priceMesa,       setPriceMesa]       = useState(initial?.priceMesa != null ? String(initial.priceMesa) : '')
-  const [priceLlevar,     setPriceLlevar]     = useState(initial?.priceLlevar != null ? String(initial.priceLlevar) : '')
   const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? true)
   const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null ? String(initial.packageCost) : '')
   const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null ? String(initial.unitsPerPackage) : '')
@@ -901,42 +898,15 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
 
   // Solo requiere nombre + costo. Los precios son opcionales (cajera los pone al usar).
   // Si es venta libre: NO requiere costo (el costo lo decide la cajera al venderlo).
-  // Si es almuerzo: requiere priceMesa > 0 (priceLlevar opcional, default = priceMesa).
-  const lunchPriceMesa = Number(priceMesa) || 0
-  const lunchPriceLlevar = Number(priceLlevar) || 0
-  const canSave = name.trim() && (
-    isLunch
-      ? lunchPriceMesa > 0
-      : freeAmount || (pc > 0 && (!byPackage || up > 0))
-  )
+  const canSave = name.trim() && (freeAmount || (pc > 0 && (!byPackage || up > 0)))
 
   function handleSave() {
     if (!canSave) return
-    // Almuerzo (con menú del día): tiene 2 precios fijos. Costo opcional.
-    if (isLunch) {
-      const data = {
-        name: name.trim(),
-        isLunch: true,
-        freeAmount: false,
-        priceMesa: lunchPriceMesa,
-        priceLlevar: lunchPriceLlevar > 0 ? lunchPriceLlevar : lunchPriceMesa,
-        pricesByBranch: {},
-        packageCost: pc,
-        unitsPerPackage: byPackage ? up : 1,
-        byPackage,
-        notes: notes.trim(),
-      }
-      if (isEdit) updateProduct(initial.id, data)
-      else addProduct(data)
-      onSave()
-      return
-    }
     // Si es venta libre: NO se guardan precios ni costo (el monto lo elige la cajera).
     if (freeAmount) {
       const data = {
         name: name.trim(),
         freeAmount: true,
-        isLunch: false,
         pricesByBranch: {},
         packageCost: 0,
         unitsPerPackage: 1,
@@ -960,7 +930,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
     const data = {
       name: name.trim(),
       freeAmount: false,
-      isLunch: false,
       byPackage,
       packageCost: pc,
       unitsPerPackage: byPackage ? up : 1,
@@ -985,43 +954,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         placeholder="Ej: Pan tajado, Croissant..."
       />
 
-      {/* Toggle Almuerzo (con menú del día) */}
-      <div style={{ marginBottom: 10 }}>
-        <button
-          onClick={() => { setIsLunch(v => !v); if (!isLunch) setFreeAmount(false) }}
-          style={{
-            width: '100%', padding: '14px',
-            background: isLunch ? T.copper[50] : '#fff',
-            border: `1.5px solid ${isLunch ? T.copper[400] : T.neutral[200]}`,
-            borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
-            display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
-          }}
-        >
-          <div style={{
-            width: 22, height: 22, borderRadius: 6,
-            background: isLunch ? T.copper[500] : T.neutral[100],
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
-          }}>
-            {isLunch && (
-              <svg width="14" height="14" viewBox="0 0 14 14">
-                <path d="M3 7 L6 10 L11 4" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            )}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, color: isLunch ? T.copper[700] : T.neutral[800] }}>
-              🍽️ Almuerzo (con menú del día)
-            </div>
-            <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2, lineHeight: 1.4 }}>
-              La cajera abre el menú de hoy y escoge sopa/proteína/etc. La cocinera lo prepara.
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {/* Toggle Venta libre (oculto si es almuerzo) */}
-      {!isLunch && (
+      {/* Toggle Venta libre */}
       <div style={{ marginBottom: 14 }}>
         <button
           onClick={() => setFreeAmount(v => !v)}
@@ -1055,48 +988,9 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
           </div>
         </button>
       </div>
-      )}
-
-      {/* Almuerzo: pide priceMesa y priceLlevar fijos */}
-      {isLunch && (
-        <>
-          <div style={{
-            padding: '12px 14px', borderRadius: 12,
-            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-            fontSize: 12.5, color: T.copper[700], lineHeight: 1.5, marginBottom: 14,
-          }}>
-            🍽️ Define los precios. La cajera verá el menú del día publicado por la cocinera.
-            Si la cocinera no ha publicado nada, este producto aparece con un aviso.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-                Para mesa ($)
-              </div>
-              <input
-                type="number" min="0" value={priceMesa}
-                onChange={e => setPriceMesa(e.target.value)}
-                placeholder="Ej: 15000"
-                style={inputStyle}
-              />
-            </div>
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-                Para llevar ($)
-              </div>
-              <input
-                type="number" min="0" value={priceLlevar}
-                onChange={e => setPriceLlevar(e.target.value)}
-                placeholder="Si vacío = igual a mesa"
-                style={inputStyle}
-              />
-            </div>
-          </div>
-        </>
-      )}
 
       {/* Si es venta libre, NO mostrar costo ni precios — saltamos directo a notas */}
-      {!isLunch && freeAmount ? (
+      {freeAmount ? (
         <div style={{
           padding: '12px 14px', borderRadius: 12,
           background: T.copper[50], border: `1px solid ${T.copper[100]}`,
@@ -1105,7 +999,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
           ✓ Producto de venta libre. La cajera escribirá el monto al vender (mínimo $400).
           No requiere precio ni costo.
         </div>
-      ) : !isLunch ? (
+      ) : (
       <>
       {/* Toggle paquete */}
       <div style={{ marginBottom: 14 }}>
@@ -1236,7 +1130,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       )}
       </>
-      ) : null}
+      )}
 
       {/* Notas opcionales */}
       <div style={{ marginBottom: 20 }}>

@@ -3,13 +3,14 @@ import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
 import { fmtCOP } from '../utils/format'
-import { getBogotaDateStr } from '../db'
 import {
   CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
   watchMenuItems, watchDailyMenu,
   createMenuItem, renameMenuItem, archiveMenuItem, unarchiveMenuItem,
-  setDailyMenuItem, setDailySpecial,
+  setDailyMenuItem, setDailySpecial, setDailyCorriente,
+  getCorrienteState, copyMenuFromDate, previousDateStr,
 } from '../menu'
+import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchKitchenQueue, markOrderReady, unmarkOrderReady,
 } from '../kitchenOrders'
@@ -391,10 +392,13 @@ function KitchenOrderRow({ order, isLast }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {CATEGORIES.map(cat => {
               const sel = selections[cat.id]
-              // Categorías "principio/side/salad" cuando NO se eligió → mostrar en grande "SIN ARROZ"
-              const isFixedCat = !cat.multi && cat.id !== 'soup' && cat.id !== 'protein' && cat.id !== 'juice'
+              // Solo el ACOMPAÑANTE (arroz) genera alerta "SIN ARROZ" en grande
+              // cuando la cajera lo quita explícitamente — porque va por defecto.
+              // Las demás categorías opcionales (principio, ensalada) que no se
+              // eligen simplemente no aparecen en la comanda.
+              const isFixedSingle = cat.id === 'side'
               if (!sel) {
-                if (isFixedCat) {
+                if (isFixedSingle) {
                   return (
                     <div key={cat.id} style={{
                       fontSize: 13.5, fontWeight: 800, color: T.bad,
@@ -489,7 +493,7 @@ function formatElapsed(secs) {
 // VISTA 2: Menú del día — toggles de qué hay disponible HOY
 // ──────────────────────────────────────────────────────────────
 function DailyMenuView({ authUser, userDoc }) {
-  const today = getBogotaDateStr()
+  const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Cocinera'
@@ -515,17 +519,29 @@ function DailyMenuView({ authUser, userDoc }) {
     return out
   }, [dailyMenu])
 
+  // Estado del corriente HOY (precios + categorías OK)
+  const corriente = useMemo(
+    () => getCorrienteState(dailyMenu, allItems),
+    [dailyMenu, allItems]
+  )
+
+  // ¿El doc de hoy está completamente vacío? (sin precios, sin opciones, sin especial activo)
+  const dailyIsEmpty = !dailyMenu
+    || (
+      !dailyMenu.itemsByCategory
+      && (!dailyMenu.corriente || (!dailyMenu.corriente.priceMesa && !dailyMenu.corriente.priceLlevar))
+      && (!dailyMenu.special || !dailyMenu.special.active)
+    )
+
   async function toggleItem(category, itemId) {
     const cat = CATEGORY_BY_ID[category]
     const current = dailyMenu?.itemsByCategory?.[category] || []
     let next
     if (cat.multi) {
-      // Multi: agrega o quita del array
       next = current.includes(itemId)
         ? current.filter(id => id !== itemId)
         : [...current, itemId]
     } else {
-      // No-multi: si ya estaba, lo quita; si no, reemplaza al único
       next = current.includes(itemId) ? [] : [itemId]
     }
     await setDailyMenuItem(today, category, next, {
@@ -536,8 +552,28 @@ function DailyMenuView({ authUser, userDoc }) {
 
   return (
     <div style={{ padding: '16px 14px 80px' }}>
+      {/* Botón "Copiar lo de ayer" — solo si el día está vacío */}
+      {dailyIsEmpty && (
+        <CopyYesterdayCard
+          today={today}
+          authUser={authUser}
+          adminName={adminName}
+        />
+      )}
+
+      {/* Card "Almuerzo Corriente" — siempre visible, define precios */}
+      <CorrienteSection
+        corriente={corriente}
+        date={today}
+        authUser={authUser}
+        adminName={adminName}
+        existingPriceMesa={dailyMenu?.corriente?.priceMesa}
+        existingPriceLlevar={dailyMenu?.corriente?.priceLlevar}
+      />
+
+      {/* Categorías del corriente */}
       <div style={{
-        padding: '12px 14px', borderRadius: 12, marginBottom: 16,
+        padding: '10px 14px', borderRadius: 12, margin: '4px 0 14px',
         background: T.copper[50], border: `1px solid ${T.copper[100]}`,
         fontSize: 12.5, color: T.copper[700], lineHeight: 1.5,
       }}>
@@ -561,6 +597,184 @@ function DailyMenuView({ authUser, userDoc }) {
         authUser={authUser}
         adminName={adminName}
       />
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Card "Almuerzo Corriente": precios + estado de disponibilidad
+// ──────────────────────────────────────────────────────────────
+function CorrienteSection({ corriente, date, authUser, adminName, existingPriceMesa, existingPriceLlevar }) {
+  const [editing, setEditing] = useState(false)
+  const [priceMesa, setPriceMesa] = useState(String(existingPriceMesa || ''))
+  const [priceLlevar, setPriceLlevar] = useState(String(existingPriceLlevar || ''))
+  const [busy, setBusy] = useState(false)
+
+  // Cuando los datos del doc cambian (snapshot), reflejarlos en los inputs
+  // si NO estamos editando — para no sobrescribir lo que la cocinera escribe.
+  useEffect(() => {
+    if (!editing) {
+      setPriceMesa(String(existingPriceMesa || ''))
+      setPriceLlevar(String(existingPriceLlevar || ''))
+    }
+  }, [editing, existingPriceMesa, existingPriceLlevar])
+
+  async function handleSave() {
+    const pm = Number(priceMesa) || 0
+    const pl = Number(priceLlevar) || 0
+    if (pm <= 0) return
+    setBusy(true)
+    try {
+      await setDailyCorriente(date, {
+        priceMesa: pm,
+        priceLlevar: pl > 0 ? pl : pm,
+      }, { publishedBy: authUser.uid, publishedByName: adminName })
+      setEditing(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const tone = corriente.available
+    ? { bg: '#E8F4E8', border: T.ok + '55', label: 'Disponible', labelColor: T.ok }
+    : { bg: '#FFF7E6', border: '#F4E0BC', label: 'Falta configurar', labelColor: T.warn }
+
+  return (
+    <div style={{
+      padding: '14px 16px', borderRadius: 16, marginBottom: 14,
+      background: tone.bg, border: `1.5px solid ${tone.border}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 18 }}>🍽️</span>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900] }}>
+          Almuerzo Corriente
+        </div>
+        <span style={{
+          fontSize: 10, fontWeight: 700, color: tone.labelColor,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+          padding: '2px 7px', borderRadius: 999,
+          background: '#fff', border: `1px solid ${tone.border}`,
+        }}>
+          {tone.label}
+        </span>
+      </div>
+
+      {!corriente.available && (
+        <div style={{ fontSize: 12, color: T.neutral[600], marginBottom: 12, lineHeight: 1.5 }}>
+          {corriente.missingPrice && 'Falta poner precio. '}
+          {corriente.missingCategories.length > 0 && (
+            <>Falta activar opciones de: <b>{corriente.missingCategories.join(', ')}</b>.</>
+          )}
+        </div>
+      )}
+
+      {editing ? (
+        <div>
+          <FieldLabel>Precio para mesa ($)</FieldLabel>
+          <input type="number" value={priceMesa} onChange={e => setPriceMesa(e.target.value)}
+            placeholder="Ej. 15000" style={inputStyle()} />
+          <FieldLabel>Precio para llevar ($)</FieldLabel>
+          <input type="number" value={priceLlevar} onChange={e => setPriceLlevar(e.target.value)}
+            placeholder="Si vacío, se usa el de mesa" style={inputStyle()} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button onClick={() => setEditing(false)} disabled={busy} style={btnSecondary()}>Cancelar</button>
+            <button onClick={handleSave} disabled={busy || !priceMesa} style={btnPrimary(T.copper[500])}>
+              {busy ? 'Guardando...' : 'Guardar precios'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {(corriente.priceMesa > 0 || corriente.priceLlevar > 0) ? (
+            <div style={{
+              padding: '10px 12px', borderRadius: 10, background: '#fff',
+              marginBottom: 10, border: `1px solid ${T.neutral[100]}`,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+                <span style={{ fontSize: 12.5, color: T.neutral[600] }}>Para mesa</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtCOP(corriente.priceMesa || 0)}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ fontSize: 12.5, color: T.neutral[600] }}>Para llevar</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtCOP(corriente.priceLlevar || 0)}
+                </span>
+              </div>
+            </div>
+          ) : null}
+          <button onClick={() => setEditing(true)} disabled={busy} style={btnGhost(T.copper[600])}>
+            ✎ {corriente.priceMesa > 0 ? 'Cambiar precios' : 'Definir precios'}
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Botón "Copiar lo de ayer"
+// ──────────────────────────────────────────────────────────────
+function CopyYesterdayCard({ today, authUser, adminName }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [done, setDone] = useState(false)
+
+  async function handleCopy() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      const yesterday = previousDateStr(today)
+      const ok = await copyMenuFromDate(yesterday, today, {
+        publishedBy: authUser.uid,
+        publishedByName: adminName,
+      })
+      if (!ok) {
+        setError('No hay menú del día anterior para copiar.')
+      } else {
+        setDone(true)
+      }
+    } catch (err) {
+      console.error('[menu] copy failed:', err)
+      setError('No pudimos copiar el menú. Intenta de nuevo.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (done) return null
+
+  return (
+    <div style={{
+      padding: '12px 14px', borderRadius: 14, marginBottom: 14,
+      background: T.neutral[100], border: `1px dashed ${T.neutral[300]}`,
+    }}>
+      <div style={{ fontSize: 13, color: T.neutral[700], marginBottom: 8, lineHeight: 1.4 }}>
+        ¿Mismo menú que ayer? Cópialo y solo ajusta lo que cambia.
+      </div>
+      <button
+        onClick={handleCopy}
+        disabled={busy}
+        style={{
+          width: '100%', padding: '11px 14px', borderRadius: 12,
+          background: T.neutral[800], color: '#fff',
+          border: 'none', cursor: busy ? 'wait' : 'pointer',
+          fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+          opacity: busy ? 0.7 : 1,
+        }}
+      >
+        {busy ? 'Copiando...' : '📋 Copiar lo de ayer'}
+      </button>
+      {error && (
+        <div style={{
+          marginTop: 8, padding: '8px 10px', borderRadius: 8,
+          background: '#FBE9E5', border: `1px solid #F0C8BE`,
+          color: T.bad, fontSize: 12, textAlign: 'center',
+        }}>
+          {error}
+        </div>
+      )}
     </div>
   )
 }

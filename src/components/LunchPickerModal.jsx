@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import {
-  CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
+  CATEGORIES,
   watchMenuItems, watchDailyMenu, resolveDailyMenu,
 } from '../menu'
-import { getBogotaDateStr } from '../db'
+import { useBogotaDate } from '../utils/useBogotaDate'
 
 // ──────────────────────────────────────────────────────────────────
 // Modal de selección de almuerzo. Se abre cuando la cajera escoge un
@@ -24,7 +24,7 @@ import { getBogotaDateStr } from '../db'
 //                     y los almuerzos van a la misma mesa).
 // ──────────────────────────────────────────────────────────────────
 export default function LunchPickerModal({ product, onCancel, onAdd, currentCount = 0 }) {
-  const today = getBogotaDateStr()
+  const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
   const [destination, setDestination] = useState('mesa') // 'mesa' | 'llevar'
@@ -35,15 +35,14 @@ export default function LunchPickerModal({ product, onCancel, onAdd, currentCoun
 
   const menu = useMemo(() => resolveDailyMenu(dailyMenu, allItems), [dailyMenu, allItems])
 
-  // Pre-seleccionar las categorías "fijas" (principio/side/salad) cuando el menú
-  // del día las tenga (una sola opción cada una).
+  // Pre-seleccionar la categoría "fija" (Acompañante = arroz) cuando la
+  // cocinera la tenga definida. La cajera puede quitarla y a cocina le
+  // llegará "SIN ARROZ" en grande.
   useEffect(() => {
     setSelections(prev => {
       const next = { ...prev }
       for (const cat of CATEGORIES) {
         if (cat.multi) continue
-        // Si esa categoría tiene UNA opción en el menú de hoy y la cajera no
-        // ha tocado nada (no hay entrada previa), la pre-seleccionamos.
         const opts = menu[cat.id] || []
         if (opts.length === 1 && next[cat.id] === undefined) {
           next[cat.id] = { id: opts[0].id, name: opts[0].name }
@@ -51,7 +50,7 @@ export default function LunchPickerModal({ product, onCancel, onAdd, currentCoun
       }
       return next
     })
-  }, [menu.principio, menu.side, menu.salad]) // eslint-disable-line
+  }, [menu.side]) // eslint-disable-line
 
   function selectMulti(catId, item) {
     setSelections(prev => ({

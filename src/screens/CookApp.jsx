@@ -5,7 +5,7 @@ import { signOut } from '../auth'
 import { fmtCOP } from '../utils/format'
 import {
   CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
-  watchMenuItems, watchDailyMenu,
+  watchMenuItems, watchDailyMenu, watchCorrienteConfig,
   createMenuItem, renameMenuItem, archiveMenuItem, unarchiveMenuItem,
   setDailyMenuItem, setDailySpecial, setDailyCorriente,
   getCorrienteState, copyMenuFromDate, previousDateStr,
@@ -230,21 +230,73 @@ function KitchenQueueView({ queue }) {
     )
   }
 
+  // Separar grupos: pendientes (alguno cocinando) arriba, listos (todos ready) abajo.
+  const pendingGroups = groups.filter(g => !g.orders.every(o => o.status === 'ready'))
+  const readyGroups = groups.filter(g => g.orders.every(o => o.status === 'ready'))
+
   return (
     <div style={{ padding: '14px 12px 80px' }}>
-      {groups.map(group => (
-        <CommandaCard key={group.commandaId} group={group} />
-      ))}
+      {/* Pendientes (cocinando) */}
+      {pendingGroups.length > 0 && (
+        <>
+          <SectionLabel
+            color={T.copper[700]}
+            bg={T.copper[50]}
+            label={`🍳 PREPARANDO · ${pendingGroups.length}`}
+          />
+          {pendingGroups.map(group => (
+            <CommandaCard key={group.commandaId} group={group} />
+          ))}
+        </>
+      )}
+
+      {/* Listos para entregar — sección separada para que la cocinera no se
+          confunda con los que ya hizo. La cajera ve la burbuja verde parpadeante. */}
+      {readyGroups.length > 0 && (
+        <>
+          <SectionLabel
+            color={T.ok}
+            bg="#E8F4E8"
+            label={`✓ LISTOS PARA ENTREGAR · ${readyGroups.length}`}
+            subtitle="La cajera ya ve la burbuja verde. Toca 'Listo' otra vez si te equivocaste."
+          />
+          {readyGroups.map(group => (
+            <CommandaCard key={group.commandaId} group={group} />
+          ))}
+        </>
+      )}
+
       <style>{`
         @keyframes commandaSlide {
           from { opacity: 0; transform: translateY(-8px) scale(0.98); }
           to   { opacity: 1; transform: translateY(0) scale(1); }
         }
-        @keyframes commandaPulse {
-          0%, 100% { box-shadow: 0 4px 14px rgba(176,78,60,0.25); }
-          50%      { box-shadow: 0 4px 22px rgba(176,78,60,0.45); }
-        }
       `}</style>
+    </div>
+  )
+}
+
+function SectionLabel({ color, bg, label, subtitle }) {
+  return (
+    <div style={{
+      margin: '6px 4px 12px',
+      padding: '12px 16px',
+      borderRadius: 14,
+      background: bg,
+      border: `1.5px solid ${color}33`,
+    }}>
+      <div style={{
+        fontSize: 16, fontWeight: 900, color, letterSpacing: 0.5,
+      }}>
+        {label}
+      </div>
+      {subtitle && (
+        <div style={{
+          fontSize: 13, color, opacity: 0.85, marginTop: 4, lineHeight: 1.4,
+        }}>
+          {subtitle}
+        </div>
+      )}
     </div>
   )
 }
@@ -272,50 +324,52 @@ function CommandaCard({ group }) {
 
   return (
     <div style={{
-      marginBottom: 14,
-      borderRadius: 18,
+      marginBottom: 16,
+      borderRadius: 20,
       background: '#fff',
-      border: `1.5px solid ${allReady ? T.ok + '55' : T.neutral[200]}`,
+      border: `2px solid ${allReady ? T.ok + '88' : T.neutral[200]}`,
       overflow: 'hidden',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+      boxShadow: '0 3px 10px rgba(0,0,0,0.06)',
       animation: 'commandaSlide 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
+      opacity: allReady ? 0.95 : 1,
     }}>
-      {/* Header */}
+      {/* Header — fuentes agrandadas para que la cocinera lea sin esfuerzo */}
       <div style={{
-        padding: '12px 16px',
+        padding: '14px 18px',
         background: destBg,
-        borderBottom: `1px solid ${destBorder}`,
-        display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: `1.5px solid ${destBorder}`,
+        display: 'flex', alignItems: 'center', gap: 12,
       }}>
         <div style={{
-          width: 44, height: 44, borderRadius: 12,
+          width: 60, height: 60, borderRadius: 14,
           background: '#fff', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 19, fontWeight: 900,
+          fontSize: 28, fontWeight: 900,
           color: destColor,
           fontVariantNumeric: 'tabular-nums',
-          border: `1.5px solid ${destBorder}`,
+          border: `2px solid ${destBorder}`,
         }}>
           {group.tableNumber || '?'}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
-            fontSize: 11, fontWeight: 800, color: destColor,
+            fontSize: 14, fontWeight: 900, color: destColor,
             letterSpacing: 0.6,
           }}>
             {destLabel}
           </div>
           <div style={{
-            fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
+            fontSize: 19, fontWeight: 800, color: T.neutral[900],
+            letterSpacing: -0.2, marginTop: 2,
           }}>
             Mesa {group.tableNumber} · {group.orders.length} {group.orders.length === 1 ? 'almuerzo' : 'almuerzos'}
           </div>
         </div>
         <div style={{
-          padding: '6px 12px', borderRadius: 999,
-          background: '#fff', border: `1px solid ${elapsedColor}55`,
+          padding: '10px 16px', borderRadius: 999,
+          background: '#fff', border: `2px solid ${elapsedColor}66`,
           color: elapsedColor,
-          fontSize: 13, fontWeight: 800,
+          fontSize: 17, fontWeight: 900,
           fontVariantNumeric: 'tabular-nums',
           flexShrink: 0,
         }}>
@@ -323,13 +377,13 @@ function CommandaCard({ group }) {
         </div>
       </div>
 
-      {/* Nota de la comanda */}
+      {/* Nota de la comanda — más grande y destacada */}
       {group.commandaNote && (
         <div style={{
-          padding: '10px 16px',
-          background: '#FFF7E6', borderBottom: `1px solid #F4E0BC`,
-          fontSize: 13, color: '#7A5C00',
-          fontStyle: 'italic', lineHeight: 1.4,
+          padding: '14px 18px',
+          background: '#FFF7E6', borderBottom: `1.5px solid #F4E0BC`,
+          fontSize: 17, color: '#7A5C00',
+          fontWeight: 600, fontStyle: 'italic', lineHeight: 1.4,
         }}>
           📝 {group.commandaNote}
         </div>
@@ -372,24 +426,24 @@ function KitchenOrderRow({ order, isLast }) {
 
   return (
     <div style={{
-      padding: '14px 16px',
-      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      padding: '18px 20px',
+      borderBottom: isLast ? 'none' : `1px solid ${T.neutral[100]}`,
       background: isReady ? '#F5FBF5' : '#fff',
-      display: 'flex', alignItems: 'flex-start', gap: 12,
+      display: 'flex', alignItems: 'flex-start', gap: 14,
       transition: 'background 0.2s',
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 14, fontWeight: 800, color: isReady ? T.ok : T.copper[700],
-          letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+          fontSize: 18, fontWeight: 900, color: isReady ? T.ok : T.copper[700],
+          letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 10,
         }}>
           {order.productName || 'Almuerzo'}
-          {order.kind === 'special' && <span style={{ marginLeft: 6 }}>⭐</span>}
+          {order.kind === 'special' && <span style={{ marginLeft: 8 }}>⭐</span>}
         </div>
 
-        {/* Selecciones por categoría */}
+        {/* Selecciones por categoría — fuentes GRANDES para visibilidad */}
         {order.kind === 'menu' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {CATEGORIES.map(cat => {
               const sel = selections[cat.id]
               // Solo el ACOMPAÑANTE (arroz) genera alerta "SIN ARROZ" en grande
@@ -401,11 +455,11 @@ function KitchenOrderRow({ order, isLast }) {
                 if (isFixedSingle) {
                   return (
                     <div key={cat.id} style={{
-                      fontSize: 13.5, fontWeight: 800, color: T.bad,
-                      letterSpacing: 0.3, textTransform: 'uppercase',
-                      background: '#FBE9E5', padding: '5px 10px', borderRadius: 8,
+                      fontSize: 18, fontWeight: 900, color: T.bad,
+                      letterSpacing: 0.5, textTransform: 'uppercase',
+                      background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
                       display: 'inline-block', alignSelf: 'flex-start',
-                      marginTop: 2, marginBottom: 2,
+                      border: `2px solid ${T.bad}55`,
                     }}>
                       ⚠ SIN {cat.label.toUpperCase()}
                     </div>
@@ -414,14 +468,20 @@ function KitchenOrderRow({ order, isLast }) {
                 return null
               }
               return (
-                <div key={cat.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13.5 }}>
+                <div key={cat.id} style={{
+                  display: 'flex', alignItems: 'baseline', gap: 12,
+                  flexWrap: 'wrap',
+                }}>
                   <span style={{
-                    fontSize: 11, fontWeight: 700, color: T.neutral[500],
-                    minWidth: 80, letterSpacing: 0.4, textTransform: 'uppercase',
+                    fontSize: 13, fontWeight: 800, color: T.neutral[500],
+                    minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
                   }}>
                     {cat.emoji} {cat.label}
                   </span>
-                  <span style={{ fontWeight: 700, color: T.neutral[900] }}>
+                  <span style={{
+                    fontSize: 18, fontWeight: 800, color: T.neutral[900],
+                    letterSpacing: -0.1,
+                  }}>
                     {sel.name}
                   </span>
                 </div>
@@ -433,10 +493,10 @@ function KitchenOrderRow({ order, isLast }) {
         {/* Descripción libre del especial */}
         {order.kind === 'special' && description && (
           <div style={{
-            fontSize: 14, color: T.neutral[800], lineHeight: 1.5,
-            padding: '8px 12px', borderRadius: 10,
+            fontSize: 17, color: T.neutral[800], lineHeight: 1.55,
+            padding: '12px 16px', borderRadius: 12,
             background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-            whiteSpace: 'pre-wrap',
+            whiteSpace: 'pre-wrap', fontWeight: 600,
           }}>
             {description}
           </div>
@@ -445,31 +505,31 @@ function KitchenOrderRow({ order, isLast }) {
         {/* Pagado antes (solo para llevar) */}
         {order.paid && (
           <div style={{
-            marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
-            padding: '3px 9px', borderRadius: 999,
-            background: T.ok + '15', color: T.ok,
-            fontSize: 11, fontWeight: 700,
+            marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '5px 12px', borderRadius: 999,
+            background: T.ok + '20', color: T.ok,
+            fontSize: 14, fontWeight: 800,
           }}>
             💳 Pagado
           </div>
         )}
       </div>
 
-      {/* Botón LISTO grande (pensado para guantes) */}
+      {/* Botón LISTO MUY grande (cocinera con guantes — sin esfuerzo) */}
       <button
         onClick={handleToggle}
         disabled={busy}
         style={{
           flexShrink: 0,
-          minWidth: 110, padding: '20px 16px', borderRadius: 16,
+          minWidth: 140, padding: '24px 18px', borderRadius: 18,
           background: isReady ? T.ok : T.copper[500],
           color: '#fff',
           border: 'none', cursor: busy ? 'wait' : 'pointer',
-          fontFamily: 'inherit', fontSize: 15, fontWeight: 800,
-          letterSpacing: 0.3,
+          fontFamily: 'inherit', fontSize: 18, fontWeight: 900,
+          letterSpacing: 0.4,
           boxShadow: isReady
-            ? `0 4px 14px ${T.ok}55`
-            : '0 4px 14px rgba(184,122,86,0.4)',
+            ? `0 6px 18px ${T.ok}66`
+            : '0 6px 18px rgba(184,122,86,0.45)',
           opacity: busy ? 0.7 : 1,
           transition: 'background 0.2s',
         }}
@@ -496,10 +556,13 @@ function DailyMenuView({ authUser, userDoc }) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
+  const [corrienteConfig, setCorrienteConfig] = useState(null)
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Cocinera'
 
   useEffect(() => watchMenuItems(setAllItems), [])
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
+  // Config PERSISTENTE de precios del corriente — sobrevive al reset diario.
+  useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
 
   const itemsByCategory = useMemo(() => {
     const out = {}
@@ -519,17 +582,16 @@ function DailyMenuView({ authUser, userDoc }) {
     return out
   }, [dailyMenu])
 
-  // Estado del corriente HOY (precios + categorías OK)
+  // Estado del corriente HOY (precios persistentes + categorías OK del día)
   const corriente = useMemo(
-    () => getCorrienteState(dailyMenu, allItems),
-    [dailyMenu, allItems]
+    () => getCorrienteState(dailyMenu, allItems, corrienteConfig),
+    [dailyMenu, allItems, corrienteConfig]
   )
 
-  // ¿El doc de hoy está completamente vacío? (sin precios, sin opciones, sin especial activo)
+  // ¿El doc del DÍA está vacío de opciones? (los precios viven aparte y son persistentes)
   const dailyIsEmpty = !dailyMenu
     || (
       !dailyMenu.itemsByCategory
-      && (!dailyMenu.corriente || (!dailyMenu.corriente.priceMesa && !dailyMenu.corriente.priceLlevar))
       && (!dailyMenu.special || !dailyMenu.special.active)
     )
 
@@ -567,8 +629,8 @@ function DailyMenuView({ authUser, userDoc }) {
         date={today}
         authUser={authUser}
         adminName={adminName}
-        existingPriceMesa={dailyMenu?.corriente?.priceMesa}
-        existingPriceLlevar={dailyMenu?.corriente?.priceLlevar}
+        existingPriceMesa={corrienteConfig?.priceMesa}
+        existingPriceLlevar={corrienteConfig?.priceLlevar}
       />
 
       {/* Categorías del corriente */}

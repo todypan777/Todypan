@@ -57,6 +57,13 @@ const menuItemsCol = () => collection(firestoreDb, 'menuItems')
 const menuItemRef = (id) => doc(firestoreDb, 'menuItems', id)
 const dailyMenuRef = (dateStr) => doc(firestoreDb, 'dailyMenu', dateStr)
 
+// Doc FIJO (no por día) que guarda los precios persistentes del Almuerzo
+// Corriente. Usa la misma colección `dailyMenu` para reusar permisos de
+// lectura/escritura. El docId tiene formato no-fecha para no chocar con los
+// `YYYY-MM-DD`.
+const CORRIENTE_CONFIG_ID = '__corriente_config__'
+const corrienteConfigRef = () => doc(firestoreDb, 'dailyMenu', CORRIENTE_CONFIG_ID)
+
 // ─── menuItems (catálogo permanente) ──────────────────────────────
 
 /** Suscripción a TODOS los items del catálogo (cocinera y admin). */
@@ -171,38 +178,44 @@ export async function setDailyMenuItem(dateStr, category, itemIds, { publishedBy
 }
 
 /**
- * Define los precios del "Almuerzo Corriente" del día.
+ * Define los precios del "Almuerzo Corriente". PERSISTENTES — viven en un
+ * doc fijo (no por día), así no se pierden con el reset diario. La cocinera
+ * los cambia solo cuando quiere; los días siguientes mantienen los precios
+ * sin acción manual.
+ *
  * config: { priceMesa, priceLlevar }
  *
- * El corriente NO tiene flag 'active' explícito: se considera disponible para
- * la cajera cuando priceMesa > 0 Y hay opciones suficientes en el menú del día
- * (ver getCorrienteState).
+ * El corriente NO tiene flag 'active' explícito: se considera disponible
+ * para la cajera cuando priceMesa > 0 Y hay opciones suficientes en el menú
+ * del día (ver getCorrienteState).
  */
-export async function setDailyCorriente(dateStr, config, { publishedBy, publishedByName } = {}) {
-  const ref = dailyMenuRef(dateStr)
-  const snap = await getDoc(ref)
-  const corrientePayload = {
+export async function setDailyCorriente(_dateStr, config, { publishedBy, publishedByName } = {}) {
+  await setDoc(corrienteConfigRef(), {
     priceMesa: Number(config?.priceMesa) || 0,
     priceLlevar: Number(config?.priceLlevar) || 0,
-  }
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      date: dateStr,
-      corriente: corrientePayload,
-      publishedAt: serverTimestamp(),
-      publishedAtClient: getClientTimestamp(),
-      publishedBy: publishedBy || null,
-      publishedByName: publishedByName || null,
-    })
-  } else {
-    await updateDoc(ref, {
-      date: dateStr,
-      corriente: corrientePayload,
-      publishedAt: serverTimestamp(),
-      publishedAtClient: getClientTimestamp(),
-      publishedBy: publishedBy || null,
-      publishedByName: publishedByName || null,
-    })
+    updatedAt: serverTimestamp(),
+    updatedAtClient: getClientTimestamp(),
+    updatedBy: publishedBy || null,
+    updatedByName: publishedByName || null,
+  }, { merge: true })
+}
+
+/**
+ * Suscripción al doc persistente de configuración del corriente (precios).
+ * callback recibe { priceMesa, priceLlevar } o null si no hay config aún.
+ */
+export function watchCorrienteConfig(callback) {
+  try {
+    return onSnapshot(
+      corrienteConfigRef(),
+      snap => callback(snap.exists() ? snap.data() : null),
+      err => {
+        console.error('[menu] watchCorrienteConfig error (manteniendo último valor):', err?.message || err)
+      }
+    )
+  } catch (err) {
+    console.error('[menu] watchCorrienteConfig setup failed:', err)
+    return () => {}
   }
 }
 
@@ -256,14 +269,19 @@ const REQUIRED_FOR_CORRIENTE = ['soup', 'protein', 'juice']
  * Estado del Almuerzo Corriente para una fecha:
  *   - available: bool — true si la cajera lo puede vender hoy
  *   - priceMesa, priceLlevar: precios definidos (o 0)
- *   - missingPrice: bool — la cocinera no ha puesto precio
- *   - missingCategories: [labels] — categorías obligatorias sin opciones
+ *   - missingPrice: bool — la cocinera no ha puesto precio nunca
+ *   - missingCategories: [labels] — categorías obligatorias sin opciones HOY
  *
- * Resuelve también con el catálogo (para descartar ítems archivados).
+ * Los precios vienen del doc PERSISTENTE (corrienteConfig), no del día. Las
+ * opciones del menú vienen del dailyMenu del día. Si no se pasa
+ * corrienteConfig, intenta leerlo del campo `corriente` del dailyMenu por
+ * retrocompatibilidad con datos viejos.
  */
-export function getCorrienteState(dailyMenu, allMenuItems) {
-  const priceMesa = Number(dailyMenu?.corriente?.priceMesa) || 0
-  const priceLlevar = Number(dailyMenu?.corriente?.priceLlevar) || 0
+export function getCorrienteState(dailyMenu, allMenuItems, corrienteConfig) {
+  // Prioridad: config persistente. Fallback: el campo `corriente` del día (legacy).
+  const cfg = corrienteConfig || dailyMenu?.corriente || null
+  const priceMesa = Number(cfg?.priceMesa) || 0
+  const priceLlevar = Number(cfg?.priceLlevar) || 0
   const missingPrice = priceMesa <= 0
   const resolved = resolveDailyMenu(dailyMenu, allMenuItems)
   const missingCategories = REQUIRED_FOR_CORRIENTE
@@ -280,9 +298,9 @@ export function getCorrienteState(dailyMenu, allMenuItems) {
 }
 
 /**
- * Copia el menú COMPLETO de una fecha a otra. Usado por el botón "Copiar lo
- * de ayer" en la cocinera. Solo copia campos relevantes (precios + opciones +
- * estado del especial); NO copia los timestamps.
+ * Copia el menú DEL DÍA (opciones + estado del especial) de una fecha a otra.
+ * Los precios del corriente NO se copian aquí porque viven en un doc
+ * persistente — siempre están actualizados.
  */
 export async function copyMenuFromDate(fromDateStr, toDateStr, { publishedBy, publishedByName } = {}) {
   if (!fromDateStr || !toDateStr || fromDateStr === toDateStr) return false
@@ -298,7 +316,6 @@ export async function copyMenuFromDate(fromDateStr, toDateStr, { publishedBy, pu
     publishedByName: publishedByName || null,
   }
   if (src.itemsByCategory) payload.itemsByCategory = src.itemsByCategory
-  if (src.corriente) payload.corriente = src.corriente
   if (src.special) payload.special = src.special
 
   await setDoc(dailyMenuRef(toDateStr), payload, { merge: true })

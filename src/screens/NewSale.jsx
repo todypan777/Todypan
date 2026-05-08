@@ -22,7 +22,7 @@ import {
   isTableNumberTaken,
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
-import { watchDailyMenu, watchMenuItems, getCorrienteState } from '../menu'
+import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState } from '../menu'
 import LunchPickerModal from '../components/LunchPickerModal'
 import SpecialLunchModal from '../components/SpecialLunchModal'
 
@@ -85,10 +85,13 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 
   // Listeners del menú del día y el catálogo de opciones (para evaluar si el
   // corriente está disponible: precio + sopas/proteínas/jugos activos).
+  // El precio del corriente vive en un doc PERSISTENTE (no por día).
   const [dailyMenu, setDailyMenu] = useState(null)
   const [allMenuItems, setAllMenuItems] = useState([])
+  const [corrienteConfig, setCorrienteConfig] = useState(null)
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
   useEffect(() => watchMenuItems(setAllMenuItems), [])
+  useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
 
   const branchId = session.branchId
 
@@ -105,7 +108,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const enrichedCatalog = useMemo(() => {
     const baseCatalog = catalog.filter(p => p.isLunch !== true)
     const extras = []
-    const corriente = getCorrienteState(dailyMenu, allMenuItems)
+    const corriente = getCorrienteState(dailyMenu, allMenuItems, corrienteConfig)
     if (corriente.available) {
       extras.push({
         id: '__lunch_corriente__',
@@ -131,7 +134,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     }
     if (extras.length === 0) return baseCatalog
     return [...extras, ...baseCatalog]
-  }, [catalog, dailyMenu, allMenuItems])
+  }, [catalog, dailyMenu, allMenuItems, corrienteConfig])
 
   const filtered = useMemo(() => {
     const q = normalizeName(query)

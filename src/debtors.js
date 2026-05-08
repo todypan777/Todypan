@@ -10,6 +10,7 @@ import {
   arrayUnion,
   getDoc,
 } from 'firebase/firestore'
+import { addDocOffline } from './utils/firestoreOffline'
 
 const debtorsCol = () => collection(firestoreDb, 'debtors')
 const debtorRef = (id) => doc(firestoreDb, 'debtors', id)
@@ -51,7 +52,8 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
 
   if (existing) {
     const newTotal = (Number(existing.totalOwed) || 0) + (Number(amount) || 0)
-    await updateDoc(debtorRef(existing.id), {
+    // Fire-and-forget: en modo ahorro `await updateDoc` se cuelga.
+    updateDoc(debtorRef(existing.id), {
       totalOwed: newTotal,
       lastUpdate: serverTimestamp(),
       history: arrayUnion({
@@ -59,12 +61,12 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
         saleId,
         amount: Number(amount) || 0,
         date,
-        createdAt: Date.now(),  // Date.now en lugar de serverTimestamp porque no funciona dentro de arrayUnion
+        createdAt: Date.now(),
       }),
-    })
+    }).catch(err => console.warn('[debtors] update deferred:', err?.message || err))
     return existing.id
   } else {
-    const ref = await addDoc(debtorsCol(), {
+    const ref = addDocOffline(debtorsCol(), {
       name: name.trim(),
       normalizedName: normalized,
       totalOwed: Number(amount) || 0,

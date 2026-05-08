@@ -10,6 +10,7 @@ import {
   where,
   onSnapshot,
 } from 'firebase/firestore'
+import { addDocOffline } from './utils/firestoreOffline'
 
 /**
  * Mesas abiertas (open tabs) — carrito persistente que la cajera deja como
@@ -63,10 +64,19 @@ export function nextFreeTableNumber(tabs) {
   return n
 }
 
-/** True si el número está usado por OTRA tab (excluye una opcional). */
+/** True si el número está usado por OTRA tab (excluye una opcional).
+ *  Defensivo: si `number` no es un entero positivo, retorna false (la UI no
+ *  debe bloquear por datos corruptos).
+ */
 export function isTableNumberTaken(tabs, number, excludeId = null) {
   const num = Number(number)
-  return (tabs || []).some(t => t.id !== excludeId && Number(t.tableNumber) === num)
+  if (!num || num <= 0 || !Number.isFinite(num)) return false
+  return (tabs || []).some(t => {
+    if (t.id === excludeId) return false
+    const tn = Number(t.tableNumber)
+    if (!tn || tn <= 0 || !Number.isFinite(tn)) return false
+    return tn === num
+  })
 }
 
 /**
@@ -105,7 +115,8 @@ export async function createOpenTab({
     data.recordedByName = recordedByName || null
     data.recordedByRole = recordedByRole || 'admin'
   }
-  const ref = await addDoc(tabsCol(), data)
+  // Fire-and-forget para modo ahorro / offline.
+  const ref = addDocOffline(tabsCol(), data)
   return ref.id
 }
 

@@ -10,6 +10,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
+import { addDocOffline } from './utils/firestoreOffline'
 
 // ──────────────────────────────────────────────────────────────────────────
 // kitchenOrders/{id}
@@ -76,7 +77,8 @@ export async function createKitchenOrder(payload) {
     createdAt: serverTimestamp(),
     createdAtClient: getClientTimestamp(),
   }
-  const ref = await addDoc(ordersCol(), data)
+  // Fire-and-forget para modo ahorro / offline.
+  const ref = addDocOffline(ordersCol(), data)
   return ref.id
 }
 

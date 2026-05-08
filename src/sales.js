@@ -12,6 +12,7 @@ import {
   getDoc,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
+import { addDocOffline } from './utils/firestoreOffline'
 
 const saleRef = (id) => doc(firestoreDb, 'sales', id)
 
@@ -76,7 +77,10 @@ export async function createSale(payload) {
     data.recordedByName = payload.recordedByName || null
     data.recordedByRole = payload.recordedByRole || 'admin'
   }
-  const ref = await addDoc(salesCol(), data)
+  // Fire-and-forget: el ID se genera local; la escritura se encola y
+  // resuelve cuando haya red. Crítico para modo ahorro de datos donde
+  // `await addDoc()` se cuelga indefinidamente.
+  const ref = addDocOffline(salesCol(), data)
   return ref.id
 }
 

@@ -524,17 +524,18 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       const orderIdsToDeliver = cart
         .filter(it => it.source === 'kitchen' && it.kitchenOrderId)
         .map(it => it.kitchenOrderId)
+      // Fire-and-forget: en modo ahorro el await de updateDoc/deleteDoc se
+      // cuelga. La cajera ya cobró — no hay que bloquearla esperando red.
       if (orderIdsToDeliver.length > 0) {
-        try {
-          const m = await import('../kitchenOrders')
-          await Promise.all(orderIdsToDeliver.map(id => m.markOrderDelivered(id)))
-        } catch (err) {
-          console.warn('[NewSale] marcar delivered tras cobro:', err)
-        }
+        import('../kitchenOrders').then(m => {
+          orderIdsToDeliver.forEach(id => {
+            m.markOrderDelivered(id).catch(err =>
+              console.warn('[NewSale] markOrderDelivered deferred:', err?.message || err))
+          })
+        })
       }
-      try { await deleteOpenTab(tab.id) } catch (err) {
-        console.warn('[NewSale] no se pudo eliminar tab tras cobro:', err)
-      }
+      deleteOpenTab(tab.id).catch(err =>
+        console.warn('[NewSale] deleteOpenTab deferred tras cobro:', err?.message || err))
     }
     setPaymentOpen(false)
     onSaved?.()
@@ -1052,6 +1053,15 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
   const num = state.number
   const taken = !isTabMode && isTableNumberTaken(openTabs, num, null)
 
+  // Lista de números ya ocupados — útil para que la cajera vea qué evitar.
+  const occupiedNumbers = useMemo(() => {
+    if (isTabMode) return []
+    return (openTabs || [])
+      .map(t => Number(t.tableNumber))
+      .filter(n => n > 0)
+      .sort((a, b) => a - b)
+  }, [openTabs, isTabMode])
+
   async function handleConfirm() {
     if (state.busy) return
     if (!num || num <= 0) {
@@ -1130,6 +1140,17 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
             {taken && (
               <div style={{ fontSize: 12, color: T.bad, marginBottom: 10, textAlign: 'center' }}>
                 Esa mesa ya está ocupada. Usa otro número.
+              </div>
+            )}
+            {occupiedNumbers.length > 0 && (
+              <div style={{
+                marginBottom: 10, padding: '8px 12px', borderRadius: 10,
+                background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+                fontSize: 11.5, color: T.neutral[600], lineHeight: 1.45,
+              }}>
+                <span style={{ fontWeight: 700 }}>Mesas ocupadas:</span>{' '}
+                {occupiedNumbers.join(', ')} ·{' '}
+                <span style={{ color: T.neutral[500] }}>usa otro número</span>
               </div>
             )}
           </>
@@ -1938,7 +1959,8 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
       // Crear venta
       const saleId = await createSale(payload)
 
-      // Si es deuda, registrar en debtors y guardar debtorId en la sale
+      // Si es deuda, registrar en debtors y guardar debtorId en la sale.
+      // addDebtSale ya es fire-and-forget; aquí solo necesitamos su ID local.
       if (method === 'deuda') {
         const debtorId = await addDebtSale(debtors, {
           name: debtorName.trim(),
@@ -1946,13 +1968,15 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           saleId,
           date: today,
         })
-        // Backfill: agregar debtorId a la sale para futuras ediciones del admin
+        // Backfill: agregar debtorId a la sale para futuras ediciones del admin.
+        // SIN await — en modo ahorro el await se cuelga.
         try {
           const { doc, updateDoc } = await import('firebase/firestore')
           const { firestoreDb } = await import('../firebase')
-          await updateDoc(doc(firestoreDb, 'sales', saleId), { debtorId })
+          updateDoc(doc(firestoreDb, 'sales', saleId), { debtorId })
+            .catch(err => console.warn('No se pudo backfill debtorId en venta:', err))
         } catch (err) {
-          console.warn('No se pudo backfill debtorId en venta:', err)
+          console.warn('No se pudo importar firestore para backfill:', err)
         }
       }
 

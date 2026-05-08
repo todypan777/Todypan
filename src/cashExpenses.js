@@ -10,6 +10,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
+import { addDocOffline } from './utils/firestoreOffline'
 
 const expensesCol = () => collection(firestoreDb, 'cashExpenses')
 const expenseRef = (id) => doc(firestoreDb, 'cashExpenses', id)
@@ -48,7 +49,8 @@ export async function createCashExpense(payload) {
     data.photoStatus = 'pending'
     data.photoLocalId = payload.photoLocalId
   }
-  const ref = await addDoc(expensesCol(), data)
+  // Fire-and-forget para modo ahorro / offline (ver firestoreOffline.js).
+  const ref = addDocOffline(expensesCol(), data)
   return ref.id
 }
 

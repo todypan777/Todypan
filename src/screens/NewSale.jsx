@@ -384,6 +384,48 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     })
   }
 
+  // Eliminar un almuerzo de la comanda en construcción (antes de enviarla a
+  // cocina). Permite a la cajera corregir un error sin perder los demás.
+  function handleRemoveLunchFromCommanda(index) {
+    setLunchCommanda(prev => {
+      const next = prev.filter((_, i) => i !== index)
+      // Si se queda sin almuerzos, también cerramos el modal de envío y
+      // limpiamos la nota — no tiene sentido seguir en ese flujo.
+      if (next.length === 0) {
+        setSendCommandaModal(null)
+        setCommandaNote('')
+      }
+      return next
+    })
+  }
+
+  // Reabrir el flujo de almuerzo para agregar otro a la misma comanda.
+  // Cierra el modal de envío y reabre el LunchPicker con el último producto
+  // usado (si fue corriente; si fue especial, reabre el especial).
+  // Importante: el "Almuerzo Corriente" es un producto VIRTUAL que vive en
+  // `enrichedCatalog`, no en `catalog`. Hay que buscarlo allá.
+  function handleAddAnotherLunch() {
+    if (lunchCommanda.length === 0) return
+    const last = lunchCommanda[lunchCommanda.length - 1]
+    if (last.kind === 'special') {
+      // SpecialLunchModal no necesita `product` (lo lee del menú del día).
+      // Pero el render exige `lunchModal.product` para 'menu'; para 'special'
+      // mantenemos el shape histórico { product, kind } por consistencia.
+      setSendCommandaModal(null)
+      setLunchModal({ kind: 'special', product: { name: 'Almuerzo Especial' } })
+      return
+    }
+    // Para 'menu' necesitamos el producto virtual o real (priceMesa/priceLlevar).
+    const product = enrichedCatalog.find(p => p.id === last.productId)
+    if (product) {
+      setSendCommandaModal(null)
+      setLunchModal({ kind: 'menu', product })
+    }
+    // Si no se encuentra (caso raro: la cocinera quitó el corriente mientras
+    // la cajera tenía la comanda abierta), no hacemos nada — dejamos el modal
+    // de envío abierto para que la cajera pueda enviar lo que ya tiene.
+  }
+
   // Convierte cada almuerzo de la comanda en un item shim para el carrito de la mesa.
   function lunchToCartItem(lunch, kitchenOrderId) {
     const destLabel = lunch.destination === 'llevar' ? '📦 Para llevar' : '🍽️ Mesa'
@@ -1029,9 +1071,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       )}
 
       {/* Modal de envío de comanda: pide # de mesa (si no estamos ya en una)
-          y nota opcional. El botón "Volver" solo cierra este modal y deja la
-          comanda en construcción visible vía banner; la cajera puede agregar
-          más almuerzos buscando el producto en el catálogo. */}
+          y nota opcional. Permite editar el pedido (eliminar almuerzos,
+          editar comentario, agregar otro) antes de enviarlo a cocina. */}
       {sendCommandaModal && (
         <SendCommandaModal
           state={sendCommandaModal}
@@ -1042,6 +1083,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           commandaNote={commandaNote}
           setCommandaNote={setCommandaNote}
           lunchCommanda={lunchCommanda}
+          onRemoveLunch={handleRemoveLunchFromCommanda}
+          onAddAnother={handleAddAnotherLunch}
           onSubmit={handleSendCommanda}
           onBack={() => setSendCommandaModal(null)}
         />
@@ -1054,7 +1097,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 // ──────────────────────────────────────────────────────────────
 // Modal de envío de comanda (#mesa + nota + confirmar)
 // ──────────────────────────────────────────────────────────────
-function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, commandaNote, setCommandaNote, lunchCommanda, onSubmit, onBack }) {
+function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, commandaNote, setCommandaNote, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
   const num = state.number
   const taken = !isTabMode && isTableNumberTaken(openTabs, num, null)
 
@@ -1090,35 +1133,81 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
       <div onClick={e => e.stopPropagation()} style={{
         width: '100%', maxWidth: 460, background: '#fff', borderRadius: 22,
         padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+        maxHeight: 'calc(100vh - 48px)', overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
       }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
           Enviar comanda a cocina
         </div>
-        <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, marginBottom: 16, lineHeight: 1.5 }}>
-          {lunchCommanda.length} {lunchCommanda.length === 1 ? 'almuerzo' : 'almuerzos'} listos para enviar.
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, marginBottom: 14, lineHeight: 1.5 }}>
+          {lunchCommanda.length} {lunchCommanda.length === 1 ? 'almuerzo' : 'almuerzos'} listos para enviar. Tócalos para revisar o quitar.
         </div>
 
-        {/* Resumen de lo que se envía */}
+        {/* Resumen de lo que se envía — con ✕ por item para corregir antes de enviar */}
         <div style={{
-          padding: '10px 12px', borderRadius: 12,
+          padding: '6px 10px', borderRadius: 12,
           background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-          marginBottom: 14,
+          marginBottom: 10,
         }}>
           {lunchCommanda.map((l, i) => (
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              fontSize: 12.5, color: T.neutral[700], padding: '3px 0',
+              fontSize: 12.5, color: T.neutral[700], padding: '6px 0', gap: 8,
               borderBottom: i < lunchCommanda.length - 1 ? `0.5px dashed ${T.neutral[200]}` : 'none',
             }}>
-              <span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {l.productName} · {l.destination === 'llevar' ? '📦' : '🍽️'}
               </span>
-              <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                 ${(l.price || 0).toLocaleString('es-CO')}
               </span>
+              {onRemoveLunch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (state.busy) return
+                    if (lunchCommanda.length === 1) {
+                      if (!confirm('Es el único almuerzo. ¿Descartar la comanda?')) return
+                    }
+                    onRemoveLunch(i)
+                  }}
+                  disabled={state.busy}
+                  title="Quitar este almuerzo"
+                  style={{
+                    width: 26, height: 26, borderRadius: 999,
+                    background: '#fff', color: T.bad,
+                    border: `1px solid ${T.bad}55`,
+                    cursor: state.busy ? 'wait' : 'pointer',
+                    fontFamily: 'inherit', fontSize: 13, fontWeight: 800,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0, padding: 0,
+                  }}
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ))}
         </div>
+
+        {/* Botón para volver al modal del almuerzo y agregar otro a la misma comanda */}
+        {onAddAnother && (
+          <button
+            type="button"
+            onClick={() => { if (!state.busy) onAddAnother() }}
+            disabled={state.busy}
+            style={{
+              width: '100%', padding: '10px', borderRadius: 12,
+              background: '#fff', color: T.copper[700],
+              border: `1.5px dashed ${T.copper[400]}`,
+              cursor: state.busy ? 'wait' : 'pointer',
+              fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+              marginBottom: 14,
+            }}
+          >
+            + Agregar otro almuerzo
+          </button>
+        )}
 
         {/* Selector de mesa (solo si no estamos ya en una) */}
         {!isTabMode && (
@@ -1161,18 +1250,35 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
           </>
         )}
 
-        {/* Mostrar el comentario que ya se escribió en el modal del almuerzo
-            (read-only aquí — para editarlo, volver al modal del almuerzo). */}
-        {commandaNote && (
+        {/* Comentario editable — la cajera puede ajustarlo antes de enviar
+            sin tener que volver al modal del almuerzo. */}
+        <div style={{
+          marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`,
+        }}>
           <div style={{
-            marginBottom: 14, padding: '10px 12px', borderRadius: 10,
-            background: '#FFF7E6', border: `1px solid #F4E0BC`,
-            fontSize: 12.5, color: '#7A5C00', lineHeight: 1.45,
+            fontSize: 11, fontWeight: 700, color: '#7A5C00',
+            letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
           }}>
-            <span style={{ fontWeight: 700, marginRight: 4 }}>📝 Comentario:</span>
-            "{commandaNote}"
+            📝 Comentario para cocina <span style={{ color: '#9A7200', fontWeight: 500 }}>· opcional</span>
           </div>
-        )}
+          <textarea
+            value={commandaNote}
+            onChange={e => setCommandaNote(e.target.value)}
+            placeholder='Ej: "Sin sal" · "Huevo bien cocido"'
+            rows={2}
+            maxLength={200}
+            disabled={state.busy}
+            style={{
+              width: '100%', padding: '9px 11px', borderRadius: 10,
+              border: `1px solid #F4E0BC`,
+              fontSize: 13.5, fontFamily: 'inherit',
+              background: '#fff', color: T.neutral[900],
+              outline: 'none', resize: 'vertical', minHeight: 50,
+              boxSizing: 'border-box',
+            }}
+          />
+        </div>
 
         {state.error && (
           <div style={{
@@ -1185,12 +1291,17 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onBack} disabled={state.busy} style={{
-            flex: 1, padding: '12px', borderRadius: 12,
-            background: T.neutral[100], color: T.neutral[700],
-            border: 'none', cursor: state.busy ? 'wait' : 'pointer',
-            fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
-          }}>← Volver</button>
+          <button
+            onClick={onBack}
+            disabled={state.busy}
+            title="Cierra este modal sin enviar; el pedido queda listo en el banner para enviarlo cuando quieras"
+            style={{
+              flex: 1, padding: '12px', borderRadius: 12,
+              background: T.neutral[100], color: T.neutral[700],
+              border: 'none', cursor: state.busy ? 'wait' : 'pointer',
+              fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+            }}
+          >Más tarde</button>
           <button onClick={handleConfirm} disabled={state.busy || taken || !num} style={{
             flex: 1.6, padding: '12px', borderRadius: 12,
             background: state.busy || taken || !num ? T.neutral[200] : T.copper[500],

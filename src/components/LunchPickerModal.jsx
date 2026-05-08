@@ -193,32 +193,99 @@ export default function LunchPickerModal({
             </div>
           )}
 
-          {/* Comentario de la comanda — debajo de las categorías para no
-              enredar el flujo en el modal de envío. La nota es UNA por mesa,
-              no por almuerzo: si la cajera agrega varios almuerzos a la misma
-              comanda el comentario se mantiene. */}
-          <div style={{ marginTop: 18 }}>
+          {/* Comentario de la comanda — destacado debajo de Jugo (última
+              categoría) para que la cajera lo vea sin perderlo. La nota es
+              UNA por comanda, no por almuerzo: si la cajera agrega varios
+              almuerzos a la misma comanda el comentario se mantiene. */}
+          <div style={{
+            marginTop: 18,
+            padding: '14px 14px 12px',
+            borderRadius: 14,
+            background: '#FFF7E6',
+            border: `1.5px solid #F4E0BC`,
+          }}>
             <div style={{
-              fontSize: 12, fontWeight: 700, color: T.neutral[600],
-              letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 6,
+              display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
             }}>
-              Comentario para cocina <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span>
+              <span style={{ fontSize: 16 }}>📝</span>
+              <div style={{
+                fontSize: 13, fontWeight: 800, color: '#7A5C00',
+                letterSpacing: -0.2,
+              }}>
+                Comentario para cocina
+              </div>
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: '#9A7200',
+                background: '#FFE9C2', padding: '2px 7px', borderRadius: 999,
+                letterSpacing: 0.3, textTransform: 'uppercase', marginLeft: 'auto',
+              }}>
+                Opcional
+              </span>
             </div>
+
+            {/* Chips rápidos — la cajera tap y se inserta al texto. Los
+                ejemplos cubren los casos típicos del corriente. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {[
+                'Sin sal', 'Sin cebolla', 'Sin tomate',
+                'Huevo bien cocido', 'Huevo blando', 'Huevo frito',
+                'Aparte', 'Bien caliente',
+              ].map(chip => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => {
+                    setCommandaNote(prev => {
+                      const t = (prev || '').trim()
+                      if (!t) return chip
+                      // Evitar duplicados exactos
+                      if (t.toLowerCase().includes(chip.toLowerCase())) return prev
+                      return `${t} · ${chip}`
+                    })
+                  }}
+                  style={{
+                    padding: '6px 10px', borderRadius: 999,
+                    background: '#fff', color: '#7A5C00',
+                    border: `1px solid #F4E0BC`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 11.5, fontWeight: 700,
+                  }}
+                >
+                  + {chip}
+                </button>
+              ))}
+            </div>
+
             <textarea
               value={commandaNote}
               onChange={e => setCommandaNote(e.target.value)}
-              placeholder='Ej: "Sin sal" · "Para el chico de la peluquería"'
+              placeholder='O escribe libremente: "Para el chico de la peluquería"'
               rows={2}
               maxLength={200}
               style={{
                 width: '100%', padding: '11px 12px', borderRadius: 12,
-                border: `1.5px solid ${T.neutral[200]}`,
+                border: `1.5px solid #F4E0BC`,
                 fontSize: 14, fontFamily: 'inherit',
                 background: '#fff', color: T.neutral[900],
                 outline: 'none', resize: 'vertical', minHeight: 56,
                 boxSizing: 'border-box',
               }}
             />
+            {commandaNote && (
+              <button
+                type="button"
+                onClick={() => setCommandaNote('')}
+                style={{
+                  marginTop: 8, padding: '4px 10px', borderRadius: 8,
+                  background: 'transparent', color: T.bad,
+                  border: `1px solid ${T.bad}55`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 11, fontWeight: 700,
+                }}
+              >
+                Borrar comentario
+              </button>
+            )}
           </div>
         </div>
 

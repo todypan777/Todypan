@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
-import { getData, setProductPriceForBranch } from '../db'
+import { getData, setProductPriceForBranch, getBogotaDateStr } from '../db'
 import {
   watchCashierProducts,
   mergeProductCatalogs,

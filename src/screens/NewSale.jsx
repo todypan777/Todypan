@@ -994,6 +994,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         <LunchPickerModal
           product={lunchModal.product}
           currentCount={lunchCommanda.length}
+          commandaNote={commandaNote}
+          setCommandaNote={setCommandaNote}
           onCancel={() => {
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
@@ -1159,28 +1161,18 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
           </>
         )}
 
-        {/* Nota a la comanda */}
-        <div style={{
-          fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
-          letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
-        }}>
-          Nota para cocina <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span>
-        </div>
-        <textarea
-          value={commandaNote}
-          onChange={e => setCommandaNote(e.target.value)}
-          placeholder='Ej: "Para el chico de la peluquería" · "Sin sal"'
-          rows={2}
-          maxLength={200}
-          style={{
-            width: '100%', padding: '11px 12px', borderRadius: 12,
-            border: `1.5px solid ${T.neutral[200]}`,
-            fontSize: 13.5, fontFamily: 'inherit',
-            background: '#fff', color: T.neutral[900],
-            outline: 'none', resize: 'vertical', minHeight: 60,
-            boxSizing: 'border-box', marginBottom: 14,
-          }}
-        />
+        {/* Mostrar el comentario que ya se escribió en el modal del almuerzo
+            (read-only aquí — para editarlo, volver al modal del almuerzo). */}
+        {commandaNote && (
+          <div style={{
+            marginBottom: 14, padding: '10px 12px', borderRadius: 10,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 12.5, color: '#7A5C00', lineHeight: 1.45,
+          }}>
+            <span style={{ fontWeight: 700, marginRight: 4 }}>📝 Comentario:</span>
+            "{commandaNote}"
+          </div>
+        )}
 
         {state.error && (
           <div style={{

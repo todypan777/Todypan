@@ -23,7 +23,10 @@ import { useBogotaDate } from '../utils/useBogotaDate'
 //   commandaInitial → datos previos (cuando la cajera ya tiene la mesa abierta
 //                     y los almuerzos van a la misma mesa).
 // ──────────────────────────────────────────────────────────────────
-export default function LunchPickerModal({ product, onCancel, onAdd, currentCount = 0 }) {
+export default function LunchPickerModal({
+  product, onCancel, onAdd, currentCount = 0,
+  commandaNote = '', setCommandaNote = () => {},
+}) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
@@ -35,22 +38,25 @@ export default function LunchPickerModal({ product, onCancel, onAdd, currentCoun
 
   const menu = useMemo(() => resolveDailyMenu(dailyMenu, allItems), [dailyMenu, allItems])
 
-  // Pre-seleccionar la categoría "fija" (Acompañante = arroz) cuando la
-  // cocinera la tenga definida. La cajera puede quitarla y a cocina le
-  // llegará "SIN ARROZ" en grande.
+  // Pre-seleccionar acompañantes "habituales" — la cajera ahorra clicks en
+  // los almuerzos típicos y solo cambia lo que el cliente pida distinto:
+  //  - Acompañante (arroz, no-multi): pre-seleccionado siempre
+  //  - Ensalada y Jugo (multi): primera opción del día por defecto
+  //  - Sopa, Principio, Proteína: la cajera escoge explícitamente
+  const PRE_SELECT_DEFAULTS = ['side', 'salad', 'juice']
   useEffect(() => {
     setSelections(prev => {
       const next = { ...prev }
-      for (const cat of CATEGORIES) {
-        if (cat.multi) continue
-        const opts = menu[cat.id] || []
-        if (opts.length === 1 && next[cat.id] === undefined) {
-          next[cat.id] = { id: opts[0].id, name: opts[0].name }
+      for (const catId of PRE_SELECT_DEFAULTS) {
+        if (next[catId] !== undefined) continue // respetar elección previa
+        const opts = menu[catId] || []
+        if (opts.length > 0) {
+          next[catId] = { id: opts[0].id, name: opts[0].name }
         }
       }
       return next
     })
-  }, [menu.side]) // eslint-disable-line
+  }, [menu.side, menu.salad, menu.juice]) // eslint-disable-line
 
   function selectMulti(catId, item) {
     setSelections(prev => ({
@@ -186,6 +192,34 @@ export default function LunchPickerModal({ product, onCancel, onAdd, currentCoun
               ⚠ Faltan elegir: <b>{missingRequired.join(', ')}</b>
             </div>
           )}
+
+          {/* Comentario de la comanda — debajo de las categorías para no
+              enredar el flujo en el modal de envío. La nota es UNA por mesa,
+              no por almuerzo: si la cajera agrega varios almuerzos a la misma
+              comanda el comentario se mantiene. */}
+          <div style={{ marginTop: 18 }}>
+            <div style={{
+              fontSize: 12, fontWeight: 700, color: T.neutral[600],
+              letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 6,
+            }}>
+              Comentario para cocina <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span>
+            </div>
+            <textarea
+              value={commandaNote}
+              onChange={e => setCommandaNote(e.target.value)}
+              placeholder='Ej: "Sin sal" · "Para el chico de la peluquería"'
+              rows={2}
+              maxLength={200}
+              style={{
+                width: '100%', padding: '11px 12px', borderRadius: 12,
+                border: `1.5px solid ${T.neutral[200]}`,
+                fontSize: 14, fontFamily: 'inherit',
+                background: '#fff', color: T.neutral[900],
+                outline: 'none', resize: 'vertical', minHeight: 56,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
         </div>
 
         {/* Footer sticky con botones */}

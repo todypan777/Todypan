@@ -262,7 +262,16 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 
   // Minimizar: en modo tab, persiste cambios y vuelve. En modo venta nueva,
   // si hay items abre el modal de convertir; si no, cancela.
+  // Si hay almuerzos en construcción sin enviar, preguntar para no perderlos.
   async function handleMinimize() {
+    if (lunchCommanda.length > 0) {
+      const ok = confirm(
+        `Tienes ${lunchCommanda.length} ${lunchCommanda.length === 1 ? 'almuerzo' : 'almuerzos'} sin enviar a cocina. Si sales se pierden. ¿Continuar?`
+      )
+      if (!ok) return
+      setLunchCommanda([])
+      setCommandaNote('')
+    }
     if (isTabMode) {
       // Si la cajera vacio el carrito, eliminar la mesa (no dejar burbujas vacias)
       if (cart.length === 0) {
@@ -359,6 +368,12 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   }
 
   // Envía la comanda: crea mesa si no existe, kitchenOrders, items shim al carrito.
+  // Orden de operaciones diseñado para que un fallo intermedio NO deje datos huérfanos:
+  //   1. Crear/usar openTab (con o sin items normales).
+  //   2. Crear kitchenOrders apuntando al tabId REAL.
+  //   3. Actualizar la openTab para incluir los items shim.
+  // Si falla en el paso 2, la mesa queda creada normal (sin shims) y la cajera
+  // ve sus items normales — los almuerzos no se cobran sin haberse cocinado.
   async function handleSendCommanda(numberToUse) {
     if (lunchCommanda.length === 0) return null
     const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
@@ -366,91 +381,62 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     const commandaId = newCommandaId()
 
     try {
-      let targetTabId = tab?.id
-      let targetTableNumber = tableNumber
+      let targetTabId
+      let targetTableNumber
 
-      // 1. Si no estamos en una mesa: crear/usar la mesa indicada.
+      // Paso 1: asegurar la mesa.
       if (!isTabMode) {
         if (isTableNumberTaken(openTabs, numberToUse, null)) {
           return 'Ese número de mesa ya está ocupado. Escoge otro.'
         }
-        // Items iniciales: lo que ya hay en el carrito + los almuerzos.
-        // Creamos primero los kitchenOrders y luego la openTab con sus shims.
-        const tempTabId = 'temp_' + Date.now()
-        const orderIds = []
-        for (const lunch of lunchCommanda) {
-          const orderId = await createKitchenOrder({
-            tabId: tempTabId, // se actualiza después
-            tableNumber: numberToUse,
-            sessionId: session.id,
-            branchId: session.branchId,
-            branchName: session.branchName,
-            cashierUid: ownerUid,
-            cashierName,
-            destination: lunch.destination,
-            kind: lunch.kind,
-            selections: lunch.selections || null,
-            description: lunch.description || null,
-            price: lunch.price,
-            productId: lunch.productId,
-            productName: lunch.productName,
-            commandaId,
-            commandaNote,
-          })
-          orderIds.push(orderId)
-        }
-        const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
-        const allItems = [...cart, ...lunchItems]
-        const newTabId = await createOpenTab({
+        targetTabId = await createOpenTab({
           sessionId: session.id,
           cashierUid: ownerUid,
           branchId: session.branchId,
           branchName: session.branchName,
           tableNumber: numberToUse,
-          items: allItems,
+          items: cart, // solo items normales por ahora
           ...(isAssistMode ? {
             recordedByUid: authUser.uid,
             recordedByName: assistMode.adminName,
             recordedByRole: 'admin',
           } : {}),
         })
-        // Actualizar tabId real en cada kitchenOrder
-        const { updateDoc, doc } = await import('firebase/firestore')
-        const { firestoreDb } = await import('../firebase')
-        await Promise.all(orderIds.map(id =>
-          updateDoc(doc(firestoreDb, 'kitchenOrders', id), { tabId: newTabId })
-        ))
-        targetTabId = newTabId
         targetTableNumber = numberToUse
       } else {
-        // Ya estamos en mesa: solo crear orders y agregar items al cart de esta mesa.
-        const orderIds = []
-        for (const lunch of lunchCommanda) {
-          const orderId = await createKitchenOrder({
-            tabId: tab.id,
-            tableNumber: tableNumber,
-            sessionId: session.id,
-            branchId: session.branchId,
-            branchName: session.branchName,
-            cashierUid: ownerUid,
-            cashierName,
-            destination: lunch.destination,
-            kind: lunch.kind,
-            selections: lunch.selections || null,
-            description: lunch.description || null,
-            price: lunch.price,
-            productId: lunch.productId,
-            productName: lunch.productName,
-            commandaId,
-            commandaNote,
-          })
-          orderIds.push(orderId)
-        }
-        const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
-        const newCart = [...cart, ...lunchItems]
-        setCart(newCart)
-        await updateOpenTab(tab.id, { items: newCart })
+        targetTabId = tab.id
+        targetTableNumber = tableNumber
       }
+
+      // Paso 2: crear los kitchenOrders apuntando al tabId real.
+      const orderIds = []
+      for (const lunch of lunchCommanda) {
+        const orderId = await createKitchenOrder({
+          tabId: targetTabId,
+          tableNumber: targetTableNumber,
+          sessionId: session.id,
+          branchId: session.branchId,
+          branchName: session.branchName,
+          cashierUid: ownerUid,
+          cashierName,
+          destination: lunch.destination,
+          kind: lunch.kind,
+          selections: lunch.selections || null,
+          description: lunch.description || null,
+          price: lunch.price,
+          productId: lunch.productId,
+          productName: lunch.productName,
+          commandaId,
+          commandaNote,
+        })
+        orderIds.push(orderId)
+      }
+
+      // Paso 3: agregar los items shim a la openTab (final).
+      const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
+      const finalCart = [...cart, ...lunchItems]
+      setCart(finalCart)
+      await updateOpenTab(targetTabId, { items: finalCart })
 
       // Reset y cerrar
       setLunchCommanda([])
@@ -603,6 +589,61 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
               <b>Asistiendo el turno de {session.cashierName || 'la cajera'}.</b><br/>
               La venta se contabiliza a su caja. Deja el efectivo en caja.
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Banner: comanda en construcción (almuerzos sin enviar todavía) */}
+      {lunchCommanda.length > 0 && !lunchModal && !sendCommandaModal && (
+        <div style={{
+          background: '#FFF7E6', borderBottom: `1px solid #F4E0BC`,
+        }}>
+          <div style={{
+            maxWidth: 640, margin: '0 auto',
+            padding: '12px 18px',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{ fontSize: 22, lineHeight: 1, flexShrink: 0 }}>🍽️</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#7A5C00' }}>
+                {lunchCommanda.length} {lunchCommanda.length === 1 ? 'almuerzo en comanda' : 'almuerzos en comanda'}
+              </div>
+              <div style={{ fontSize: 11.5, color: '#9A7200', lineHeight: 1.4 }}>
+                Sin enviar a cocina. Busca otro almuerzo para agregar o envíalos ya.
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (lunchCommanda.length === 0) return
+                if (!confirm('¿Descartar los almuerzos en construcción? No se han enviado a cocina.')) return
+                setLunchCommanda([])
+                setCommandaNote('')
+              }}
+              style={{
+                padding: '6px 10px', borderRadius: 8,
+                background: 'transparent', color: T.bad,
+                border: `1px solid ${T.bad}55`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 11.5, fontWeight: 700, flexShrink: 0,
+              }}
+            >
+              Descartar
+            </button>
+            <button
+              onClick={() => setSendCommandaModal({
+                number: tableNumber || nextFreeTableNumber(openTabs),
+                error: null, busy: false,
+              })}
+              style={{
+                padding: '8px 14px', borderRadius: 10,
+                background: T.copper[500], color: '#fff',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12.5, fontWeight: 800, flexShrink: 0,
+                boxShadow: '0 3px 10px rgba(184,122,86,0.35)',
+              }}
+            >
+              Enviar 🚀
+            </button>
           </div>
         </div>
       )}
@@ -953,7 +994,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       )}
 
       {/* Modal de envío de comanda: pide # de mesa (si no estamos ya en una)
-          y nota opcional. */}
+          y nota opcional. El botón "Volver" solo cierra este modal y deja la
+          comanda en construcción visible vía banner; la cajera puede agregar
+          más almuerzos buscando el producto en el catálogo. */}
       {sendCommandaModal && (
         <SendCommandaModal
           state={sendCommandaModal}
@@ -965,16 +1008,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           setCommandaNote={setCommandaNote}
           lunchCommanda={lunchCommanda}
           onSubmit={handleSendCommanda}
-          onBack={() => {
-            // Volver al modal de almuerzo (si la cajera quiere agregar más)
-            setSendCommandaModal(null)
-            setLunchModal({
-              product: lunchCommanda[lunchCommanda.length - 1]?.kind === 'special'
-                ? { lunchKind: 'special' }
-                : { isLunch: true, name: 'Almuerzo', priceMesa: 0, priceLlevar: 0 },
-              kind: lunchCommanda[lunchCommanda.length - 1]?.kind === 'special' ? 'special' : 'menu',
-            })
-          }}
+          onBack={() => setSendCommandaModal(null)}
         />
       )}
 

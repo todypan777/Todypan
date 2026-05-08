@@ -5,6 +5,7 @@ import {
   addDoc,
   setDoc,
   updateDoc,
+  getDoc,
   serverTimestamp,
   query,
   where,
@@ -121,14 +122,32 @@ export function watchDailyMenu(dateStr, callback) {
 export async function setDailyMenuItem(dateStr, category, itemIds, { publishedBy, publishedByName } = {}) {
   if (!CATEGORY_BY_ID[category]) throw new Error('Categoría inválida')
   const ids = (itemIds || []).filter(Boolean)
-  await setDoc(dailyMenuRef(dateStr), {
-    date: dateStr,
-    [`itemsByCategory.${category}`]: ids,
-    publishedAt: serverTimestamp(),
-    publishedAtClient: getClientTimestamp(),
-    publishedBy: publishedBy || null,
-    publishedByName: publishedByName || null,
-  }, { merge: true })
+  const ref = dailyMenuRef(dateStr)
+  // setDoc con merge NO interpreta dot-notation como path anidado: trataría
+  // "itemsByCategory.protein" como nombre literal del campo. Para eso usamos
+  // updateDoc, pero updateDoc falla si el doc no existe — así que primero
+  // garantizamos que el doc exista con setDoc (merge), luego updateamos con
+  // dot-notation real.
+  const snap = await getDoc(ref)
+  if (!snap.exists()) {
+    await setDoc(ref, {
+      date: dateStr,
+      itemsByCategory: { [category]: ids },
+      publishedAt: serverTimestamp(),
+      publishedAtClient: getClientTimestamp(),
+      publishedBy: publishedBy || null,
+      publishedByName: publishedByName || null,
+    })
+  } else {
+    await updateDoc(ref, {
+      date: dateStr,
+      [`itemsByCategory.${category}`]: ids,
+      publishedAt: serverTimestamp(),
+      publishedAtClient: getClientTimestamp(),
+      publishedBy: publishedBy || null,
+      publishedByName: publishedByName || null,
+    })
+  }
 }
 
 /**

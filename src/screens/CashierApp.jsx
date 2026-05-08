@@ -10,6 +10,7 @@ import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import ErrorBoundary from '../components/ErrorBoundary'
+import ContactSupportButton from '../components/ContactSupportButton'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
 import { enqueuePhoto, makePhotoLocalId } from '../utils/photoQueue'
 import NewSale from './NewSale'
@@ -358,6 +359,14 @@ function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onToggleDataSa
             }}/>
           </span>
         </button>
+
+        {/* Contactar al programador (WhatsApp) */}
+        <ContactSupportButton
+          variant="menu"
+          reason="Algo no funciona en la app de cajera"
+          userContext={`Cuenta: ${authUser?.email || ''} (${userDoc?.nombre || ''} ${userDoc?.apellido || ''})`}
+          onClick={onCancel}
+        />
 
         <button onClick={onSignOut} style={menuItemStyle({ danger: true })}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

@@ -4,6 +4,7 @@ import { Card, TodyMark, UserAvatar } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useAuth } from '../context/AuthCtx'
 import { signOut } from '../auth'
+import ContactSupportButton from '../components/ContactSupportButton'
 
 export default function More({ onOpen }) {
   const { user } = useAuth()
@@ -140,6 +141,15 @@ export default function More({ onOpen }) {
             </div>
           ))}
         </Card>
+      </div>
+
+      {/* Soporte */}
+      <div style={{ padding: '16px 16px 0' }}>
+        <ContactSupportButton
+          variant="card"
+          reason="Necesito ayuda con TodyPan (admin)"
+          userContext={`Cuenta: ${user?.email || ''} (${user?.displayName || 'Admin'})`}
+        />
       </div>
 
       {/* Cerrar sesión */}

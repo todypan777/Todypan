@@ -13,6 +13,7 @@ import {
 import {
   watchKitchenQueue, markOrderReady, unmarkOrderReady,
 } from '../kitchenOrders'
+import ContactSupportButton from '../components/ContactSupportButton'
 
 // ──────────────────────────────────────────────────────────────
 // CookApp: vista principal de la cocinera.
@@ -1092,6 +1093,13 @@ function AvatarMenuOverlay({ authUser, userDoc, onCancel, onSignOut }) {
             </div>
           </div>
         </div>
+        <ContactSupportButton
+          variant="menu"
+          reason="Algo no funciona en la app de cocina"
+          userContext={`Cuenta: ${authUser?.email || ''} (${userDoc?.nombre || ''} ${userDoc?.apellido || ''})`}
+          onClick={onCancel}
+        />
+
         <button onClick={onSignOut} style={{
           width: '100%', padding: '14px 22px',
           background: 'transparent', border: 'none',

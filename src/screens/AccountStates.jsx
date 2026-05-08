@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { TodyMark, UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
 import { createPendingUser } from '../users'
+import ContactSupportButton from '../components/ContactSupportButton'
 
 // ─── Layout base ──────────────────────────────────────────────
 function StateLayout({ icon, title, children, footer }) {
@@ -57,22 +58,29 @@ function StateLayout({ icon, title, children, footer }) {
   )
 }
 
-function SignOutFooter() {
+function SignOutFooter({ supportReason, supportContext } = {}) {
   const [busy, setBusy] = useState(false)
   return (
-    <button
-      onClick={async () => { setBusy(true); await signOut() }}
-      disabled={busy}
-      style={{
-        width: '100%', padding: '11px 14px', borderRadius: 12,
-        background: 'transparent', color: T.neutral[600],
-        border: `1px solid ${T.neutral[200]}`,
-        cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-        fontSize: 13.5, fontWeight: 600,
-      }}
-    >
-      Cerrar sesión
-    </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <ContactSupportButton
+        variant="card"
+        reason={supportReason}
+        userContext={supportContext}
+      />
+      <button
+        onClick={async () => { setBusy(true); await signOut() }}
+        disabled={busy}
+        style={{
+          width: '100%', padding: '11px 14px', borderRadius: 12,
+          background: 'transparent', color: T.neutral[600],
+          border: `1px solid ${T.neutral[200]}`,
+          cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+          fontSize: 13.5, fontWeight: 600,
+        }}
+      >
+        Cerrar sesión
+      </button>
+    </div>
   )
 }
 
@@ -220,7 +228,12 @@ export function PendingApproval({ authUser, userDoc }) {
         </svg>
       }
       title="Solicitud enviada"
-      footer={<SignOutFooter />}
+      footer={
+        <SignOutFooter
+          supportReason="Mi cuenta lleva mucho pendiente de aprobación"
+          supportContext={`Cuenta: ${authUser.email} (${userDoc?.nombre || ''} ${userDoc?.apellido || ''})`}
+        />
+      }
     >
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,
@@ -275,7 +288,12 @@ export function Deactivated({ authUser, userDoc }) {
         </svg>
       }
       title="Cuenta desactivada"
-      footer={<SignOutFooter />}
+      footer={
+        <SignOutFooter
+          supportReason="Mi cuenta fue desactivada"
+          supportContext={`Cuenta: ${authUser.email} (${userDoc?.nombre || ''} ${userDoc?.apellido || ''})`}
+        />
+      }
     >
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { TodyMark } from '../components/Atoms'
 import { signInWithGoogle, signOut, getAndClearRedirectError } from '../auth'
+import ContactSupportButton from '../components/ContactSupportButton'
 
 function describeAuthError(code) {
   switch (code) {
@@ -175,8 +176,17 @@ export default function Login({ unauthorizedEmail = null }) {
         )}
       </div>
 
+      {/* Soporte WhatsApp — para casos de "no puedo entrar" */}
+      <div style={{ width: '100%', maxWidth: 380, marginTop: 18 }}>
+        <ContactSupportButton
+          variant="card"
+          reason={unauthorizedEmail ? 'Mi cuenta no tiene permiso' : 'No puedo iniciar sesión'}
+          userContext={unauthorizedEmail ? `Cuenta: ${unauthorizedEmail}` : null}
+        />
+      </div>
+
       <div style={{
-        marginTop: 28, fontSize: 11.5, color: T.neutral[400],
+        marginTop: 18, fontSize: 11.5, color: T.neutral[400],
         textAlign: 'center', maxWidth: 320, lineHeight: 1.5,
       }}>
         Solo cuentas autorizadas pueden acceder al panel.

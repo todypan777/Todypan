@@ -4,6 +4,7 @@ import { TodyMark, UserAvatar } from './Atoms'
 import { useIsDesktop } from '../context/DesktopCtx'
 import { useAuth } from '../context/AuthCtx'
 import { signOut } from '../auth'
+import ContactSupportButton from './ContactSupportButton'
 
 const MAIN_TABS = [
   { id: 'home', label: 'Inicio', icon: (c) => (
@@ -262,10 +263,18 @@ function SidebarUserFooter() {
         </div>
       </div>
 
+      <div style={{ marginTop: 6 }}>
+        <ContactSupportButton
+          variant="card"
+          reason="Necesito ayuda con TodyPan (admin)"
+          userContext={`Cuenta: ${user?.email || ''} (${user?.displayName || 'Admin'})`}
+        />
+      </div>
+
       <button
         onClick={() => setConfirm(true)}
         style={{
-          width: '100%', marginTop: 6, padding: '9px 12px', borderRadius: 10,
+          width: '100%', marginTop: 8, padding: '9px 12px', borderRadius: 10,
           background: 'transparent', color: T.bad,
           border: `1px solid ${T.neutral[100]}`,
           cursor: 'pointer', fontFamily: 'inherit',

@@ -9,6 +9,7 @@ import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
+import ErrorBoundary from '../components/ErrorBoundary'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
 import { enqueuePhoto, makePhotoLocalId } from '../utils/photoQueue'
 import NewSale from './NewSale'
@@ -864,13 +865,15 @@ function ActiveSession({ session, userDoc, authUser }) {
           position: 'fixed', inset: 0, zIndex: 60, background: T.neutral[50],
           animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
         }}>
-          <NewSale
-            session={session}
-            authUser={authUser}
-            userDoc={userDoc}
-            onCancel={() => setNewSaleOpen(false)}
-            onSaved={() => setNewSaleOpen(false)}
-          />
+          <ErrorBoundary label="la pantalla de nueva venta">
+            <NewSale
+              session={session}
+              authUser={authUser}
+              userDoc={userDoc}
+              onCancel={() => setNewSaleOpen(false)}
+              onSaved={() => setNewSaleOpen(false)}
+            />
+          </ErrorBoundary>
         </div>
       )}
 
@@ -888,14 +891,16 @@ function ActiveSession({ session, userDoc, authUser }) {
           position: 'fixed', inset: 0, zIndex: 60, background: T.neutral[50],
           animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
         }}>
-          <NewSale
-            session={session}
-            authUser={authUser}
-            userDoc={userDoc}
-            tab={editingTab}
-            onCancel={() => setEditingTab(null)}
-            onSaved={() => setEditingTab(null)}
-          />
+          <ErrorBoundary label="la mesa">
+            <NewSale
+              session={session}
+              authUser={authUser}
+              userDoc={userDoc}
+              tab={editingTab}
+              onCancel={() => setEditingTab(null)}
+              onSaved={() => setEditingTab(null)}
+            />
+          </ErrorBoundary>
         </div>
       )}
 

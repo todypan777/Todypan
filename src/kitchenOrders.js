@@ -132,19 +132,25 @@ export async function markCommandaPaid(commandaId, _ids) {
  * Ordenados por createdAt asc (FIFO — más antiguo primero).
  */
 export function watchKitchenQueue(callback) {
-  const q = query(ordersCol(), where('status', 'in', ['pending', 'ready']))
-  return onSnapshot(
-    q,
-    snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      list.sort((a, b) => timeOf(a) - timeOf(b))
-      callback(list)
-    },
-    err => {
-      console.error('[kitchen] watchKitchenQueue error:', err)
-      callback([])
-    }
-  )
+  try {
+    const q = query(ordersCol(), where('status', 'in', ['pending', 'ready']))
+    return onSnapshot(
+      q,
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => timeOf(a) - timeOf(b))
+        callback(list)
+      },
+      err => {
+        console.error('[kitchen] watchKitchenQueue error:', err)
+        callback([])
+      }
+    )
+  } catch (err) {
+    console.error('[kitchen] watchKitchenQueue setup failed:', err)
+    callback([])
+    return () => {}
+  }
 }
 
 /** Pedidos de una mesa específica (cualquier status no-cancelled). */
@@ -171,19 +177,25 @@ export function watchOrdersForTab(tabId, callback) {
  */
 export function watchLiveOrdersForSession(sessionId, callback) {
   if (!sessionId) { callback([]); return () => {} }
-  const q = query(
-    ordersCol(),
-    where('sessionId', '==', sessionId),
-    where('status', 'in', ['pending', 'ready']),
-  )
-  return onSnapshot(
-    q,
-    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-    err => {
-      console.error('[kitchen] watchLiveOrdersForSession error:', err)
-      callback([])
-    }
-  )
+  try {
+    const q = query(
+      ordersCol(),
+      where('sessionId', '==', sessionId),
+      where('status', 'in', ['pending', 'ready']),
+    )
+    return onSnapshot(
+      q,
+      snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => {
+        console.error('[kitchen] watchLiveOrdersForSession error:', err)
+        callback([])
+      }
+    )
+  } catch (err) {
+    console.error('[kitchen] watchLiveOrdersForSession setup failed:', err)
+    callback([])
+    return () => {}
+  }
 }
 
 /**

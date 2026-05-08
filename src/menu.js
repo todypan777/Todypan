@@ -52,19 +52,25 @@ const dailyMenuRef = (dateStr) => doc(firestoreDb, 'dailyMenu', dateStr)
 
 /** Suscripción a TODOS los items del catálogo (cocinera y admin). */
 export function watchMenuItems(callback) {
-  const q = query(menuItemsCol())
-  return onSnapshot(
-    q,
-    snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-      callback(list)
-    },
-    err => {
-      console.error('[menu] watchMenuItems error:', err)
-      callback([])
-    }
-  )
+  try {
+    const q = query(menuItemsCol())
+    return onSnapshot(
+      q,
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        callback(list)
+      },
+      err => {
+        console.error('[menu] watchMenuItems error:', err)
+        callback([])
+      }
+    )
+  } catch (err) {
+    console.error('[menu] watchMenuItems setup failed:', err)
+    callback([])
+    return () => {}
+  }
 }
 
 export async function createMenuItem({ category, name, createdBy, createdByName }) {
@@ -100,14 +106,19 @@ export async function unarchiveMenuItem(id) {
 /** Suscripción al menú de una fecha específica. */
 export function watchDailyMenu(dateStr, callback) {
   if (!dateStr) { callback(null); return () => {} }
-  return onSnapshot(
-    dailyMenuRef(dateStr),
-    snap => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null),
-    err => {
-      // Mantener último valor en error transitorio (offline-friendly).
-      console.error('[menu] watchDailyMenu error (manteniendo último valor):', err?.message || err)
-    }
-  )
+  try {
+    return onSnapshot(
+      dailyMenuRef(dateStr),
+      snap => callback(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+      err => {
+        // Mantener último valor en error transitorio (offline-friendly).
+        console.error('[menu] watchDailyMenu error (manteniendo último valor):', err?.message || err)
+      }
+    )
+  } catch (err) {
+    console.error('[menu] watchDailyMenu setup failed:', err)
+    return () => {}
+  }
 }
 
 /**

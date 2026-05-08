@@ -1,193 +1,92 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
+import { fmtCOP } from '../utils/format'
+import { getBogotaDateStr } from '../db'
+import {
+  CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
+  watchMenuItems, watchDailyMenu,
+  createMenuItem, renameMenuItem, archiveMenuItem, unarchiveMenuItem,
+  setDailyMenuItem, setDailySpecial,
+} from '../menu'
+import {
+  watchKitchenQueue, markOrderReady, unmarkOrderReady,
+} from '../kitchenOrders'
 
 // ──────────────────────────────────────────────────────────────
-// Vista de la cocinera. Por ahora es un placeholder limpio mientras
-// definimos las funciones que tendrá. La pantalla la verán las personas
-// con role='cook' y status='approved'.
+// CookApp: vista principal de la cocinera.
+//   Tabs: Hoy (cola FIFO) · Menú (qué hay hoy) · Catálogo
 // ──────────────────────────────────────────────────────────────
 export default function CookApp({ authUser, userDoc }) {
+  const [tab, setTab] = useState('today')
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
 
-  const firstName = userDoc?.nombre || ''
+  const [queue, setQueue] = useState([])
+  useEffect(() => watchKitchenQueue(setQueue), [])
+
+  const pendingCount = queue.filter(o => o.status === 'pending').length
 
   return (
     <div style={{
       minHeight: '100dvh', background: T.neutral[50],
       fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
       color: T.neutral[800],
+      paddingBottom: 'env(safe-area-inset-bottom, 0px)',
     }}>
-      {/* Top bar */}
+      <CookTopBar
+        authUser={authUser}
+        userDoc={userDoc}
+        onMenu={() => setMenuOpen(true)}
+      />
+
+      {/* Tab bar */}
       <div style={{
-        padding: '14px 18px',
-        display: 'flex', alignItems: 'center', gap: 10,
-        background: '#fff',
+        display: 'flex', gap: 0,
         borderBottom: `1px solid ${T.neutral[100]}`,
-        position: 'sticky', top: 0, zIndex: 20,
+        background: '#fff',
+        position: 'sticky',
+        top: 60,
+        zIndex: 10,
       }}>
-        <img
-          src="/Logo.png"
-          alt="Infinity Eventos"
-          style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
+        <CookTab
+          active={tab === 'today'}
+          onClick={() => setTab('today')}
+          label="Hoy"
+          badge={pendingCount}
         />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
-            TodyPan
-          </div>
-          <div style={{
-            fontSize: 11, color: T.neutral[500],
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {userDoc?.nombre} {userDoc?.apellido}
-          </div>
-        </div>
-
-        <button
-          onClick={() => setMenuOpen(true)}
-          style={{
-            width: 36, height: 36, borderRadius: 999,
-            background: 'transparent', border: 'none', padding: 0,
-            cursor: 'pointer', flexShrink: 0,
-          }}
-        >
-          <UserAvatar user={authUser} size={34} />
-        </button>
+        <CookTab
+          active={tab === 'menu'}
+          onClick={() => setTab('menu')}
+          label="Menú del día"
+        />
+        <CookTab
+          active={tab === 'catalog'}
+          onClick={() => setTab('catalog')}
+          label="Catálogo"
+        />
       </div>
 
-      {/* Contenido — placeholder */}
-      <div style={{
-        padding: '60px 24px 40px', maxWidth: 480, margin: '0 auto',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18,
-      }}>
-        <div style={{
-          width: 96, height: 96, borderRadius: 999,
-          background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          {/* Gorro de chef */}
-          <svg width="50" height="50" viewBox="0 0 24 24" fill="none">
-            <path
-              d="M7 13 V20 H17 V13"
-              stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"
-            />
-            <path
-              d="M6 13 Q3 13 3 10 Q3 6.5 7 6.5 Q8 4 12 4 Q16 4 17 6.5 Q21 6.5 21 10 Q21 13 18 13"
-              stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"
-            />
-            <path d="M9 16 H15" stroke={T.copper[600]} strokeWidth="1.4" strokeLinecap="round"/>
-          </svg>
-        </div>
-
-        <div style={{
-          fontSize: 22, fontWeight: 800, color: T.neutral[900],
-          letterSpacing: -0.4, textAlign: 'center', lineHeight: 1.25,
-        }}>
-          {firstName ? `Hola, ${firstName}` : 'Hola'}
-        </div>
-
-        <div style={{
-          fontSize: 14, color: T.neutral[600], textAlign: 'center',
-          lineHeight: 1.55, maxWidth: 340,
-        }}>
-          Tu panel de cocina aún está en preparación.
-          Pronto verás aquí tus recetas, producción del día y pedidos por preparar.
-        </div>
-
-        <div style={{
-          marginTop: 6, padding: '14px 18px', borderRadius: 14,
-          background: '#fff', border: `1px solid ${T.neutral[100]}`,
-          fontSize: 12.5, color: T.neutral[600], textAlign: 'center',
-          maxWidth: 340, lineHeight: 1.55,
-          display: 'flex', alignItems: 'center', gap: 10,
-        }}>
-          <div style={{
-            width: 28, height: 28, borderRadius: 999, flexShrink: 0,
-            background: T.copper[50],
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 14,
-          }}>
-            🥖
-          </div>
-          <div style={{ flex: 1, textAlign: 'left' }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[700] }}>
-              Cuenta activa
-            </div>
-            <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1 }}>
-              El administrador te avisará cuando habilite las funciones.
-            </div>
-          </div>
-        </div>
+      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+        {tab === 'today' && (
+          <KitchenQueueView queue={queue} />
+        )}
+        {tab === 'menu' && (
+          <DailyMenuView authUser={authUser} userDoc={userDoc} />
+        )}
+        {tab === 'catalog' && (
+          <CatalogView authUser={authUser} userDoc={userDoc} />
+        )}
       </div>
 
-      {/* Menú avatar */}
       {menuOpen && (
-        <div onClick={() => setMenuOpen(false)} style={{
-          position: 'fixed', inset: 0, zIndex: 90,
-          background: 'rgba(0,0,0,0.45)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: 24,
-        }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            width: '100%', maxWidth: 340, background: '#fff', borderRadius: 20,
-            padding: '20px 0 12px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 12,
-              padding: '0 22px 16px', borderBottom: `1px solid ${T.neutral[100]}`,
-            }}>
-              <UserAvatar user={authUser} size={44} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {userDoc?.nombre} {userDoc?.apellido}
-                </div>
-                <div style={{
-                  fontSize: 11.5, color: T.neutral[500],
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {authUser?.email}
-                </div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => { setMenuOpen(false); setConfirmSignOut(true) }}
-              style={{
-                width: '100%', padding: '14px 22px',
-                background: 'transparent', border: 'none',
-                cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 14.5, fontWeight: 600, color: T.bad,
-                display: 'flex', alignItems: 'center', gap: 14,
-                textAlign: 'left',
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                <path d="M8 4 L4 4 L4 16 L8 16" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M11 7 L15 10 L11 13 M15 10 H7" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <span style={{ flex: 1 }}>Cerrar sesión</span>
-            </button>
-
-            <div style={{ padding: '8px 12px 0' }}>
-              <button
-                onClick={() => setMenuOpen(false)}
-                style={{
-                  width: '100%', padding: '10px', borderRadius: 12,
-                  background: T.neutral[100], color: T.neutral[700],
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13.5, fontWeight: 600,
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
+        <AvatarMenuOverlay
+          authUser={authUser}
+          userDoc={userDoc}
+          onCancel={() => setMenuOpen(false)}
+          onSignOut={() => { setMenuOpen(false); setConfirmSignOut(true) }}
+        />
       )}
 
       {confirmSignOut && (
@@ -200,49 +99,1154 @@ export default function CookApp({ authUser, userDoc }) {
   )
 }
 
+// ──────────────────────────────────────────────────────────────
+// Top bar (igual estética que CashierApp)
+// ──────────────────────────────────────────────────────────────
+function CookTopBar({ authUser, userDoc, onMenu }) {
+  return (
+    <div style={{
+      padding: '14px 18px',
+      display: 'flex', alignItems: 'center', gap: 10,
+      background: '#fff',
+      borderBottom: `1px solid ${T.neutral[100]}`,
+      position: 'sticky', top: 0, zIndex: 20,
+      height: 60, boxSizing: 'border-box',
+    }}>
+      <img
+        src="/Logo.png"
+        alt="Infinity Eventos"
+        style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+          TodyPan · Cocina
+        </div>
+        <div style={{
+          fontSize: 11, color: T.neutral[500],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {userDoc?.nombre} {userDoc?.apellido}
+        </div>
+      </div>
+      <button
+        onClick={onMenu}
+        style={{
+          width: 36, height: 36, borderRadius: 999,
+          background: 'transparent', border: 'none', padding: 0,
+          cursor: 'pointer', flexShrink: 0,
+        }}
+      >
+        <UserAvatar user={authUser} size={34} />
+      </button>
+    </div>
+  )
+}
+
+function CookTab({ active, onClick, label, badge }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1, padding: '14px 10px',
+        background: 'transparent',
+        border: 'none', borderBottom: active ? `3px solid ${T.copper[500]}` : '3px solid transparent',
+        cursor: 'pointer', fontFamily: 'inherit',
+        fontSize: 13.5, fontWeight: active ? 800 : 600,
+        color: active ? T.copper[700] : T.neutral[500],
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        transition: 'color 0.15s, border-color 0.15s',
+      }}
+    >
+      <span>{label}</span>
+      {badge > 0 && (
+        <span style={{
+          minWidth: 20, height: 20, padding: '0 6px', borderRadius: 999,
+          background: T.bad, color: '#fff',
+          fontSize: 11, fontWeight: 800,
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {badge}
+        </span>
+      )}
+    </button>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// VISTA 1: Cola de cocina (cards grandes, FIFO, agrupadas por mesa)
+// ──────────────────────────────────────────────────────────────
+function KitchenQueueView({ queue }) {
+  const lastIdsRef = useRef(new Set())
+
+  // Vibrar y disparar animación cuando llegan pedidos nuevos
+  useEffect(() => {
+    const currentIds = new Set(queue.filter(o => o.status === 'pending').map(o => o.id))
+    const isNewArrival = [...currentIds].some(id => !lastIdsRef.current.has(id))
+    if (isNewArrival && lastIdsRef.current.size > 0) {
+      // Vibrar (no falla si el dispositivo no soporta)
+      try { navigator.vibrate?.([100, 60, 100]) } catch {}
+    }
+    lastIdsRef.current = currentIds
+  }, [queue])
+
+  // Agrupar por commandaId — todos los almuerzos enviados juntos van en un grupo
+  const groups = useMemo(() => {
+    const map = new Map()
+    for (const order of queue) {
+      const key = order.commandaId || order.id
+      if (!map.has(key)) {
+        map.set(key, {
+          commandaId: key,
+          tableNumber: order.tableNumber,
+          destination: order.destination,
+          commandaNote: order.commandaNote || null,
+          createdAt: order.createdAt,
+          createdAtClient: order.createdAtClient,
+          orders: [],
+        })
+      }
+      map.get(key).orders.push(order)
+    }
+    return Array.from(map.values())
+  }, [queue])
+
+  if (groups.length === 0) {
+    return (
+      <div style={{
+        padding: '60px 28px', textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 64, marginBottom: 14 }}>🥣</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: T.neutral[800], marginBottom: 6 }}>
+          Sin pedidos pendientes
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[500], maxWidth: 320, margin: '0 auto', lineHeight: 1.55 }}>
+          Cuando una cajera envíe una comanda, aparecerá aquí.
+          Las más antiguas siempre arriba.
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ padding: '14px 12px 80px' }}>
+      {groups.map(group => (
+        <CommandaCard key={group.commandaId} group={group} />
+      ))}
+      <style>{`
+        @keyframes commandaSlide {
+          from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes commandaPulse {
+          0%, 100% { box-shadow: 0 4px 14px rgba(176,78,60,0.25); }
+          50%      { box-shadow: 0 4px 22px rgba(176,78,60,0.45); }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function CommandaCard({ group }) {
+  const allReady = group.orders.every(o => o.status === 'ready')
+  const isLlevar = group.destination === 'llevar'
+
+  // Cronómetro en vivo
+  const startMs = group.createdAt?.toMillis?.() ?? group.createdAtClient ?? Date.now()
+  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startMs) / 1000))
+  useEffect(() => {
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startMs) / 1000)), 1000)
+    return () => clearInterval(t)
+  }, [startMs])
+
+  const elapsedLabel = formatElapsed(elapsed)
+  const elapsedColor = elapsed < 300 ? T.neutral[600] : elapsed < 600 ? T.warn : T.bad
+
+  // Color del header según destino
+  const destBg = isLlevar ? '#FFF4DD' : '#FBF5F0'
+  const destBorder = isLlevar ? '#F0D699' : T.copper[100]
+  const destLabel = isLlevar ? '📦 PARA LLEVAR' : '🍽️ PARA MESA'
+  const destColor = isLlevar ? '#8A5E12' : T.copper[700]
+
+  return (
+    <div style={{
+      marginBottom: 14,
+      borderRadius: 18,
+      background: '#fff',
+      border: `1.5px solid ${allReady ? T.ok + '55' : T.neutral[200]}`,
+      overflow: 'hidden',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+      animation: 'commandaSlide 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '12px 16px',
+        background: destBg,
+        borderBottom: `1px solid ${destBorder}`,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 12,
+          background: '#fff', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 19, fontWeight: 900,
+          color: destColor,
+          fontVariantNumeric: 'tabular-nums',
+          border: `1.5px solid ${destBorder}`,
+        }}>
+          {group.tableNumber || '?'}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 800, color: destColor,
+            letterSpacing: 0.6,
+          }}>
+            {destLabel}
+          </div>
+          <div style={{
+            fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
+          }}>
+            Mesa {group.tableNumber} · {group.orders.length} {group.orders.length === 1 ? 'almuerzo' : 'almuerzos'}
+          </div>
+        </div>
+        <div style={{
+          padding: '6px 12px', borderRadius: 999,
+          background: '#fff', border: `1px solid ${elapsedColor}55`,
+          color: elapsedColor,
+          fontSize: 13, fontWeight: 800,
+          fontVariantNumeric: 'tabular-nums',
+          flexShrink: 0,
+        }}>
+          ⏱ {elapsedLabel}
+        </div>
+      </div>
+
+      {/* Nota de la comanda */}
+      {group.commandaNote && (
+        <div style={{
+          padding: '10px 16px',
+          background: '#FFF7E6', borderBottom: `1px solid #F4E0BC`,
+          fontSize: 13, color: '#7A5C00',
+          fontStyle: 'italic', lineHeight: 1.4,
+        }}>
+          📝 {group.commandaNote}
+        </div>
+      )}
+
+      {/* Almuerzos individuales */}
+      <div>
+        {group.orders.map((order, i) => (
+          <KitchenOrderRow
+            key={order.id}
+            order={order}
+            isLast={i === group.orders.length - 1}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function KitchenOrderRow({ order, isLast }) {
+  const isReady = order.status === 'ready'
+  const [busy, setBusy] = useState(false)
+
+  async function handleToggle() {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (isReady) await unmarkOrderReady(order.id)
+      else await markOrderReady(order.id)
+    } catch (err) {
+      console.error('[kitchen] toggle ready error:', err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Listado de selecciones
+  const selections = order.selections || {}
+  const description = order.description
+
+  return (
+    <div style={{
+      padding: '14px 16px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      background: isReady ? '#F5FBF5' : '#fff',
+      display: 'flex', alignItems: 'flex-start', gap: 12,
+      transition: 'background 0.2s',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 14, fontWeight: 800, color: isReady ? T.ok : T.copper[700],
+          letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          {order.productName || 'Almuerzo'}
+          {order.kind === 'special' && <span style={{ marginLeft: 6 }}>⭐</span>}
+        </div>
+
+        {/* Selecciones por categoría */}
+        {order.kind === 'menu' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {CATEGORIES.map(cat => {
+              const sel = selections[cat.id]
+              // Categorías "principio/side/salad" cuando NO se eligió → mostrar en grande "SIN ARROZ"
+              const isFixedCat = !cat.multi && cat.id !== 'soup' && cat.id !== 'protein' && cat.id !== 'juice'
+              if (!sel) {
+                if (isFixedCat) {
+                  return (
+                    <div key={cat.id} style={{
+                      fontSize: 13.5, fontWeight: 800, color: T.bad,
+                      letterSpacing: 0.3, textTransform: 'uppercase',
+                      background: '#FBE9E5', padding: '5px 10px', borderRadius: 8,
+                      display: 'inline-block', alignSelf: 'flex-start',
+                      marginTop: 2, marginBottom: 2,
+                    }}>
+                      ⚠ SIN {cat.label.toUpperCase()}
+                    </div>
+                  )
+                }
+                return null
+              }
+              return (
+                <div key={cat.id} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 13.5 }}>
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color: T.neutral[500],
+                    minWidth: 80, letterSpacing: 0.4, textTransform: 'uppercase',
+                  }}>
+                    {cat.emoji} {cat.label}
+                  </span>
+                  <span style={{ fontWeight: 700, color: T.neutral[900] }}>
+                    {sel.name}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Descripción libre del especial */}
+        {order.kind === 'special' && description && (
+          <div style={{
+            fontSize: 14, color: T.neutral[800], lineHeight: 1.5,
+            padding: '8px 12px', borderRadius: 10,
+            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+            whiteSpace: 'pre-wrap',
+          }}>
+            {description}
+          </div>
+        )}
+
+        {/* Pagado antes (solo para llevar) */}
+        {order.paid && (
+          <div style={{
+            marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 5,
+            padding: '3px 9px', borderRadius: 999,
+            background: T.ok + '15', color: T.ok,
+            fontSize: 11, fontWeight: 700,
+          }}>
+            💳 Pagado
+          </div>
+        )}
+      </div>
+
+      {/* Botón LISTO grande (pensado para guantes) */}
+      <button
+        onClick={handleToggle}
+        disabled={busy}
+        style={{
+          flexShrink: 0,
+          minWidth: 110, padding: '20px 16px', borderRadius: 16,
+          background: isReady ? T.ok : T.copper[500],
+          color: '#fff',
+          border: 'none', cursor: busy ? 'wait' : 'pointer',
+          fontFamily: 'inherit', fontSize: 15, fontWeight: 800,
+          letterSpacing: 0.3,
+          boxShadow: isReady
+            ? `0 4px 14px ${T.ok}55`
+            : '0 4px 14px rgba(184,122,86,0.4)',
+          opacity: busy ? 0.7 : 1,
+          transition: 'background 0.2s',
+        }}
+      >
+        {isReady ? '✓ Listo' : 'Marcar listo'}
+      </button>
+    </div>
+  )
+}
+
+function formatElapsed(secs) {
+  if (secs < 60) return `${secs}s`
+  const min = Math.floor(secs / 60)
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${h}h ${m}m`
+}
+
+// ──────────────────────────────────────────────────────────────
+// VISTA 2: Menú del día — toggles de qué hay disponible HOY
+// ──────────────────────────────────────────────────────────────
+function DailyMenuView({ authUser, userDoc }) {
+  const today = getBogotaDateStr()
+  const [allItems, setAllItems] = useState([])
+  const [dailyMenu, setDailyMenu] = useState(null)
+  const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Cocinera'
+
+  useEffect(() => watchMenuItems(setAllItems), [])
+  useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
+
+  const itemsByCategory = useMemo(() => {
+    const out = {}
+    for (const cat of CATEGORY_IDS) out[cat] = []
+    for (const item of allItems) {
+      if (item.archived) continue
+      if (out[item.category]) out[item.category].push(item)
+    }
+    return out
+  }, [allItems])
+
+  const activeIds = useMemo(() => {
+    const out = {}
+    for (const cat of CATEGORY_IDS) {
+      out[cat] = new Set(dailyMenu?.itemsByCategory?.[cat] || [])
+    }
+    return out
+  }, [dailyMenu])
+
+  async function toggleItem(category, itemId) {
+    const cat = CATEGORY_BY_ID[category]
+    const current = dailyMenu?.itemsByCategory?.[category] || []
+    let next
+    if (cat.multi) {
+      // Multi: agrega o quita del array
+      next = current.includes(itemId)
+        ? current.filter(id => id !== itemId)
+        : [...current, itemId]
+    } else {
+      // No-multi: si ya estaba, lo quita; si no, reemplaza al único
+      next = current.includes(itemId) ? [] : [itemId]
+    }
+    await setDailyMenuItem(today, category, next, {
+      publishedBy: authUser.uid,
+      publishedByName: adminName,
+    })
+  }
+
+  return (
+    <div style={{ padding: '16px 14px 80px' }}>
+      <div style={{
+        padding: '12px 14px', borderRadius: 12, marginBottom: 16,
+        background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+        fontSize: 12.5, color: T.copper[700], lineHeight: 1.5,
+      }}>
+        💡 Activa lo que hay disponible <b>hoy</b>. Los cambios aplican en vivo —
+        si algo se acaba, desactívalo y desaparece del menú de la cajera al instante.
+      </div>
+
+      {CATEGORIES.map(cat => (
+        <CategorySection
+          key={cat.id}
+          category={cat}
+          items={itemsByCategory[cat.id]}
+          activeIds={activeIds[cat.id]}
+          onToggle={(itemId) => toggleItem(cat.id, itemId)}
+        />
+      ))}
+
+      <SpecialSection
+        dailyMenu={dailyMenu}
+        date={today}
+        authUser={authUser}
+        adminName={adminName}
+      />
+    </div>
+  )
+}
+
+function CategorySection({ category, items, activeIds, onToggle }) {
+  const activeCount = items.filter(it => activeIds.has(it.id)).length
+  const subtitle = category.multi
+    ? `${activeCount} de ${items.length} activas`
+    : activeCount > 0 ? 'Definida' : 'Sin definir'
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        margin: '0 4px 8px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: 16 }}>{category.emoji}</span>
+          <div style={{
+            fontSize: 14, fontWeight: 800, color: T.neutral[900],
+            letterSpacing: -0.2,
+          }}>
+            {category.label}
+          </div>
+          {!category.multi && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: T.neutral[500],
+              letterSpacing: 0.4, textTransform: 'uppercase',
+              padding: '2px 7px', borderRadius: 999,
+              background: T.neutral[100],
+            }}>
+              Una sola
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], fontWeight: 600 }}>
+          {subtitle}
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{
+          padding: '14px', textAlign: 'center', borderRadius: 12,
+          background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`,
+          color: T.neutral[500], fontSize: 12.5,
+        }}>
+          Sin opciones en el catálogo. Agrégalas en la pestaña Catálogo.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {items.map(item => {
+            const active = activeIds.has(item.id)
+            return (
+              <button
+                key={item.id}
+                onClick={() => onToggle(item.id)}
+                style={{
+                  padding: '10px 16px', borderRadius: 12,
+                  background: active ? T.copper[500] : '#fff',
+                  color: active ? '#fff' : T.neutral[700],
+                  border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 14, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  transition: 'background 0.15s, border-color 0.15s',
+                  boxShadow: active ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+                }}
+              >
+                {active && (
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M2 7 L6 11 L12 4" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+                {item.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SpecialSection({ dailyMenu, date, authUser, adminName }) {
+  const special = dailyMenu?.special || { active: false }
+  const [editing, setEditing] = useState(false)
+  const [priceMesa, setPriceMesa] = useState(String(special.priceMesa || ''))
+  const [priceLlevar, setPriceLlevar] = useState(String(special.priceLlevar || ''))
+  const [description, setDescription] = useState(special.description || '')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!editing) {
+      setPriceMesa(String(special.priceMesa || ''))
+      setPriceLlevar(String(special.priceLlevar || ''))
+      setDescription(special.description || '')
+    }
+  }, [editing, special.priceMesa, special.priceLlevar, special.description])
+
+  async function handleSave() {
+    const pm = Number(priceMesa) || 0
+    const pl = Number(priceLlevar) || 0
+    if (pm <= 0) return
+    setBusy(true)
+    try {
+      await setDailySpecial(date, {
+        active: true,
+        priceMesa: pm,
+        priceLlevar: pl || pm,
+        description,
+      }, { publishedBy: authUser.uid, publishedByName: adminName })
+      setEditing(false)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDeactivate() {
+    setBusy(true)
+    try {
+      await setDailySpecial(date, { active: false }, { publishedBy: authUser.uid, publishedByName: adminName })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginTop: 24, padding: '14px 16px', borderRadius: 16,
+      background: special.active ? '#FFF7E6' : T.neutral[50],
+      border: `1.5px solid ${special.active ? '#F4E0BC' : T.neutral[200]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{ fontSize: 18 }}>⭐</span>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900] }}>
+          Almuerzo Especial
+        </div>
+        {special.active && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: T.warn,
+            letterSpacing: 0.4, textTransform: 'uppercase',
+            padding: '2px 7px', borderRadius: 999,
+            background: '#fff', border: `1px solid #F4E0BC`,
+          }}>
+            Activo hoy
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: T.neutral[600], marginBottom: 12, lineHeight: 1.5 }}>
+        Sin categorías. La cajera lo vende como un almuerzo aparte con la descripción que pongas.
+      </div>
+
+      {editing ? (
+        <div>
+          <FieldLabel>Precio para mesa ($)</FieldLabel>
+          <input type="number" value={priceMesa} onChange={e => setPriceMesa(e.target.value)}
+            placeholder="Ej. 20000" style={inputStyle()} />
+          <FieldLabel>Precio para llevar ($)</FieldLabel>
+          <input type="number" value={priceLlevar} onChange={e => setPriceLlevar(e.target.value)}
+            placeholder="Si no pones, se usa el de mesa" style={inputStyle()} />
+          <FieldLabel>Qué incluye <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span></FieldLabel>
+          <textarea value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="Ej: Bandeja paisa con aguacate, jugo natural"
+            rows={2}
+            style={{ ...inputStyle(), resize: 'vertical', minHeight: 60 }} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button onClick={() => setEditing(false)} disabled={busy} style={btnSecondary()}>Cancelar</button>
+            <button onClick={handleSave} disabled={busy || !priceMesa} style={btnPrimary(T.warn)}>
+              {busy ? 'Guardando...' : 'Activar especial'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {special.active ? (
+            <>
+              <div style={{
+                padding: '12px 14px', borderRadius: 12, background: '#fff',
+                marginBottom: 10, border: `1px solid #F4E0BC`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12.5, color: T.neutral[600] }}>Para mesa</span>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(special.priceMesa || 0)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <span style={{ fontSize: 12.5, color: T.neutral[600] }}>Para llevar</span>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(special.priceLlevar || 0)}
+                  </span>
+                </div>
+                {special.description && (
+                  <div style={{
+                    marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${T.neutral[200]}`,
+                    fontSize: 12.5, color: T.neutral[700], lineHeight: 1.45, fontStyle: 'italic',
+                  }}>
+                    "{special.description}"
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setEditing(true)} disabled={busy} style={btnGhost()}>
+                  ✎ Editar
+                </button>
+                <button onClick={handleDeactivate} disabled={busy} style={btnGhost(T.bad)}>
+                  Desactivar especial
+                </button>
+              </div>
+            </>
+          ) : (
+            <button onClick={() => setEditing(true)} disabled={busy} style={btnPrimary(T.warn)}>
+              + Activar especial de hoy
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// VISTA 3: Catálogo permanente
+// ──────────────────────────────────────────────────────────────
+function CatalogView({ authUser, userDoc }) {
+  const [allItems, setAllItems] = useState([])
+  const [creatingFor, setCreatingFor] = useState(null) // categoryId
+  const [editing, setEditing] = useState(null) // item
+  const cookName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Cocinera'
+
+  useEffect(() => watchMenuItems(setAllItems), [])
+
+  const itemsByCategory = useMemo(() => {
+    const out = {}
+    for (const cat of CATEGORY_IDS) out[cat] = []
+    for (const item of allItems) {
+      if (out[item.category]) out[item.category].push(item)
+    }
+    return out
+  }, [allItems])
+
+  return (
+    <div style={{ padding: '16px 14px 80px' }}>
+      <div style={{
+        padding: '12px 14px', borderRadius: 12, marginBottom: 16,
+        background: T.neutral[100], border: `1px solid ${T.neutral[200]}`,
+        fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5,
+      }}>
+        Aquí guardas todas las opciones que has cocinado alguna vez.
+        Lo que crees aquí podrás activarlo cualquier día desde "Menú del día".
+      </div>
+
+      {CATEGORIES.map(cat => (
+        <CatalogCategory
+          key={cat.id}
+          category={cat}
+          items={itemsByCategory[cat.id]}
+          onCreate={() => setCreatingFor(cat.id)}
+          onEdit={(item) => setEditing(item)}
+        />
+      ))}
+
+      {creatingFor && (
+        <CreateMenuItemModal
+          category={creatingFor}
+          authUser={authUser}
+          cookName={cookName}
+          onCancel={() => setCreatingFor(null)}
+          onCreated={() => setCreatingFor(null)}
+        />
+      )}
+
+      {editing && (
+        <EditMenuItemModal
+          item={editing}
+          onCancel={() => setEditing(null)}
+          onDone={() => setEditing(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function CatalogCategory({ category, items, onCreate, onEdit }) {
+  const active = items.filter(it => !it.archived)
+  const archived = items.filter(it => it.archived)
+
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        margin: '0 4px 8px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: 16 }}>{category.emoji}</span>
+          <div style={{
+            fontSize: 14, fontWeight: 800, color: T.neutral[900],
+            letterSpacing: -0.2,
+          }}>
+            {category.label}
+          </div>
+          <div style={{ fontSize: 11.5, color: T.neutral[500], fontWeight: 600 }}>
+            {active.length} {active.length === 1 ? 'opción' : 'opciones'}
+          </div>
+        </div>
+        <button onClick={onCreate} style={{
+          padding: '6px 12px', borderRadius: 999,
+          background: T.copper[500], color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 12, fontWeight: 700,
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          + Nueva
+        </button>
+      </div>
+
+      {active.length === 0 && archived.length === 0 ? (
+        <div style={{
+          padding: '14px', textAlign: 'center', borderRadius: 12,
+          background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`,
+          color: T.neutral[500], fontSize: 12.5,
+        }}>
+          Sin opciones todavía. Toca "+ Nueva" para crear la primera.
+        </div>
+      ) : (
+        <div style={{
+          background: '#fff', borderRadius: 12,
+          border: `1px solid ${T.neutral[100]}`,
+          overflow: 'hidden',
+        }}>
+          {active.map((item, i) => (
+            <CatalogItemRow
+              key={item.id}
+              item={item}
+              isLast={i === active.length - 1 && archived.length === 0}
+              onEdit={() => onEdit(item)}
+            />
+          ))}
+          {archived.map((item, i) => (
+            <CatalogItemRow
+              key={item.id}
+              item={item}
+              isLast={i === archived.length - 1}
+              onEdit={() => onEdit(item)}
+              archived
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CatalogItemRow({ item, isLast, onEdit, archived }) {
+  return (
+    <div style={{
+      padding: '12px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+      opacity: archived ? 0.55 : 1,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 14, fontWeight: 700, color: T.neutral[900],
+          textDecoration: archived ? 'line-through' : 'none',
+        }}>
+          {item.name}
+        </div>
+        {archived && (
+          <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 1, letterSpacing: 0.3 }}>
+            Archivado
+          </div>
+        )}
+      </div>
+      <button onClick={onEdit} style={{
+        padding: '6px 10px', borderRadius: 8,
+        background: 'transparent', color: T.neutral[600],
+        border: `1px solid ${T.neutral[200]}`,
+        cursor: 'pointer', fontFamily: 'inherit',
+        fontSize: 11.5, fontWeight: 700,
+      }}>
+        ✎ Editar
+      </button>
+    </div>
+  )
+}
+
+function CreateMenuItemModal({ category, authUser, cookName, onCancel, onCreated }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const cat = CATEGORY_BY_ID[category]
+
+  async function handleCreate() {
+    if (!name.trim() || busy) return
+    setBusy(true); setError(null)
+    try {
+      await createMenuItem({
+        category,
+        name,
+        createdBy: authUser.uid,
+        createdByName: cookName,
+      })
+      onCreated()
+    } catch (err) {
+      console.error('[menu] create error:', err)
+      setError('No pudimos crear la opción.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Nueva opción · {cat.label}</ModalTitle>
+        <ModalSub>Esta opción quedará en tu catálogo permanente.</ModalSub>
+        <FieldLabel>Nombre</FieldLabel>
+        <input
+          type="text" value={name} onChange={e => setName(e.target.value)}
+          placeholder={`Ej: ${exampleByCategory(category)}`}
+          autoFocus maxLength={60}
+          style={inputStyle()}
+        />
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <ModalActions
+          onCancel={onCancel}
+          onConfirm={handleCreate}
+          confirmLabel={busy ? 'Creando...' : 'Crear'}
+          confirmDisabled={busy || !name.trim()}
+          confirmColor={T.copper[500]}
+        />
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+function exampleByCategory(catId) {
+  return {
+    soup: 'Sopa de verduras',
+    principio: 'Frijoles',
+    protein: 'Carne de cerdo',
+    side: 'Arroz blanco',
+    salad: 'Ensalada de tomate',
+    juice: 'Jugo de mora',
+  }[catId] || 'Nombre'
+}
+
+function EditMenuItemModal({ item, onCancel, onDone }) {
+  const [name, setName] = useState(item.name)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handleSave() {
+    if (!name.trim() || busy) return
+    setBusy(true); setError(null)
+    try {
+      await renameMenuItem(item.id, name)
+      onDone()
+    } catch (err) {
+      console.error(err); setError('No pudimos guardar.')
+      setBusy(false)
+    }
+  }
+
+  async function handleArchiveToggle() {
+    setBusy(true); setError(null)
+    try {
+      if (item.archived) await unarchiveMenuItem(item.id)
+      else await archiveMenuItem(item.id)
+      onDone()
+    } catch (err) {
+      console.error(err); setError('No pudimos archivar.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Editar opción</ModalTitle>
+        <ModalSub>{CATEGORY_BY_ID[item.category]?.label}</ModalSub>
+        <FieldLabel>Nombre</FieldLabel>
+        <input
+          type="text" value={name} onChange={e => setName(e.target.value)}
+          autoFocus maxLength={60}
+          style={inputStyle()}
+        />
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={handleArchiveToggle} disabled={busy} style={btnGhost(item.archived ? T.copper[600] : T.bad)}>
+            {item.archived ? '↺ Reactivar' : '🗂 Archivar'}
+          </button>
+          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cerrar</button>
+          <button onClick={handleSave} disabled={busy || !name.trim()} style={btnPrimary(T.copper[500])}>
+            {busy ? 'Guardando...' : 'Guardar cambios'}
+          </button>
+        </div>
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Avatar menu y sign-out (idénticos a CashierApp)
+// ──────────────────────────────────────────────────────────────
+function AvatarMenuOverlay({ authUser, userDoc, onCancel, onSignOut }) {
+  return (
+    <ModalOverlay onClose={onCancel}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 340, background: '#fff', borderRadius: 20,
+        padding: '20px 0 12px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '0 22px 16px', borderBottom: `1px solid ${T.neutral[100]}`,
+        }}>
+          <UserAvatar user={authUser} size={44} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {userDoc?.nombre} {userDoc?.apellido}
+            </div>
+            <div style={{
+              fontSize: 11.5, color: T.neutral[500],
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {authUser?.email}
+            </div>
+          </div>
+        </div>
+        <button onClick={onSignOut} style={{
+          width: '100%', padding: '14px 22px',
+          background: 'transparent', border: 'none',
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 14.5, fontWeight: 600, color: T.bad,
+          display: 'flex', alignItems: 'center', gap: 14,
+          textAlign: 'left',
+        }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M8 4 L4 4 L4 16 L8 16" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M11 7 L15 10 L11 13 M15 10 H7" stroke={T.bad} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span style={{ flex: 1 }}>Cerrar sesión</span>
+        </button>
+        <div style={{ padding: '8px 12px 0' }}>
+          <button onClick={onCancel} style={{
+            width: '100%', padding: '10px', borderRadius: 12,
+            background: T.neutral[100], color: T.neutral[700],
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 13.5, fontWeight: 600,
+          }}>Cancelar</button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
 function SignOutModal({ onCancel, onConfirm }) {
   const [busy, setBusy] = useState(false)
   return (
-    <div onClick={busy ? undefined : onCancel} style={{
-      position: 'fixed', inset: 0, zIndex: 95,
-      background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: 24,
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 340, background: '#fff', borderRadius: 20,
-        padding: '24px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
-      }}>
-        <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], textAlign: 'center', marginBottom: 8 }}>
-          Cerrar sesión
-        </div>
-        <div style={{ fontSize: 13.5, color: T.neutral[600], textAlign: 'center', marginBottom: 22, lineHeight: 1.5 }}>
-          ¿Seguro que quieres salir?
-        </div>
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Cerrar sesión</ModalTitle>
+        <ModalSub>¿Seguro que quieres salir?</ModalSub>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onCancel} disabled={busy} style={{
-            flex: 1, padding: '12px', borderRadius: 12,
-            background: T.neutral[100], color: T.neutral[700],
-            border: 'none', cursor: busy ? 'wait' : 'pointer',
-            fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
-          }}>
-            Cancelar
-          </button>
+          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={async () => { setBusy(true); await onConfirm() }}
             disabled={busy}
-            style={{
-              flex: 1, padding: '12px', borderRadius: 12,
-              background: T.bad, color: '#fff',
-              border: 'none', cursor: busy ? 'wait' : 'pointer',
-              fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
-              opacity: busy ? 0.7 : 1,
-            }}
+            style={btnPrimary(T.bad)}
           >
             {busy ? 'Saliendo...' : 'Cerrar sesión'}
           </button>
         </div>
-      </div>
+      </ModalCard>
+    </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Componentes utilitarios
+// ──────────────────────────────────────────────────────────────
+function ModalOverlay({ onClose, children }) {
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 90,
+      background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 24,
+    }}>
+      {children}
+    </div>
+  )
+}
+function ModalCard({ children }) {
+  return (
+    <div onClick={e => e.stopPropagation()} style={{
+      width: '100%', maxWidth: 460, background: '#fff', borderRadius: 22,
+      padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
+      maxHeight: '94vh', overflowY: 'auto',
+    }}>
+      {children}
+    </div>
+  )
+}
+function ModalTitle({ children }) {
+  return <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>{children}</div>
+}
+function ModalSub({ children }) {
+  return <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, marginBottom: 16, lineHeight: 1.5 }}>{children}</div>
+}
+function ModalActions({ onCancel, onConfirm, confirmLabel, confirmDisabled, confirmColor }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+      <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+      <button
+        onClick={onConfirm}
+        disabled={confirmDisabled}
+        style={{
+          ...btnPrimary(confirmDisabled ? T.neutral[200] : confirmColor),
+          opacity: confirmDisabled ? 0.6 : 1,
+          cursor: confirmDisabled ? 'not-allowed' : 'pointer',
+        }}
+      >
+        {confirmLabel}
+      </button>
+    </div>
+  )
+}
+function FieldLabel({ children }) {
+  return (
+    <div style={{
+      fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
+      letterSpacing: 0.3, textTransform: 'uppercase',
+      marginBottom: 6, marginTop: 4,
+    }}>
+      {children}
+    </div>
+  )
+}
+function inputStyle() {
+  return {
+    width: '100%', padding: '11px 12px', borderRadius: 12,
+    border: `1.5px solid ${T.neutral[200]}`,
+    fontSize: 14, fontFamily: 'inherit',
+    background: '#fff', color: T.neutral[900],
+    outline: 'none', marginBottom: 12,
+    boxSizing: 'border-box',
+  }
+}
+function btnPrimary(bg) {
+  return {
+    flex: 1.4, padding: '12px', borderRadius: 12,
+    background: bg, color: '#fff',
+    border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+    boxShadow: `0 3px 10px ${bg}44`,
+  }
+}
+function btnSecondary() {
+  return {
+    flex: 1, padding: '12px', borderRadius: 12,
+    background: T.neutral[100], color: T.neutral[700],
+    border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+  }
+}
+function btnGhost(color) {
+  const c = color || T.neutral[700]
+  return {
+    padding: '11px 14px', borderRadius: 12,
+    background: 'transparent', color: c,
+    border: `1.5px solid ${c}33`,
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 13.5, fontWeight: 700,
+  }
+}
+function ErrorBox({ children }) {
+  return (
+    <div style={{
+      marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+      background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+      fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+    }}>
+      {children}
     </div>
   )
 }

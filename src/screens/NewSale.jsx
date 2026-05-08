@@ -20,6 +20,10 @@ import {
   nextFreeTableNumber,
   isTableNumberTaken,
 } from '../openTabs'
+import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
+import { watchDailyMenu } from '../menu'
+import LunchPickerModal from '../components/LunchPickerModal'
+import SpecialLunchModal from '../components/SpecialLunchModal'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -58,28 +62,61 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const [freeAmountTarget, setFreeAmountTarget] = useState(null)
   // Modal "convertir en mesa" (modo venta nueva)
   const [convertOpen, setConvertOpen] = useState(false)
+  // Modal de almuerzo abierto (cuando la cajera escoge un producto isLunch)
+  // shape: { product, kind: 'menu' | 'special' }
+  const [lunchModal, setLunchModal] = useState(null)
+  // Comanda en construcción: lista de almuerzos seleccionados antes de enviar
+  // shape: [{ kind, productId, productName, destination, selections|description, price }]
+  const [lunchCommanda, setLunchCommanda] = useState([])
+  // Nota a nivel de toda la comanda (opcional). Editable desde el modal "enviar".
+  const [commandaNote, setCommandaNote] = useState('')
+  // Modal de envío de la comanda (pide # de mesa si no estamos en isTabMode)
+  // shape: { number, error, busy }
+  const [sendCommandaModal, setSendCommandaModal] = useState(null)
 
   // Listener de tabs abiertas para validar números duplicados
   const [openTabs, setOpenTabs] = useState([])
   useEffect(() => watchOpenTabsForSession(session.id, setOpenTabs), [session.id])
 
+  // Listener del menú del día (para inyectar "Almuerzo Especial" como producto
+  // virtual cuando la cocinera lo active).
+  const [dailyMenu, setDailyMenu] = useState(null)
+  useEffect(() => watchDailyMenu(getBogotaDateStr(), setDailyMenu), [])
+
   const branchId = session.branchId
 
   const total = cart.reduce((s, it) => s + it.qty * it.unitPrice, 0)
 
+  // Catálogo enriquecido: si la cocinera activó el especial, inyecta un item
+  // virtual al inicio. La cajera lo ve como un producto más.
+  const enrichedCatalog = useMemo(() => {
+    const sp = dailyMenu?.special
+    if (!sp?.active) return catalog
+    const specialItem = {
+      id: '__lunch_special__',
+      source: 'special',
+      name: 'Almuerzo Especial',
+      isLunch: true,
+      lunchKind: 'special',
+      priceMesa: Number(sp.priceMesa) || 0,
+      priceLlevar: Number(sp.priceLlevar) || Number(sp.priceMesa) || 0,
+    }
+    return [specialItem, ...catalog]
+  }, [catalog, dailyMenu?.special])
+
   const filtered = useMemo(() => {
     const q = normalizeName(query)
-    if (!q) return catalog.slice(0, 12)
+    if (!q) return enrichedCatalog.slice(0, 12)
     // Ordena por relevancia: el que empieza con la búsqueda va primero,
     // el que solo la contiene va al final. Así "Pan" sale arriba aunque
     // existan "Empanada", "Panela", etc.
-    return catalog
+    return enrichedCatalog
       .map(p => ({ p, score: scoreNameMatch(normalizeName(p.name), q) }))
       .filter(x => x.score >= 0)
       .sort((a, b) => a.score - b.score || a.p.name.localeCompare(b.p.name))
       .slice(0, 30)
       .map(x => x.p)
-  }, [catalog, query])
+  }, [enrichedCatalog, query])
 
   const exactMatch = filtered.some(p => normalizeName(p.name) === normalizeName(query))
   const showCreateOption = query.trim().length >= 2 && !exactMatch
@@ -108,6 +145,19 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   }
 
   function handleSelectProduct(product) {
+    // Almuerzo Especial (item virtual inyectado cuando la cocinera lo activa).
+    // Sin categorías, solo descripción + destino.
+    if (product.isLunch && product.lunchKind === 'special') {
+      setLunchModal({ product, kind: 'special' })
+      setQuery('')
+      return
+    }
+    // Almuerzo con menú del día: abre el LunchPickerModal con las 6 categorías.
+    if (product.isLunch) {
+      setLunchModal({ product, kind: 'menu' })
+      setQuery('')
+      return
+    }
     // Productos de venta libre (ej: "Pan"): cajera escribe el monto al vender.
     // Se salta la lógica de "primera vez" porque no hay precio guardado.
     if (product.freeAmount) {
@@ -195,7 +245,17 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   }
 
   function removeItem(key) {
-    setCart(prev => prev.filter(it => it.key !== key))
+    setCart(prev => {
+      const it = prev.find(x => x.key === key)
+      // Si es un item shim de cocina, cancelamos el kitchenOrder asociado.
+      // Lo hacemos best-effort sin esperar (UI optimista).
+      if (it?.source === 'kitchen' && it.kitchenOrderId) {
+        import('../kitchenOrders').then(m =>
+          m.cancelKitchenOrder(it.kitchenOrderId, { reason: 'Eliminado de la mesa' })
+        ).catch(err => console.warn('[NewSale] cancel kitchen order:', err))
+      }
+      return prev.filter(x => x.key !== key)
+    })
   }
 
   // ── Handlers de mesas (tabs) ──
@@ -267,6 +327,148 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     }
   }
 
+  // ── Handlers de almuerzos ──
+  function handleAddLunchToCommanda(payload, { another }) {
+    setLunchCommanda(prev => [...prev, payload])
+    if (another) {
+      // El modal hace su propio reset; mantenemos abierto.
+      return
+    }
+    // Cerrar modal y abrir el de envío de comanda
+    setLunchModal(null)
+    setSendCommandaModal({
+      number: tableNumber || nextFreeTableNumber(openTabs),
+      error: null,
+      busy: false,
+    })
+  }
+
+  // Convierte cada almuerzo de la comanda en un item shim para el carrito de la mesa.
+  function lunchToCartItem(lunch, kitchenOrderId) {
+    const destLabel = lunch.destination === 'llevar' ? '📦 Para llevar' : '🍽️ Mesa'
+    return {
+      key: `lunch_${kitchenOrderId}`,
+      productId: lunch.productId || null,
+      source: 'kitchen',
+      kitchenOrderId,
+      kitchenStatus: 'pending',
+      name: `${lunch.productName} · ${destLabel}`,
+      qty: 1,
+      unitPrice: Number(lunch.price) || 0,
+    }
+  }
+
+  // Envía la comanda: crea mesa si no existe, kitchenOrders, items shim al carrito.
+  async function handleSendCommanda(numberToUse) {
+    if (lunchCommanda.length === 0) return null
+    const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
+    const cashierName = session.cashierName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+    const commandaId = newCommandaId()
+
+    try {
+      let targetTabId = tab?.id
+      let targetTableNumber = tableNumber
+
+      // 1. Si no estamos en una mesa: crear/usar la mesa indicada.
+      if (!isTabMode) {
+        if (isTableNumberTaken(openTabs, numberToUse, null)) {
+          return 'Ese número de mesa ya está ocupado. Escoge otro.'
+        }
+        // Items iniciales: lo que ya hay en el carrito + los almuerzos.
+        // Creamos primero los kitchenOrders y luego la openTab con sus shims.
+        const tempTabId = 'temp_' + Date.now()
+        const orderIds = []
+        for (const lunch of lunchCommanda) {
+          const orderId = await createKitchenOrder({
+            tabId: tempTabId, // se actualiza después
+            tableNumber: numberToUse,
+            sessionId: session.id,
+            branchId: session.branchId,
+            branchName: session.branchName,
+            cashierUid: ownerUid,
+            cashierName,
+            destination: lunch.destination,
+            kind: lunch.kind,
+            selections: lunch.selections || null,
+            description: lunch.description || null,
+            price: lunch.price,
+            productId: lunch.productId,
+            productName: lunch.productName,
+            commandaId,
+            commandaNote,
+          })
+          orderIds.push(orderId)
+        }
+        const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
+        const allItems = [...cart, ...lunchItems]
+        const newTabId = await createOpenTab({
+          sessionId: session.id,
+          cashierUid: ownerUid,
+          branchId: session.branchId,
+          branchName: session.branchName,
+          tableNumber: numberToUse,
+          items: allItems,
+          ...(isAssistMode ? {
+            recordedByUid: authUser.uid,
+            recordedByName: assistMode.adminName,
+            recordedByRole: 'admin',
+          } : {}),
+        })
+        // Actualizar tabId real en cada kitchenOrder
+        const { updateDoc, doc } = await import('firebase/firestore')
+        const { firestoreDb } = await import('../firebase')
+        await Promise.all(orderIds.map(id =>
+          updateDoc(doc(firestoreDb, 'kitchenOrders', id), { tabId: newTabId })
+        ))
+        targetTabId = newTabId
+        targetTableNumber = numberToUse
+      } else {
+        // Ya estamos en mesa: solo crear orders y agregar items al cart de esta mesa.
+        const orderIds = []
+        for (const lunch of lunchCommanda) {
+          const orderId = await createKitchenOrder({
+            tabId: tab.id,
+            tableNumber: tableNumber,
+            sessionId: session.id,
+            branchId: session.branchId,
+            branchName: session.branchName,
+            cashierUid: ownerUid,
+            cashierName,
+            destination: lunch.destination,
+            kind: lunch.kind,
+            selections: lunch.selections || null,
+            description: lunch.description || null,
+            price: lunch.price,
+            productId: lunch.productId,
+            productName: lunch.productName,
+            commandaId,
+            commandaNote,
+          })
+          orderIds.push(orderId)
+        }
+        const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
+        const newCart = [...cart, ...lunchItems]
+        setCart(newCart)
+        await updateOpenTab(tab.id, { items: newCart })
+      }
+
+      // Reset y cerrar
+      setLunchCommanda([])
+      setCommandaNote('')
+      setSendCommandaModal(null)
+      setLunchModal(null)
+      onCancel() // vuelve al home — la burbuja roja aparece sola
+      return null
+    } catch (err) {
+      console.error('[NewSale] enviar comanda falló:', err)
+      const code = err?.code || ''
+      if (code === 'permission-denied') {
+        return 'Las reglas de Firestore bloquean. El admin debe habilitar /kitchenOrders y /openTabs.'
+      }
+      return `No se pudo enviar la comanda. ${err?.message || 'Intenta de nuevo.'}`
+    }
+  }
+
   // Auto-cleanup: si está editando una mesa y la deja vacía, eliminar la mesa
   // y cerrar el modal. La cajera elimina mesa quitando todos los items.
   useEffect(() => {
@@ -299,9 +501,22 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     }
   }
 
-  // Después de cobrar exitoso: si era tab, eliminarla
+  // Después de cobrar exitoso: si era tab, eliminarla. También cualquier
+  // kitchenOrder activo asociado pasa a 'delivered' (la cajera entregó).
   async function handleSaleConfirmed() {
     if (isTabMode) {
+      // Marcar como delivered todos los items shim del cart que aún tengan order activo
+      const orderIdsToDeliver = cart
+        .filter(it => it.source === 'kitchen' && it.kitchenOrderId)
+        .map(it => it.kitchenOrderId)
+      if (orderIdsToDeliver.length > 0) {
+        try {
+          const m = await import('../kitchenOrders')
+          await Promise.all(orderIdsToDeliver.map(id => m.markOrderDelivered(id)))
+        } catch (err) {
+          console.warn('[NewSale] marcar delivered tras cobro:', err)
+        }
+      }
       try { await deleteOpenTab(tab.id) } catch (err) {
         console.warn('[NewSale] no se pudo eliminar tab tras cobro:', err)
       }
@@ -433,31 +648,65 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
               </div>
             )}
             {filtered.map((p, i) => {
-              const isFreeAmount = p.freeAmount === true
-              const priceHere = isFreeAmount ? null : getProductPrice(p, branchId)
-              const needsPrice = !isFreeAmount && priceHere === null
+              const isLunchItem = p.isLunch === true
+              const isSpecial = p.lunchKind === 'special'
+              const isFreeAmount = !isLunchItem && p.freeAmount === true
+              const priceHere = isLunchItem
+                ? Number(p.priceMesa) || 0
+                : (isFreeAmount ? null : getProductPrice(p, branchId))
+              const needsPrice = !isLunchItem && !isFreeAmount && priceHere === null
               return (
                 <button
                   key={p.source + '_' + p.id}
                   onClick={() => handleSelectProduct(p)}
                   style={{
                     width: '100%', padding: '12px 16px',
-                    background: 'transparent', border: 'none',
+                    background: isLunchItem ? (isSpecial ? '#FFF7E6' : T.copper[50]) : 'transparent',
+                    border: 'none',
                     borderBottom: i < filtered.length - 1 || showCreateOption ? `0.5px solid ${T.neutral[100]}` : 'none',
                     cursor: 'pointer', fontFamily: 'inherit',
                     display: 'flex', alignItems: 'center', gap: 12,
                     textAlign: 'left',
                   }}
                 >
+                  {isLunchItem && (
+                    <div style={{
+                      width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+                      background: '#fff',
+                      border: `1px solid ${isSpecial ? '#F4E0BC' : T.copper[100]}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 16,
+                    }}>
+                      {isSpecial ? '⭐' : '🍽️'}
+                    </div>
+                  )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 14, fontWeight: 600, color: T.neutral[900],
+                      fontSize: 14, fontWeight: isLunchItem ? 800 : 600,
+                      color: isLunchItem ? (isSpecial ? T.warn : T.copper[700]) : T.neutral[900],
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>
                       {p.name}
                     </div>
+                    {isLunchItem && (
+                      <div style={{
+                        fontSize: 11, color: T.neutral[500], marginTop: 1,
+                        letterSpacing: 0.3,
+                      }}>
+                        Mesa {fmtCOP(p.priceMesa || 0)} · Llevar {fmtCOP(p.priceLlevar || p.priceMesa || 0)}
+                      </div>
+                    )}
                   </div>
-                  {isFreeAmount ? (
+                  {isLunchItem ? (
+                    <div style={{
+                      fontSize: 11, fontWeight: 700, color: isSpecial ? T.warn : T.copper[700],
+                      background: '#fff', padding: '4px 10px', borderRadius: 999,
+                      letterSpacing: 0.3, flexShrink: 0,
+                      border: `1px solid ${isSpecial ? '#F4E0BC' : T.copper[200]}`,
+                    }}>
+                      {isSpecial ? 'Especial' : 'Almuerzo'}
+                    </div>
+                  ) : isFreeAmount ? (
                     <div style={{
                       fontSize: 11, fontWeight: 700, color: T.copper[700],
                       background: T.copper[50], padding: '4px 10px', borderRadius: 999,
@@ -664,6 +913,217 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         />
       )}
 
+      {/* Modal de almuerzo (menú o especial).
+          Si la cajera intenta cerrar pero ya tiene almuerzos en construcción,
+          abrimos el modal de envío en lugar de descartar el progreso. */}
+      {lunchModal?.kind === 'menu' && (
+        <LunchPickerModal
+          product={lunchModal.product}
+          currentCount={lunchCommanda.length}
+          onCancel={() => {
+            if (lunchCommanda.length > 0) {
+              setLunchModal(null)
+              setSendCommandaModal({
+                number: tableNumber || nextFreeTableNumber(openTabs),
+                error: null, busy: false,
+              })
+            } else {
+              setLunchModal(null)
+            }
+          }}
+          onAdd={handleAddLunchToCommanda}
+        />
+      )}
+      {lunchModal?.kind === 'special' && (
+        <SpecialLunchModal
+          currentCount={lunchCommanda.length}
+          onCancel={() => {
+            if (lunchCommanda.length > 0) {
+              setLunchModal(null)
+              setSendCommandaModal({
+                number: tableNumber || nextFreeTableNumber(openTabs),
+                error: null, busy: false,
+              })
+            } else {
+              setLunchModal(null)
+            }
+          }}
+          onAdd={handleAddLunchToCommanda}
+        />
+      )}
+
+      {/* Modal de envío de comanda: pide # de mesa (si no estamos ya en una)
+          y nota opcional. */}
+      {sendCommandaModal && (
+        <SendCommandaModal
+          state={sendCommandaModal}
+          setState={setSendCommandaModal}
+          isTabMode={isTabMode}
+          tableNumber={tableNumber}
+          openTabs={openTabs}
+          commandaNote={commandaNote}
+          setCommandaNote={setCommandaNote}
+          lunchCommanda={lunchCommanda}
+          onSubmit={handleSendCommanda}
+          onBack={() => {
+            // Volver al modal de almuerzo (si la cajera quiere agregar más)
+            setSendCommandaModal(null)
+            setLunchModal({
+              product: lunchCommanda[lunchCommanda.length - 1]?.kind === 'special'
+                ? { lunchKind: 'special' }
+                : { isLunch: true, name: 'Almuerzo', priceMesa: 0, priceLlevar: 0 },
+              kind: lunchCommanda[lunchCommanda.length - 1]?.kind === 'special' ? 'special' : 'menu',
+            })
+          }}
+        />
+      )}
+
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal de envío de comanda (#mesa + nota + confirmar)
+// ──────────────────────────────────────────────────────────────
+function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, commandaNote, setCommandaNote, lunchCommanda, onSubmit, onBack }) {
+  const num = state.number
+  const taken = !isTabMode && isTableNumberTaken(openTabs, num, null)
+
+  async function handleConfirm() {
+    if (state.busy) return
+    if (!num || num <= 0) {
+      setState(s => ({ ...s, error: 'Pon un número de mesa válido.' }))
+      return
+    }
+    setState(s => ({ ...s, busy: true, error: null }))
+    const error = await onSubmit(num)
+    if (error) {
+      setState(s => ({ ...s, busy: false, error }))
+    }
+  }
+
+  return (
+    <div onClick={state.busy ? undefined : () => setState(null)} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 24,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 460, background: '#fff', borderRadius: 22,
+        padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.25)',
+      }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+          Enviar comanda a cocina
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, marginBottom: 16, lineHeight: 1.5 }}>
+          {lunchCommanda.length} {lunchCommanda.length === 1 ? 'almuerzo' : 'almuerzos'} listos para enviar.
+        </div>
+
+        {/* Resumen de lo que se envía */}
+        <div style={{
+          padding: '10px 12px', borderRadius: 12,
+          background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+          marginBottom: 14,
+        }}>
+          {lunchCommanda.map((l, i) => (
+            <div key={i} style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              fontSize: 12.5, color: T.neutral[700], padding: '3px 0',
+              borderBottom: i < lunchCommanda.length - 1 ? `0.5px dashed ${T.neutral[200]}` : 'none',
+            }}>
+              <span>
+                {l.productName} · {l.destination === 'llevar' ? '📦' : '🍽️'}
+              </span>
+              <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+                ${(l.price || 0).toLocaleString('es-CO')}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Selector de mesa (solo si no estamos ya en una) */}
+        {!isTabMode && (
+          <>
+            <div style={{
+              fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
+              letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+            }}>
+              Número de mesa
+            </div>
+            <input
+              type="number" min="1" value={num || ''}
+              onChange={e => setState(s => ({ ...s, number: Number(e.target.value) || 0, error: null }))}
+              autoFocus
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                border: `1.5px solid ${taken ? T.bad + '88' : T.neutral[200]}`,
+                fontSize: 18, fontFamily: 'inherit', fontWeight: 700,
+                background: '#fff', color: T.neutral[900],
+                outline: 'none', textAlign: 'center', marginBottom: 6,
+                boxSizing: 'border-box', fontVariantNumeric: 'tabular-nums',
+              }}
+            />
+            {taken && (
+              <div style={{ fontSize: 12, color: T.bad, marginBottom: 10, textAlign: 'center' }}>
+                Esa mesa ya está ocupada. Usa otro número.
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Nota a la comanda */}
+        <div style={{
+          fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
+          letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          Nota para cocina <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span>
+        </div>
+        <textarea
+          value={commandaNote}
+          onChange={e => setCommandaNote(e.target.value)}
+          placeholder='Ej: "Para el chico de la peluquería" · "Sin sal"'
+          rows={2}
+          maxLength={200}
+          style={{
+            width: '100%', padding: '11px 12px', borderRadius: 12,
+            border: `1.5px solid ${T.neutral[200]}`,
+            fontSize: 13.5, fontFamily: 'inherit',
+            background: '#fff', color: T.neutral[900],
+            outline: 'none', resize: 'vertical', minHeight: 60,
+            boxSizing: 'border-box', marginBottom: 14,
+          }}
+        />
+
+        {state.error && (
+          <div style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+          }}>
+            {state.error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onBack} disabled={state.busy} style={{
+            flex: 1, padding: '12px', borderRadius: 12,
+            background: T.neutral[100], color: T.neutral[700],
+            border: 'none', cursor: state.busy ? 'wait' : 'pointer',
+            fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+          }}>← Volver</button>
+          <button onClick={handleConfirm} disabled={state.busy || taken || !num} style={{
+            flex: 1.6, padding: '12px', borderRadius: 12,
+            background: state.busy || taken || !num ? T.neutral[200] : T.copper[500],
+            color: state.busy || taken || !num ? T.neutral[500] : '#fff',
+            border: 'none', cursor: state.busy || taken || !num ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', fontSize: 14, fontWeight: 800, letterSpacing: 0.2,
+            boxShadow: state.busy || taken || !num ? 'none' : '0 4px 14px rgba(184,122,86,0.35)',
+          }}>
+            {state.busy ? 'Enviando...' : '🚀 Enviar comanda'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -746,6 +1206,61 @@ function SearchInput({ value, onChange, placeholder }) {
 
 function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
   const subtotal = item.qty * item.unitPrice
+
+  // Items shim de cocina (almuerzos enviados): sin qty, sin edit. Tap en remover
+  // cancela el kitchenOrder y lo quita del carrito.
+  if (item.source === 'kitchen') {
+    const isLlevar = item.name?.includes('Para llevar')
+    const labelColor = isLlevar ? T.warn : T.copper[700]
+    const labelBg = isLlevar ? '#FFF7E6' : T.copper[50]
+    return (
+      <div style={{
+        padding: '12px 16px',
+        display: 'flex', alignItems: 'center', gap: 10,
+        borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+        background: '#FBF5F0',
+      }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+          background: '#fff', border: `1px solid ${labelColor}33`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16,
+        }}>
+          {isLlevar ? '📦' : '🍽️'}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 14, fontWeight: 700, color: T.neutral[900],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {item.name}
+          </div>
+          <div style={{
+            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 2,
+            letterSpacing: 0.4, textTransform: 'uppercase',
+          }}>
+            En cocina · No editable
+          </div>
+        </div>
+        <div style={{
+          minWidth: 70, textAlign: 'right',
+          fontSize: 14, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+        }}>
+          {fmtCOP(subtotal)}
+        </div>
+        <button onClick={onRemove} title="Cancelar este almuerzo" style={{
+          width: 32, height: 32, borderRadius: 999, marginLeft: 4,
+          background: 'transparent', border: 'none',
+          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.bad} strokeWidth="1.7" strokeLinecap="round"/>
+          </svg>
+        </button>
+      </div>
+    )
+  }
+
   // Items de venta libre: sin botones - / +; tap en el monto edita
   if (item.freeAmount) {
     return (

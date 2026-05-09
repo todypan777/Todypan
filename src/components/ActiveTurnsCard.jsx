@@ -19,6 +19,7 @@ import { watchAllUsers } from '../users'
 import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import NewSale from '../screens/NewSale'
+import OpenTabsBubbles from './OpenTabsBubbles'
 
 /**
  * Panel central del admin (D25): controla TODOS los turnos.
@@ -35,6 +36,9 @@ export default function ActiveTurnsCard() {
   const [openSessions, setOpenSessions] = useState([])
   const [allUsers, setAllUsers] = useState([])
   const [assistingSession, setAssistingSession] = useState(null)
+  // Tab abierta DENTRO del modo asistir — cuando el admin clicka una burbuja
+  // de mesa abierta, se carga aquí y se renderiza un NewSale tab edit encima.
+  const [editingAssistTab, setEditingAssistTab] = useState(null)
   const [openingBranch, setOpeningBranch] = useState(null)
   const [closingSession, setClosingSession] = useState(null)
 
@@ -117,20 +121,61 @@ export default function ActiveTurnsCard() {
         />
       )}
 
-      {/* Modal: asistir (POS de la cajera) — sin cambios respecto al modelo anterior */}
+      {/* Modal: asistir (POS de la cajera).
+          Antes solo renderizaba NewSale, lo que dejaba al admin SIN poder
+          ver las mesas abiertas de la cajera (burbujas flotantes). Ahora
+          el admin tiene el mismo POS que la cajera: NewSale base para nueva
+          venta + burbujas a los lados para abrir mesas existentes. */}
       {assistingSession && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 80, background: T.neutral[50],
           animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
         }}>
+          {/* Capa 1 (base): NewSale para nueva venta a la cajera asistida */}
           <NewSale
             session={assistingSession}
             authUser={authUser}
             userDoc={userDoc}
             assistMode={{ adminUid: authUser.uid, adminName }}
-            onCancel={() => setAssistingSession(null)}
-            onSaved={() => setAssistingSession(null)}
+            onCancel={() => {
+              // Al salir del NewSale base se cierra todo el modo asistir.
+              setAssistingSession(null)
+              setEditingAssistTab(null)
+            }}
+            onSaved={() => {
+              setAssistingSession(null)
+              setEditingAssistTab(null)
+            }}
           />
+
+          {/* Burbujas de mesas abiertas — montadas dentro del wrapper así
+              comparten su stacking context. NewSale base no usa position
+              fija, así que las burbujas (position:fixed, z-index 50)
+              aparecen encima visualmente. */}
+          <OpenTabsBubbles
+            sessionId={assistingSession.id}
+            onSelect={tab => setEditingAssistTab(tab)}
+          />
+
+          {/* Capa 2 (encima): NewSale en modo tab edit cuando el admin
+              clicka una burbuja. z-index 90 cubre las burbujas y el
+              NewSale base; al cerrarlo, el admin vuelve al base. */}
+          {editingAssistTab && (
+            <div style={{
+              position: 'fixed', inset: 0, zIndex: 90, background: T.neutral[50],
+              animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+            }}>
+              <NewSale
+                session={assistingSession}
+                authUser={authUser}
+                userDoc={userDoc}
+                tab={editingAssistTab}
+                assistMode={{ adminUid: authUser.uid, adminName }}
+                onCancel={() => setEditingAssistTab(null)}
+                onSaved={() => setEditingAssistTab(null)}
+              />
+            </div>
+          )}
         </div>
       )}
     </>

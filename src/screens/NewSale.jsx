@@ -1495,57 +1495,61 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
   )
 }
 
-// Construye un resumen legible del almuerzo enviado.
+// Construye un resumen del almuerzo enviado para mostrarlo a la CAJERA.
 //
-// Reglas alineadas con la vista de la cocinera:
-//   - 'special': muestra la descripción libre.
-//   - 'menu':
-//     · Sopa, Principio, Proteína: SIEMPRE se muestran si están elegidos.
-//     · Acompañante / Ensalada / Jugo (alwaysServed): SOLO se muestran si la
-//       cajera los QUITÓ (null) — como alerta "SIN [X]". Cuando van por
-//       defecto, no ensucian el resumen porque la cocinera ya sabe.
-//     · Principio puede ser ARRAY de hasta 2 (caso "MIXTO Frijol / Pasta").
-//   - 'commandaNote': se muestra al final como "📝 ..." si existe.
+// Diferencia clave con la vista de cocinera:
+//   - Cocinera (CookApp): oculta acompañante/ensalada/jugo cuando van por
+//     defecto. Solo le interesa lo "diferente" para no llenarse la pantalla.
+//   - Cajera (aquí): muestra TODO el menú que el cliente pidió. Necesita
+//     poder revisar y confirmar con el cliente. Si la cajera quitó algún
+//     componente, sale como SIN [X] resaltado.
+//
+// Devuelve un objeto con filas estructuradas para render flexible (sin
+// truncar): [{ icon, label, value, isSin }] + commandaNote opcional.
+//
+// Casos especiales:
+//   - 'special': el "value" único es la descripción libre del almuerzo.
+//   - 'menu' con principio array de 2 → "MIXTO Frijol / Pasta".
 function buildLunchSummary(item) {
-  const lines = []
+  const rows = []
   if (item.lunchKind === 'special' && item.lunchDescription) {
-    lines.push(item.lunchDescription)
+    rows.push({ icon: '⭐', label: 'Especial', value: item.lunchDescription })
   } else if (item.lunchKind === 'menu' && item.lunchSelections) {
     const sel = item.lunchSelections
     const ICONS = { soup: '🥣', principio: '🫘', protein: '🍗', side: '🍚', salad: '🥗', juice: '🥤' }
-    const LABELS = { soup: 'sopa', principio: 'principio', protein: 'proteína', side: 'acompañante', salad: 'ensalada', juice: 'jugo' }
+    const LABELS = { soup: 'Sopa', principio: 'Principio', protein: 'Proteína', side: 'Acompañante', salad: 'Ensalada', juice: 'Jugo' }
     const ALWAYS_SERVED = new Set(['side', 'salad', 'juice'])
-    const parts = []
-    const sins = []  // categorías "siempre" que están null → alerta
     for (const cat of ['soup', 'principio', 'protein', 'side', 'salad', 'juice']) {
       const v = sel[cat]
-      if (ALWAYS_SERVED.has(cat)) {
-        // Si hay valor → no mostrar (ya va por defecto). Si es null → SIN.
-        if (v === null || (Array.isArray(v) && v.length === 0)) {
-          sins.push(`SIN ${LABELS[cat].toUpperCase()}`)
+      const icon = ICONS[cat] || '·'
+      const label = LABELS[cat] || cat
+
+      // Vacío en categoría "siempre se sirve" (acompañante/ensalada/jugo) →
+      // mostrar como SIN [X] resaltado: la cajera tiene que recordar que
+      // este cliente NO lleva ese componente.
+      if (ALWAYS_SERVED.has(cat) && (v === null || (Array.isArray(v) && v.length === 0))) {
+        rows.push({ icon, label, value: `SIN ${label.toUpperCase()}`, isSin: true })
+        continue
+      }
+      // Principio puede ser array (mixto hasta 2)
+      if (Array.isArray(v) && v.length > 0) {
+        const names = v.map(x => x.name).filter(Boolean)
+        if (names.length === 2) {
+          rows.push({ icon, label, value: `MIXTO ${names.join(' / ')}`, isMixto: true })
+        } else if (names.length === 1) {
+          rows.push({ icon, label, value: names[0] })
         }
         continue
       }
-      // No-alwaysServed: sopa, principio, proteína. Mostrar si está elegido.
-      if (Array.isArray(v) && v.length > 0) {
-        // Principio mixto
-        const names = v.map(x => x.name).filter(Boolean)
-        if (names.length === 2) {
-          parts.push(`${ICONS[cat] || '·'} MIXTO ${names.join(' / ')}`)
-        } else if (names.length === 1) {
-          parts.push(`${ICONS[cat] || '·'} ${names[0]}`)
-        }
-      } else if (v && v.name) {
-        parts.push(`${ICONS[cat] || '·'} ${v.name}`)
+      // Valor único
+      if (v && v.name) {
+        rows.push({ icon, label, value: v.name })
       }
+      // Si es no-alwaysServed y está vacío (ej: principio sin elegir),
+      // simplemente no se agrega.
     }
-    if (parts.length > 0) lines.push(parts.join(' · '))
-    if (sins.length > 0) lines.push(`⚠ ${sins.join(' · ')}`)
   }
-  if (item.commandaNote) {
-    lines.push(`📝 ${item.commandaNote}`)
-  }
-  return lines
+  return { rows, note: item.commandaNote || null }
 }
 
 function useCashierProducts() {
@@ -1639,7 +1643,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
 
     // Resumen de lo que se envió a cocina (visible POST-envío). Ahora la
     // cajera puede revisar sin tener que ir a buscar el kitchenOrder.
-    const summaryLines = buildLunchSummary(item)
+    const summary = buildLunchSummary(item)
 
     return (
       <div style={{
@@ -1657,40 +1661,88 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
           {isLlevar ? '📦' : '🍽️'}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Header con nombre + subtotal en la misma fila */}
           <div style={{
-            fontSize: 14, fontWeight: 700, color: T.neutral[900],
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+            gap: 8,
           }}>
-            {item.name}
-          </div>
-          {summaryLines.length > 0 && (
             <div style={{
-              fontSize: 11.5, color: T.neutral[700], marginTop: 4, lineHeight: 1.5,
-              padding: '6px 8px', borderRadius: 8,
-              background: '#fff', border: `0.5px solid ${T.neutral[200]}`,
+              fontSize: 14, fontWeight: 700, color: T.neutral[900],
+              flex: 1, minWidth: 0,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
             }}>
-              {summaryLines.map((line, i) => (
+              {item.name}
+            </div>
+            <div style={{
+              fontSize: 14, fontWeight: 700, color: T.neutral[900],
+              fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+            }}>
+              {fmtCOP(subtotal)}
+            </div>
+          </div>
+
+          {/* Tabla de selecciones — TODO lo que la cliente pidió, sin truncar.
+              Cada fila label + valor con wrap libre. La cajera puede revisar
+              y confirmar con el cliente. */}
+          {summary.rows.length > 0 && (
+            <div style={{
+              marginTop: 6,
+              padding: '8px 10px', borderRadius: 8,
+              background: '#fff', border: `0.5px solid ${T.neutral[200]}`,
+              display: 'flex', flexDirection: 'column', gap: 4,
+            }}>
+              {summary.rows.map((row, i) => (
                 <div key={i} style={{
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  display: 'flex', alignItems: 'baseline',
+                  gap: 8, fontSize: 12, lineHeight: 1.4,
                 }}>
-                  {line}
+                  <span style={{
+                    flexShrink: 0,
+                    color: T.neutral[500],
+                    minWidth: 100,
+                    fontWeight: 700, letterSpacing: 0.3,
+                    textTransform: 'uppercase',
+                    fontSize: 10.5,
+                  }}>
+                    {row.icon} {row.label}
+                  </span>
+                  <span style={{
+                    flex: 1, minWidth: 0,
+                    fontWeight: row.isSin ? 800 : (row.isMixto ? 800 : 700),
+                    color: row.isSin ? T.bad : (row.isMixto ? T.copper[700] : T.neutral[900]),
+                    // Importante: SIN nowrap — el texto puede envolverse
+                    // si el nombre del producto es largo (ej. "Sopa de
+                    // Mondongo con Yuca").
+                    wordBreak: 'break-word',
+                  }}>
+                    {row.value}
+                  </span>
                 </div>
               ))}
             </div>
           )}
+
+          {/* Comentario destacado por separado — más visible que como una
+              fila normal del summary. */}
+          {summary.note && (
+            <div style={{
+              marginTop: 6,
+              padding: '8px 10px', borderRadius: 8,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 12, color: '#7A5C00',
+              fontWeight: 600, fontStyle: 'italic',
+              lineHeight: 1.4, wordBreak: 'break-word',
+            }}>
+              📝 {summary.note}
+            </div>
+          )}
+
           <div style={{
-            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 4,
+            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 6,
             letterSpacing: 0.4, textTransform: 'uppercase',
           }}>
             En cocina · No editable
           </div>
-        </div>
-        <div style={{
-          minWidth: 70, textAlign: 'right',
-          fontSize: 14, fontWeight: 700, color: T.neutral[900],
-          fontVariantNumeric: 'tabular-nums', flexShrink: 0, marginTop: 1,
-        }}>
-          {fmtCOP(subtotal)}
         </div>
         <button onClick={onRemove} title="Cancelar este almuerzo" style={{
           width: 32, height: 32, borderRadius: 999, marginLeft: 4,

@@ -21,9 +21,15 @@ import { addDocOffline } from './utils/firestoreOffline'
  *   - cashierUid: uid del cajero dueño
  *   - branchId / branchName
  *   - kind: 'mesa' | 'llevar'  (default 'mesa' para legacy)
- *       'mesa'   → mesa numerada en sitio. Usa tableNumber.
+ *       'mesa'   → mesa numerada en sitio. Usa tableNumber + tableSuffix.
  *       'llevar' → cliente para llevar (sin mesa). Usa customerName.
- *   - tableNumber?: número visible (1, 2, 3…) único entre tabs 'mesa' por (sessionId, cashierUid)
+ *   - tableNumber?: número base (1, 2, 3…). Para tabs 'mesa'.
+ *   - tableSuffix?: sufijo entero >=0 cuando hay mesas con mismo número.
+ *       0 (o ausente) = sin sufijo, se muestra "1".
+ *       1 = se muestra "1.1". 2 = "1.2". Etc.
+ *       Sirve para cuando dos grupos se sientan juntos en una sola mesa
+ *       física: la cajera tipea el mismo número y el sistema asigna .1, .2
+ *       automáticamente sin combinar las cuentas.
  *   - customerName?: nombre del cliente cuando kind='llevar' (no único — pueden repetirse)
  *   - items: [{ key, productId, source, name, qty, unitPrice, ...campos cocina }]
  *   - total: suma de qty * unitPrice
@@ -70,7 +76,9 @@ export function computeTabTotal(items) {
   return (items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0)
 }
 
-/** Calcula el siguiente número libre en una lista de tabs. Solo considera mesas. */
+/** Calcula el siguiente número base libre en una lista de tabs. Solo considera mesas.
+ *  Pensado para sugerir "siguiente mesa" — ignora sufijos: si hay 1, 1.1 y 2,
+ *  el siguiente libre es 3. */
 export function nextFreeTableNumber(tabs) {
   const used = new Set(
     (tabs || [])
@@ -83,10 +91,10 @@ export function nextFreeTableNumber(tabs) {
   return n
 }
 
-/** True si el número está usado por OTRA tab MESA (excluye una opcional).
- *  Las tabs 'llevar' no tienen número así que se ignoran.
- *  Defensivo: si `number` no es un entero positivo, retorna false (la UI no
- *  debe bloquear por datos corruptos).
+/** True si el número base está usado por OTRA tab MESA (excluye una opcional).
+ *  ATENCIÓN: con el modelo de sufijos, "ocupado" ya no implica error — la UI
+ *  puede asignar un sufijo (1.1, 1.2) al crear. Esta función queda sólo para
+ *  mostrarle a la cajera "esta mesa ya tiene gente, se creará como 1.1".
  */
 export function isTableNumberTaken(tabs, number, excludeId = null) {
   const num = Number(number)
@@ -98,6 +106,41 @@ export function isTableNumberTaken(tabs, number, excludeId = null) {
     if (!tn || tn <= 0 || !Number.isFinite(tn)) return false
     return tn === num
   })
+}
+
+/** Devuelve el siguiente sufijo libre para un número base dado.
+ *    - Si nadie tiene ese número (suffix 0 libre): retorna 0 (sin sufijo).
+ *    - Si está tomado, busca 1, 2, 3... y retorna el primero libre.
+ *  Ej: hay mesas {1 sin suffix, 1.1, 1.3} → para baseNumber=1 retorna 2.
+ */
+export function nextTableSuffix(tabs, baseNumber) {
+  const base = Number(baseNumber)
+  if (!base || base <= 0) return 0
+  const used = new Set(
+    (tabs || [])
+      .filter(t => (t.kind || 'mesa') === 'mesa' && Number(t.tableNumber) === base)
+      .map(t => Number(t.tableSuffix) || 0)
+  )
+  if (!used.has(0)) return 0
+  let s = 1
+  while (used.has(s)) s++
+  return s
+}
+
+/** Etiqueta legible de la tab para mostrar en burbujas, headers y cocina.
+ *    - llevar: el customerName.
+ *    - mesa sin suffix: "5".
+ *    - mesa con suffix: "5.1".
+ */
+export function formatTableLabel(tab) {
+  if (!tab) return ''
+  if ((tab.kind || 'mesa') === 'llevar') {
+    return tab.customerName || 'Cliente'
+  }
+  const base = Number(tab.tableNumber) || 0
+  const suffix = Number(tab.tableSuffix) || 0
+  if (!base) return ''
+  return suffix > 0 ? `${base}.${suffix}` : String(base)
 }
 
 /**
@@ -140,7 +183,7 @@ function cleanCartItem(it) {
  */
 export async function createOpenTab({
   sessionId, cashierUid, branchId, branchName,
-  kind, tableNumber, customerName,
+  kind, tableNumber, tableSuffix, customerName,
   items,
   recordedByUid, recordedByName, recordedByRole,
 }) {
@@ -159,6 +202,10 @@ export async function createOpenTab({
   }
   if (tabKind === 'mesa') {
     data.tableNumber = Number(tableNumber) || 1
+    // tableSuffix: 0 = sin sufijo, 1+ = sufijo. Solo persistir si > 0 para
+    // no llenar el doc con campos vacíos en el caso normal.
+    const sfx = Number(tableSuffix) || 0
+    if (sfx > 0) data.tableSuffix = sfx
   } else {
     // Cliente sin nombre cae a "Cliente" — la cajera puede editar después.
     data.customerName = (customerName || '').trim() || 'Cliente'

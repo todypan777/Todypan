@@ -62,6 +62,9 @@ export async function createKitchenOrder(payload) {
     tabId: payload.tabId,
     // tableNumber puede ser null cuando la tab es de tipo 'llevar' (sin mesa).
     tableNumber: payload.tableNumber ?? null,
+    // tableSuffix denormalizado para que cocina muestre "Mesa 2.1" sin tener
+    // que hacer JOIN con openTabs. Solo se incluye si > 0.
+    ...(Number(payload.tableSuffix) > 0 ? { tableSuffix: Number(payload.tableSuffix) } : {}),
     customerName: payload.customerName?.trim() || null,
     sessionId: payload.sessionId,
     branchId: payload.branchId ?? null,

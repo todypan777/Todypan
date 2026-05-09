@@ -20,6 +20,8 @@ import {
   deleteOpenTab,
   nextFreeTableNumber,
   isTableNumberTaken,
+  nextTableSuffix,
+  formatTableLabel,
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
 import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState } from '../menu'
@@ -470,6 +472,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     try {
       let targetTabId
       let targetTableNumber = null
+      let targetTableSuffix = 0
       let targetCustomerName = null
       let targetTabKind = 'mesa'
 
@@ -481,10 +484,12 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           if (!numberToUse || numberToUse <= 0) {
             return 'Pon un número de mesa válido.'
           }
-          if (isTableNumberTaken(openTabs, numberToUse, null)) {
-            return 'Ese número de mesa ya está ocupado. Escoge otro.'
-          }
+          // Si la mesa ya existe (otro grupo en la misma mesa física),
+          // asignar sufijo .1, .2, etc. Nunca combinar — son cuentas
+          // independientes aunque compartan mesa.
+          const suffix = nextTableSuffix(openTabs, numberToUse)
           targetTableNumber = numberToUse
+          targetTableSuffix = suffix
           targetTabId = await createOpenTab({
             sessionId: session.id,
             cashierUid: ownerUid,
@@ -492,6 +497,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             branchName: session.branchName,
             kind: 'mesa',
             tableNumber: numberToUse,
+            tableSuffix: suffix,
             items: cart,
             ...(isAssistMode ? {
               recordedByUid: authUser.uid,
@@ -523,6 +529,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         targetTabId = tab.id
         targetTabKind = tab.kind || 'mesa'
         targetTableNumber = tab.tableNumber || null
+        targetTableSuffix = Number(tab.tableSuffix) || 0
         targetCustomerName = tab.customerName || null
       }
 
@@ -534,6 +541,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         const orderId = await createKitchenOrder({
           tabId: targetTabId,
           tableNumber: targetTableNumber,
+          tableSuffix: targetTableSuffix,
           customerName: targetCustomerName,
           sessionId: session.id,
           branchId: session.branchId,
@@ -678,7 +686,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
               {isTabMode
                 ? ((tab?.kind || 'mesa') === 'llevar'
                     ? `📦 ${tab?.customerName || 'Cliente'}`
-                    : `Mesa ${tableNumber}`)
+                    : `Mesa ${formatTableLabel(tab)}`)
                 : 'Nueva venta'}
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
@@ -1177,16 +1185,23 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
 
   const num = state.tableNumber
   const customerName = (state.customerName || '').trim()
+  // taken: ya hay una mesa con ese número. NO bloquea — solo indica que se
+  // creará con sufijo .1/.2 (no se combina con la otra cuenta).
   const taken = !isTabMode && tabKind === 'mesa' && isTableNumberTaken(openTabs, num, null)
+  // Sufijo que se asignará si la mesa ya existe (preview para la cajera).
+  const previewSuffix = !isTabMode && tabKind === 'mesa' && num
+    ? nextTableSuffix(openTabs, num)
+    : 0
+  const previewLabel = previewSuffix > 0 ? `${num}.${previewSuffix}` : String(num || '')
 
   // Lista de números ya ocupados — útil para que la cajera vea qué evitar.
   const occupiedNumbers = useMemo(() => {
     if (isTabMode || tabKind !== 'mesa') return []
     return (openTabs || [])
       .filter(t => (t.kind || 'mesa') === 'mesa')
-      .map(t => Number(t.tableNumber))
-      .filter(n => n > 0)
-      .sort((a, b) => a - b)
+      .map(t => formatTableLabel(t))
+      .filter(label => !!label)
+      .sort()
   }, [openTabs, isTabMode, tabKind])
 
   // Reparto del breakdown — si hay mezcla mesa+llevar, lo mostramos.
@@ -1225,9 +1240,10 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
     }
   }
 
+  // Ya NO bloqueamos por mesa duplicada — se crea con sufijo automático.
   const canConfirm = !state.busy && (
     isTabMode ||
-    (tabKind === 'mesa' ? !!num && !taken : customerName.length > 0)
+    (tabKind === 'mesa' ? !!num : customerName.length > 0)
   )
 
   return (
@@ -1344,7 +1360,7 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
               autoFocus
               style={{
                 width: '100%', padding: '14px', borderRadius: 12,
-                border: `1.5px solid ${taken ? T.bad + '88' : T.neutral[200]}`,
+                border: `1.5px solid ${taken ? '#F0D699' : T.neutral[200]}`,
                 fontSize: 18, fontFamily: 'inherit', fontWeight: 700,
                 background: '#fff', color: T.neutral[900],
                 outline: 'none', textAlign: 'center', marginBottom: 6,
@@ -1352,19 +1368,24 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
               }}
             />
             {taken && (
-              <div style={{ fontSize: 12, color: T.bad, marginBottom: 10, textAlign: 'center' }}>
-                Esa mesa ya está ocupada. Usa otro número.
+              <div style={{
+                marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+                background: '#FFF7E6', border: `1px solid #F4E0BC`,
+                fontSize: 12.5, color: '#7A5C00', lineHeight: 1.45,
+              }}>
+                Esa mesa ya tiene una cuenta. Se creará como{' '}
+                <b style={{ fontVariantNumeric: 'tabular-nums' }}>Mesa {previewLabel}</b>{' '}
+                — son cuentas separadas, no se combinan. Si quieres agregar a la mesa existente, toca su burbuja en vez.
               </div>
             )}
-            {occupiedNumbers.length > 0 && (
+            {occupiedNumbers.length > 0 && !taken && (
               <div style={{
                 marginBottom: 10, padding: '8px 12px', borderRadius: 10,
                 background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
                 fontSize: 11.5, color: T.neutral[600], lineHeight: 1.45,
               }}>
-                <span style={{ fontWeight: 700 }}>Mesas ocupadas:</span>{' '}
-                {occupiedNumbers.join(', ')} ·{' '}
-                <span style={{ color: T.neutral[500] }}>usa otro número</span>
+                <span style={{ fontWeight: 700 }}>Mesas abiertas:</span>{' '}
+                {occupiedNumbers.join(', ')}
               </div>
             )}
           </>

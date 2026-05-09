@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { watchOpenTabsForSession } from '../openTabs'
+import { watchOpenTabsForSession, formatTableLabel } from '../openTabs'
 import { watchLiveOrdersForSession, tabKitchenState } from '../kitchenOrders'
 
 /**
@@ -162,10 +162,11 @@ function Bubble({ tab, kitchenState, onClick }) {
     : kitchenState === 'ready' ? '¡Listo!'
     : null
 
-  // Identificador para el tooltip (mesa# o nombre cliente)
+  // Identificador para el tooltip (mesa# o nombre cliente).
+  // formatTableLabel maneja sufijos automáticamente: "1", "1.1", "1.2"...
   const idLabel = isLlevar
     ? `📦 ${tab.customerName || 'Cliente'}`
-    : `Mesa ${tab.tableNumber}`
+    : `Mesa ${formatTableLabel(tab)}`
 
   return (
     <button
@@ -196,10 +197,13 @@ function Bubble({ tab, kitchenState, onClick }) {
         </div>
       ) : (
         <div style={{
-          fontSize: 24, fontWeight: 800, lineHeight: 1, letterSpacing: -0.5,
+          // Si tiene sufijo (".1", ".2") la etiqueta es más larga: bajamos
+          // un poco el tamaño para que quepa cómoda en la burbuja de 64x64.
+          fontSize: (Number(tab.tableSuffix) || 0) > 0 ? 19 : 24,
+          fontWeight: 800, lineHeight: 1, letterSpacing: -0.5,
           fontVariantNumeric: 'tabular-nums',
         }}>
-          {tab.tableNumber}
+          {formatTableLabel(tab)}
         </div>
       )}
       {hasItems && kitchenState !== 'ready' && (

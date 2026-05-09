@@ -206,6 +206,7 @@ function KitchenQueueView({ queue }) {
         map.set(key, {
           commandaId: key,
           tableNumber: order.tableNumber,         // null cuando es tab 'llevar'
+          tableSuffix: Number(order.tableSuffix) || 0,
           customerName: order.customerName || null,
           destination: order.destination,         // por almuerzo (puede mezclarse)
           commandaNote: order.commandaNote || null,
@@ -378,12 +379,21 @@ function SectionLabel({ color, bg, label, subtitle }) {
   )
 }
 
+// Etiqueta de tabla a partir de los campos planos del kitchenOrder/grupo.
+// "1", "2.1", o "Cliente" según el caso.
+function tableLabelFromGroup(group) {
+  if (!group.tableNumber) return group.customerName || 'Cliente'
+  const suffix = Number(group.tableSuffix) || 0
+  return suffix > 0 ? `${group.tableNumber}.${suffix}` : String(group.tableNumber)
+}
+
 function CommandaCard({ group }) {
   const allReady = group.orders.every(o => o.status === 'ready')
   // Si NO hay número de mesa, la tab es de tipo 'llevar' (sin mesa).
   // El destino por almuerzo puede mezclarse, pero el header se decide por la
   // tab: si llegó sin tableNumber → header de llevar.
   const isLlevarTab = !group.tableNumber
+  const label = tableLabelFromGroup(group)
 
   // Cronómetro: corre mientras NO esté todo listo. Cuando todo está listo,
   // congela el tiempo en el momento del LAST readyAt (antes corría infinito y
@@ -461,12 +471,15 @@ function CommandaCard({ group }) {
           width: 60, height: 60, borderRadius: 14,
           background: '#fff', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: isLlevarTab ? 30 : 28, fontWeight: 900,
+          // Reducimos el font para mesas con sufijo (más caracteres) — "2.1"
+          // necesita más espacio que "2".
+          fontSize: isLlevarTab ? 30 : ((Number(group.tableSuffix) || 0) > 0 ? 22 : 28),
+          fontWeight: 900,
           color: destColor,
           fontVariantNumeric: 'tabular-nums',
           border: `2px solid ${destBorder}`,
         }}>
-          {isLlevarTab ? '📦' : (group.tableNumber || '?')}
+          {isLlevarTab ? '📦' : label}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
@@ -480,9 +493,7 @@ function CommandaCard({ group }) {
             letterSpacing: -0.2, marginTop: 2,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
-            {isLlevarTab
-              ? (group.customerName || 'Cliente')
-              : `Mesa ${group.tableNumber}`}
+            {isLlevarTab ? label : `Mesa ${label}`}
             {' · '}
             {group.orders.length} {group.orders.length === 1 ? 'almuerzo' : 'almuerzos'}
           </div>
@@ -748,14 +759,35 @@ function KitchenOrderRow({ order, isLast }) {
 function KitchenOrderDetailModal({ order, onClose }) {
   const isReady = order.status === 'ready'
   const [busy, setBusy] = useState(false)
+  // Flash de confirmación post-confirm: "✓ LISTO MESA 2.1" durante 1.2s
+  // antes de cerrar el modal — para que la cocinera tenga feedback visual
+  // claro de qué pedido acaba de marcar.
+  const [flashAction, setFlashAction] = useState(null) // 'ready' | 'unready' | null
+
+  // Etiqueta a mostrar (mesa + sufijo o nombre cliente). Es el dato más
+  // importante para la cocinera — qué pedido está terminando.
+  const isLlevar = order.destination === 'llevar'
+  const isLlevarTab = !order.tableNumber
+  const tableLabel = isLlevarTab
+    ? (order.customerName || 'Cliente')
+    : (() => {
+        const suffix = Number(order.tableSuffix) || 0
+        return suffix > 0 ? `${order.tableNumber}.${suffix}` : String(order.tableNumber)
+      })()
+  const labelHeading = isLlevarTab
+    ? tableLabel.toUpperCase()
+    : `MESA ${tableLabel}`
 
   async function handleConfirm() {
     if (busy) return
     setBusy(true)
     try {
+      const willBeReady = !isReady
       if (isReady) await unmarkOrderReady(order.id)
       else await markOrderReady(order.id)
-      onClose()
+      // Mostrar flash de feedback antes de cerrar
+      setFlashAction(willBeReady ? 'ready' : 'unready')
+      setTimeout(() => onClose(), 1200)
     } catch (err) {
       console.error('[kitchen] toggle ready error:', err)
       setBusy(false)
@@ -764,7 +796,6 @@ function KitchenOrderDetailModal({ order, onClose }) {
 
   const selections = order.selections || {}
   const description = order.description
-  const isLlevar = order.destination === 'llevar'
 
   // PORTAL: renderizamos el modal en document.body para escapar la jerarquía
   // de CommandaCard, que tiene `animation` con keyframes de transform y crea
@@ -787,41 +818,68 @@ function KitchenOrderDetailModal({ order, onClose }) {
         background: '#fff', borderRadius: 22,
         boxShadow: '0 16px 48px rgba(0,0,0,0.4)',
         overflow: 'hidden',
+        // position: relative para que el flash overlay (position: absolute)
+        // se ancle al modal box, no al viewport entero.
+        position: 'relative',
         animation: 'fadeScaleIn 0.2s cubic-bezier(0.2,0.9,0.3,1.05)',
       }}>
-        {/* Header */}
+        {/* Header — la etiqueta MESA X.Y o nombre del cliente es el elemento
+            principal en tamaño gigante. Es lo que la cocinera necesita ver
+            de un golpe para saber qué pedido es. */}
         <div style={{
           padding: '20px 22px',
-          background: isReady ? '#E8F4E8' : (isLlevar ? '#FFF4DD' : '#FBF5F0'),
-          borderBottom: `1.5px solid ${isReady ? T.ok + '55' : (isLlevar ? '#F0D699' : T.copper[100])}`,
-          display: 'flex', alignItems: 'center', gap: 14,
+          background: isReady ? '#E8F4E8' : (isLlevarTab ? '#FFF4DD' : '#FBF5F0'),
+          borderBottom: `1.5px solid ${isReady ? T.ok + '55' : (isLlevarTab ? '#F0D699' : T.copper[100])}`,
+          display: 'flex', alignItems: 'center', gap: 16,
         }}>
           <div style={{
-            width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+            width: 64, height: 64, borderRadius: 16, flexShrink: 0,
             background: '#fff',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 30,
-            border: `2px solid ${isReady ? T.ok + '88' : (isLlevar ? '#F0D699' : T.copper[200])}`,
+            fontSize: 34,
+            border: `2.5px solid ${isReady ? T.ok + '88' : (isLlevarTab ? '#F0D699' : T.copper[200])}`,
           }}>
-            {isReady ? '✓' : (isLlevar ? '📦' : '🍽️')}
+            {isReady ? '✓' : (isLlevarTab ? '📦' : '🍽️')}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
-              fontSize: 13, fontWeight: 900,
-              color: isReady ? T.ok : (isLlevar ? '#8A5E12' : T.copper[700]),
-              letterSpacing: 0.6, textTransform: 'uppercase',
+              fontSize: 12, fontWeight: 900,
+              color: isReady ? T.ok : (isLlevarTab ? '#8A5E12' : T.copper[700]),
+              letterSpacing: 0.7, textTransform: 'uppercase',
             }}>
-              {isReady ? 'YA ESTÁ LISTO' : (isLlevar ? 'PARA LLEVAR' : 'PARA MESA')}
+              {isReady
+                ? 'Toca para volver a pendiente'
+                : (isLlevarTab ? 'Para llevar' : 'Para mesa')}
+            </div>
+            {/* Etiqueta GIGANTE — MESA 2.1 o PARA LA PELUQUERIA */}
+            <div style={{
+              fontSize: tableLabel.length > 12 ? 26 : (tableLabel.length > 6 ? 32 : 38),
+              fontWeight: 900, color: T.neutral[900],
+              letterSpacing: -0.5, marginTop: 4, lineHeight: 1.1,
+              textTransform: 'uppercase',
+              wordBreak: 'break-word',
+            }}>
+              {labelHeading}
             </div>
             <div style={{
-              fontSize: 22, fontWeight: 900, color: T.neutral[900],
-              letterSpacing: -0.3, marginTop: 2,
+              fontSize: 14, color: T.neutral[600], marginTop: 6, fontWeight: 600,
+              letterSpacing: -0.1,
             }}>
               {order.productName || 'Almuerzo'}
               {order.kind === 'special' && ' ⭐'}
-            </div>
-            <div style={{ fontSize: 13, color: T.neutral[600], marginTop: 2 }}>
-              {order.tableNumber ? `Mesa ${order.tableNumber}` : (order.customerName || 'Cliente')}
+              {/* Marca si este almuerzo en particular es llevar dentro de
+                  una mesa numerada (caso mixto) */}
+              {!isLlevarTab && isLlevar && (
+                <span style={{
+                  marginLeft: 8,
+                  fontSize: 11, fontWeight: 800, color: '#8A5E12',
+                  background: '#FFF7E6', border: '1px solid #F0D699',
+                  padding: '2px 8px', borderRadius: 999,
+                  letterSpacing: 0.3, verticalAlign: 'middle',
+                }}>
+                  📦 LLEVAR
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -966,6 +1024,38 @@ function KitchenOrderDetailModal({ order, onClose }) {
             {busy ? '...' : (isReady ? '↺ Volver a pendiente' : '✓ Confirmar listo')}
           </button>
         </div>
+
+        {/* Flash de confirmación — cubre el modal con un overlay verde y
+            la etiqueta GIGANTE durante 1.2s antes de cerrar. Feedback claro
+            de qué pedido acaba de marcar. */}
+        {flashAction && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: flashAction === 'ready' ? T.ok : T.warn,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center',
+            color: '#fff', textAlign: 'center', padding: '20px',
+            animation: 'flashIn 0.18s ease-out',
+            zIndex: 5,
+          }}>
+            <div style={{ fontSize: 64, lineHeight: 1, marginBottom: 8 }}>
+              {flashAction === 'ready' ? '✓' : '↺'}
+            </div>
+            <div style={{
+              fontSize: 22, fontWeight: 900, letterSpacing: 1,
+              textTransform: 'uppercase', marginBottom: 6,
+            }}>
+              {flashAction === 'ready' ? 'LISTO' : 'DEVUELTO'}
+            </div>
+            <div style={{
+              fontSize: tableLabel.length > 12 ? 32 : 44,
+              fontWeight: 900, letterSpacing: -0.5, lineHeight: 1.1,
+              wordBreak: 'break-word',
+            }}>
+              {labelHeading}
+            </div>
+          </div>
+        )}
       </div>
 
       <style>{`
@@ -973,6 +1063,10 @@ function KitchenOrderDetailModal({ order, onClose }) {
         @keyframes fadeScaleIn {
           from { opacity: 0; transform: scale(0.94) translateY(10px); }
           to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes flashIn {
+          from { opacity: 0; transform: scale(1.05); }
+          to   { opacity: 1; transform: scale(1); }
         }
       `}</style>
     </div>

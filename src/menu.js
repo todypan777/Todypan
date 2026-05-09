@@ -33,21 +33,28 @@ import { getClientTimestamp } from './utils/network'
 // ──────────────────────────────────────────────────────────────────────────
 
 // Categorías del menú del corriente.
-//   multi: true  → la cocinera publica varias opciones; la cajera escoge UNA al pedir.
+//   multi: true  → la cocinera publica varias opciones; la cajera escoge al pedir.
 //   multi: false → categoría fija (1 sola opción que define la cocinera).
 //                  En el modal de la cajera viene pre-seleccionada con opción de
 //                  quitarla. Si la quita, a cocina le llega "SIN [X]" en grande.
 //                  Solo aplica a 'side' (Acompañante = Arroz blanco).
 //
-// required: si la cocinera no la activa, el corriente no está disponible
-// (sopa, proteína y jugo son obligatorias para considerar válido el menú).
+// required: la cajera DEBE elegir al menos una opción al pedir un almuerzo
+// (sopa y proteína son obligatorias para considerar el almuerzo completo).
+//
+// maxSelections: cuántas opciones puede acumular la cajera en un mismo plato.
+//   Solo 'principio' permite 2 (caso "mixto" — mitad pasta, mitad frijol).
+//
+// alwaysServed: si la cajera deja la categoría VACÍA (null), a cocina le llega
+//   "SIN [X]" como alerta visual. Si está seleccionada, la cocina la oculta
+//   porque ya sabe que va por defecto. Aplica a side/salad/juice.
 export const CATEGORIES = [
-  { id: 'soup',      label: 'Sopa',         multi: true,  required: true,  emoji: '🥣' },
-  { id: 'principio', label: 'Principio',    multi: true,  required: false, emoji: '🫘' },
-  { id: 'protein',   label: 'Proteína',     multi: true,  required: true,  emoji: '🍗' },
-  { id: 'side',      label: 'Acompañante',  multi: false, required: false, emoji: '🍚' },
-  { id: 'salad',     label: 'Ensalada',     multi: true,  required: false, emoji: '🥗' },
-  { id: 'juice',     label: 'Jugo',         multi: true,  required: true,  emoji: '🥤' },
+  { id: 'soup',      label: 'Sopa',         multi: true,  required: true,  maxSelections: 1, emoji: '🥣' },
+  { id: 'principio', label: 'Principio',    multi: true,  required: false, maxSelections: 2, emoji: '🫘' },
+  { id: 'protein',   label: 'Proteína',     multi: true,  required: true,  maxSelections: 1, emoji: '🍗' },
+  { id: 'side',      label: 'Acompañante',  multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🍚' },
+  { id: 'salad',     label: 'Ensalada',     multi: true,  required: false, maxSelections: 1, alwaysServed: true, emoji: '🥗' },
+  { id: 'juice',     label: 'Jugo',         multi: true,  required: false, maxSelections: 1, alwaysServed: true, emoji: '🥤' },
 ]
 
 export const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]))
@@ -61,7 +68,12 @@ const dailyMenuRef = (dateStr) => doc(firestoreDb, 'dailyMenu', dateStr)
 // Corriente. Usa la misma colección `dailyMenu` para reusar permisos de
 // lectura/escritura. El docId tiene formato no-fecha para no chocar con los
 // `YYYY-MM-DD`.
-const CORRIENTE_CONFIG_ID = '__corriente_config__'
+//
+// IMPORTANTE: Firestore reserva los IDs que matchean __.*__ (doble guión
+// bajo al inicio Y al final). El ID original `__corriente_config__` era
+// inválido y rompía save/read con "Resource id is invalid because it is
+// reserved". Por eso ahora usamos guiones simples.
+const CORRIENTE_CONFIG_ID = 'corriente_config'
 const corrienteConfigRef = () => doc(firestoreDb, 'dailyMenu', CORRIENTE_CONFIG_ID)
 
 // ─── menuItems (catálogo permanente) ──────────────────────────────

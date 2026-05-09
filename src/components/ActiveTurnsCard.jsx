@@ -7,6 +7,7 @@ import {
   watchOpenSessions,
   openSession,
   adminCloseSession,
+  getLatestClosedSessionForBranch,
 } from '../cashSessions'
 import { watchSessionSales } from '../sales'
 import {
@@ -232,6 +233,39 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
   const [amountStr, setAmountStr] = useState(String(cashFloor))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Pre-llenado heredado del último cierre. Si en el cierre anterior se decidió
+  // dejar dinero en la caja (handover='leave', 'cashier' o 'none'), pre-llenamos
+  // el monto con `handover.amount` para que el admin no tenga que recordarlo.
+  // Si fue 'admin' (se llevó la diferencia), la caja tiene solo la base —
+  // el default `cashFloor` ya es correcto.
+  const [inherited, setInherited] = useState(null) // { amount, fromName, type, closedAt }
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const prev = await getLatestClosedSessionForBranch(branch.id)
+        if (cancelled || !prev) return
+        const handoverType = prev?.handover?.type
+        const handoverAmount = Number(prev?.handover?.amount) || 0
+        // Solo heredar si quedó dinero físico en la caja al cerrar.
+        // 'admin' = se llevó lo de encima de la base → la caja tiene solo cashFloor.
+        const cashStayed = handoverType === 'cashier' || handoverType === 'leave' || handoverType === 'none'
+        if (!cashStayed || handoverAmount <= 0) return
+        setInherited({
+          amount: handoverAmount,
+          fromName: prev?.cashierName || null,
+          type: handoverType,
+          closedAt: prev?.closedAt?.toMillis?.() ?? prev?.closedAtClient ?? null,
+        })
+        // Solo sobrescribir si el admin no ha tocado el campo (sigue en el default).
+        setAmountStr(curr => curr === String(cashFloor) ? String(handoverAmount) : curr)
+      } catch (e) {
+        console.warn('[OpenShiftModal] no se pudo leer cierre anterior:', e)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [branch.id, cashFloor])
 
   const cashiers = useMemo(
     () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
@@ -294,6 +328,31 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
       </Field>
 
       <Field label={`Monto inicial en caja (base de ${fmtCOP(cashFloor)})`}>
+        {/* Banner heredado: indica de dónde viene el monto pre-llenado para
+            que el admin sepa qué confirmar y pueda ajustar si físicamente
+            la caja tiene otra cosa (ej. el dueño ya retiró/agregó algo). */}
+        {inherited && (
+          <div style={{
+            marginBottom: 8, padding: '10px 12px', borderRadius: 10,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            display: 'flex', alignItems: 'flex-start', gap: 8,
+          }}>
+            <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>💵</div>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#7A5C00', lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700 }}>
+                Heredado del cierre anterior
+                {inherited.fromName ? ` de ${inherited.fromName}` : ''} ·{' '}
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(inherited.amount)}</span>
+              </div>
+              <div style={{ color: '#9A7200', marginTop: 2 }}>
+                {inherited.type === 'cashier' && 'La caja anterior se transfirió a una cajera.'}
+                {inherited.type === 'leave' && 'Se dejó todo el dinero en la caja.'}
+                {inherited.type === 'none' && 'Se dejó la caja intacta tras el cierre.'}
+                {' '}Confirma que físicamente hay este monto o ajústalo.
+              </div>
+            </div>
+          </div>
+        )}
         <NumInput value={amountStr} onChange={setAmountStr} disabled={busy} />
         <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 6, lineHeight: 1.5 }}>
           {amount === cashFloor && '✓ Arranca solo con la base'}

@@ -20,8 +20,12 @@ import { addDocOffline } from './utils/firestoreOffline'
  *   - sessionId: id de la cashSession activa de la cajera
  *   - cashierUid: uid del cajero dueño
  *   - branchId / branchName
- *   - tableNumber: número visible (1, 2, 3…) único por (sessionId, cashierUid)
- *   - items: [{ key, productId, source, name, qty, unitPrice }]
+ *   - kind: 'mesa' | 'llevar'  (default 'mesa' para legacy)
+ *       'mesa'   → mesa numerada en sitio. Usa tableNumber.
+ *       'llevar' → cliente para llevar (sin mesa). Usa customerName.
+ *   - tableNumber?: número visible (1, 2, 3…) único entre tabs 'mesa' por (sessionId, cashierUid)
+ *   - customerName?: nombre del cliente cuando kind='llevar' (no único — pueden repetirse)
+ *   - items: [{ key, productId, source, name, qty, unitPrice, ...campos cocina }]
  *   - total: suma de qty * unitPrice
  *   - createdAt / updatedAt: timestamps
  *
@@ -40,8 +44,18 @@ export function watchOpenTabsForSession(sessionId, callback) {
     q,
     snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      // Orden estable: por número de mesa ascendente
-      list.sort((a, b) => (a.tableNumber || 0) - (b.tableNumber || 0))
+      // Orden estable:
+      //  - mesa primero por número ascendente
+      //  - llevar después, por createdAt ascendente (los más viejos primero)
+      list.sort((a, b) => {
+        const aIsLlevar = (a.kind || 'mesa') === 'llevar'
+        const bIsLlevar = (b.kind || 'mesa') === 'llevar'
+        if (aIsLlevar !== bIsLlevar) return aIsLlevar ? 1 : -1
+        if (!aIsLlevar) return (a.tableNumber || 0) - (b.tableNumber || 0)
+        const ta = a.createdAt?.toMillis?.() ?? 0
+        const tb = b.createdAt?.toMillis?.() ?? 0
+        return ta - tb
+      })
       callback(list)
     },
     err => {
@@ -56,15 +70,21 @@ export function computeTabTotal(items) {
   return (items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0)
 }
 
-/** Calcula el siguiente número libre en una lista de tabs. */
+/** Calcula el siguiente número libre en una lista de tabs. Solo considera mesas. */
 export function nextFreeTableNumber(tabs) {
-  const used = new Set((tabs || []).map(t => Number(t.tableNumber)).filter(n => n > 0))
+  const used = new Set(
+    (tabs || [])
+      .filter(t => (t.kind || 'mesa') === 'mesa')
+      .map(t => Number(t.tableNumber))
+      .filter(n => n > 0)
+  )
   let n = 1
   while (used.has(n)) n++
   return n
 }
 
-/** True si el número está usado por OTRA tab (excluye una opcional).
+/** True si el número está usado por OTRA tab MESA (excluye una opcional).
+ *  Las tabs 'llevar' no tienen número así que se ignoran.
  *  Defensivo: si `number` no es un entero positivo, retorna false (la UI no
  *  debe bloquear por datos corruptos).
  */
@@ -73,6 +93,7 @@ export function isTableNumberTaken(tabs, number, excludeId = null) {
   if (!num || num <= 0 || !Number.isFinite(num)) return false
   return (tabs || []).some(t => {
     if (t.id === excludeId) return false
+    if ((t.kind || 'mesa') !== 'mesa') return false
     const tn = Number(t.tableNumber)
     if (!tn || tn <= 0 || !Number.isFinite(tn)) return false
     return tn === num
@@ -80,35 +101,67 @@ export function isTableNumberTaken(tabs, number, excludeId = null) {
 }
 
 /**
- * Crea una nueva tab con items iniciales. tableNumber se valida contra
- * duplicados (la UI debe haber resuelto eso antes).
- *
- * Si el admin la crea asistiendo el turno de una cajera, pasar
- * recordedByUid/Name/Role para registrar quién la creó.
+ * Sanea un item para guardarlo en Firestore. Preserva campos opcionales
+ * (incluido `kitchenOrderId` y selecciones de almuerzo) sólo si vienen,
+ * para que al reabrir la mesa la cajera siga viendo los detalles del
+ * almuerzo enviado y se pueda cancelar/entregar la orden de cocina.
  */
-export async function createOpenTab({
-  sessionId, cashierUid, branchId, branchName,
-  tableNumber, items,
-  recordedByUid, recordedByName, recordedByRole,
-}) {
-  const cleanItems = (items || []).map(it => ({
+function cleanCartItem(it) {
+  const out = {
     key: it.key,
     productId: it.productId || null,
     source: it.source || 'inline',
     name: it.name,
     qty: Number(it.qty) || 0,
     unitPrice: Number(it.unitPrice) || 0,
-  }))
+  }
+  // Campos opcionales: solo se incluyen si tienen valor para no llenar el
+  // doc de claves vacías.
+  if (it.kitchenOrderId) out.kitchenOrderId = it.kitchenOrderId
+  if (it.kitchenStatus) out.kitchenStatus = it.kitchenStatus
+  if (it.lunchKind) out.lunchKind = it.lunchKind
+  if (it.lunchDestination) out.lunchDestination = it.lunchDestination
+  if (it.lunchSelections) out.lunchSelections = it.lunchSelections
+  if (it.lunchDescription) out.lunchDescription = it.lunchDescription
+  if (it.lunchProductName) out.lunchProductName = it.lunchProductName
+  if (it.commandaNote) out.commandaNote = it.commandaNote
+  if (it.freeAmount) out.freeAmount = true
+  return out
+}
+
+/**
+ * Crea una nueva tab con items iniciales.
+ *
+ * Para kind='mesa': tableNumber requerido y validado contra duplicados (UI).
+ * Para kind='llevar': customerName requerido (puede repetirse — solo etiqueta).
+ *
+ * Si el admin la crea asistiendo el turno de una cajera, pasar
+ * recordedByUid/Name/Role para registrar quién la creó.
+ */
+export async function createOpenTab({
+  sessionId, cashierUid, branchId, branchName,
+  kind, tableNumber, customerName,
+  items,
+  recordedByUid, recordedByName, recordedByRole,
+}) {
+  const tabKind = kind === 'llevar' ? 'llevar' : 'mesa'
+  const cleanItems = (items || []).map(cleanCartItem)
   const data = {
     sessionId,
     cashierUid,
     branchId: branchId ?? null,
     branchName: branchName || null,
-    tableNumber: Number(tableNumber) || 1,
+    kind: tabKind,
     items: cleanItems,
     total: computeTabTotal(cleanItems),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  }
+  if (tabKind === 'mesa') {
+    data.tableNumber = Number(tableNumber) || 1
+  } else {
+    // Cliente sin nombre cae a "Cliente" — la cajera puede editar después.
+    data.customerName = (customerName || '').trim() || 'Cliente'
   }
   if (recordedByUid && recordedByUid !== cashierUid) {
     data.recordedByUid = recordedByUid
@@ -121,25 +174,22 @@ export async function createOpenTab({
 }
 
 /**
- * Actualiza una tab existente. Permite cambiar items y/o número.
+ * Actualiza una tab existente. Permite cambiar items, número de mesa
+ * (solo kind='mesa') o nombre del cliente (solo kind='llevar').
  * (La UI valida número duplicado antes de llamar.)
  */
-export async function updateOpenTab(id, { items, tableNumber }) {
+export async function updateOpenTab(id, { items, tableNumber, customerName }) {
   const updates = { updatedAt: serverTimestamp() }
   if (Array.isArray(items)) {
-    const cleanItems = items.map(it => ({
-      key: it.key,
-      productId: it.productId || null,
-      source: it.source || 'inline',
-      name: it.name,
-      qty: Number(it.qty) || 0,
-      unitPrice: Number(it.unitPrice) || 0,
-    }))
+    const cleanItems = items.map(cleanCartItem)
     updates.items = cleanItems
     updates.total = computeTabTotal(cleanItems)
   }
   if (tableNumber != null) {
     updates.tableNumber = Number(tableNumber) || 1
+  }
+  if (customerName != null) {
+    updates.customerName = String(customerName).trim() || 'Cliente'
   }
   await updateDoc(tabRef(id), updates)
 }

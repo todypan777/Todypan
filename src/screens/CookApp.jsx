@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
@@ -180,6 +181,10 @@ function CookTab({ active, onClick, label, badge }) {
 // ──────────────────────────────────────────────────────────────
 function KitchenQueueView({ queue }) {
   const lastIdsRef = useRef(new Set())
+  // Archivados colapsados por defecto — solo se ve el header. La cocinera
+  // los expande si necesita revisar algo. Evita inundar la pantalla con
+  // pedidos de días anteriores.
+  const [archivedExpanded, setArchivedExpanded] = useState(false)
 
   // Vibrar y disparar animación cuando llegan pedidos nuevos
   useEffect(() => {
@@ -200,8 +205,9 @@ function KitchenQueueView({ queue }) {
       if (!map.has(key)) {
         map.set(key, {
           commandaId: key,
-          tableNumber: order.tableNumber,
-          destination: order.destination,
+          tableNumber: order.tableNumber,         // null cuando es tab 'llevar'
+          customerName: order.customerName || null,
+          destination: order.destination,         // por almuerzo (puede mezclarse)
           commandaNote: order.commandaNote || null,
           createdAt: order.createdAt,
           createdAtClient: order.createdAtClient,
@@ -212,6 +218,25 @@ function KitchenQueueView({ queue }) {
     }
     return Array.from(map.values())
   }, [queue])
+
+  // Separar grupos: pendientes (alguno cocinando) arriba, archivados (todos ready) abajo.
+  // ¡Estos useMemo VAN ANTES de cualquier early return! Hooks no pueden
+  // saltarse — React tira "Rendered more hooks than during the previous render"
+  // si el orden cambia entre renders.
+  const pendingGroups = useMemo(
+    () => groups.filter(g => !g.orders.every(o => o.status === 'ready')),
+    [groups]
+  )
+  const archivedGroups = useMemo(() => {
+    const ready = groups.filter(g => g.orders.every(o => o.status === 'ready'))
+    // Archivados: orden por el readyAt MÁS RECIENTE primero (último que se
+    // marcó listo arriba). Antes salía al fondo y confundía a la cocinera.
+    return ready.sort((a, b) => {
+      const ta = Math.max(...a.orders.map(o => o.readyAt?.toMillis?.() ?? o.readyAtClient ?? 0))
+      const tb = Math.max(...b.orders.map(o => o.readyAt?.toMillis?.() ?? o.readyAtClient ?? 0))
+      return tb - ta
+    })
+  }, [groups])
 
   if (groups.length === 0) {
     return (
@@ -230,10 +255,6 @@ function KitchenQueueView({ queue }) {
     )
   }
 
-  // Separar grupos: pendientes (alguno cocinando) arriba, listos (todos ready) abajo.
-  const pendingGroups = groups.filter(g => !g.orders.every(o => o.status === 'ready'))
-  const readyGroups = groups.filter(g => g.orders.every(o => o.status === 'ready'))
-
   return (
     <div style={{ padding: '14px 12px 80px' }}>
       {/* Pendientes (cocinando) */}
@@ -250,17 +271,21 @@ function KitchenQueueView({ queue }) {
         </>
       )}
 
-      {/* Listos para entregar — sección separada para que la cocinera no se
-          confunda con los que ya hizo. La cajera ve la burbuja verde parpadeante. */}
-      {readyGroups.length > 0 && (
+      {/* Archivados: pedidos ya finalizados. Más recientes primero.
+          Colapsado por defecto — la cocinera lo abre si necesita ver. */}
+      {archivedGroups.length > 0 && (
         <>
-          <SectionLabel
+          <CollapsibleSectionLabel
             color={T.ok}
             bg="#E8F4E8"
-            label={`✓ LISTOS PARA ENTREGAR · ${readyGroups.length}`}
-            subtitle="La cajera ya ve la burbuja verde. Toca 'Listo' otra vez si te equivocaste."
+            label={`📁 ARCHIVADOS · ${archivedGroups.length}`}
+            subtitle={archivedExpanded
+              ? 'Toca para ocultar de nuevo.'
+              : 'Pedidos finalizados. Toca para verlos.'}
+            expanded={archivedExpanded}
+            onToggle={() => setArchivedExpanded(prev => !prev)}
           />
-          {readyGroups.map(group => (
+          {archivedExpanded && archivedGroups.map(group => (
             <CommandaCard key={group.commandaId} group={group} />
           ))}
         </>
@@ -272,6 +297,58 @@ function KitchenQueueView({ queue }) {
           to   { opacity: 1; transform: translateY(0) scale(1); }
         }
       `}</style>
+    </div>
+  )
+}
+
+function CollapsibleSectionLabel({ color, bg, label, subtitle, expanded, onToggle }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onToggle()
+        }
+      }}
+      style={{
+        margin: '6px 4px 12px',
+        padding: '12px 16px',
+        borderRadius: 14,
+        background: bg,
+        border: `1.5px solid ${color}33`,
+        cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 12,
+        userSelect: 'none',
+        transition: 'background 0.15s',
+        outline: 'none',
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 16, fontWeight: 900, color, letterSpacing: 0.5 }}>
+          {label}
+        </div>
+        {subtitle && (
+          <div style={{
+            fontSize: 13, color, opacity: 0.85, marginTop: 4, lineHeight: 1.4,
+          }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+      <div style={{
+        width: 28, height: 28, borderRadius: 999, flexShrink: 0,
+        background: '#fff', border: `1.5px solid ${color}66`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'transform 0.2s',
+        transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)',
+      }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M3 5 L7 9 L11 5" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
     </div>
   )
 }
@@ -303,24 +380,64 @@ function SectionLabel({ color, bg, label, subtitle }) {
 
 function CommandaCard({ group }) {
   const allReady = group.orders.every(o => o.status === 'ready')
-  const isLlevar = group.destination === 'llevar'
+  // Si NO hay número de mesa, la tab es de tipo 'llevar' (sin mesa).
+  // El destino por almuerzo puede mezclarse, pero el header se decide por la
+  // tab: si llegó sin tableNumber → header de llevar.
+  const isLlevarTab = !group.tableNumber
 
-  // Cronómetro en vivo
+  // Cronómetro: corre mientras NO esté todo listo. Cuando todo está listo,
+  // congela el tiempo en el momento del LAST readyAt (antes corría infinito y
+  // se veían pedidos ya cobrados con 1 día de cronómetro).
   const startMs = group.createdAt?.toMillis?.() ?? group.createdAtClient ?? Date.now()
-  const [elapsed, setElapsed] = useState(() => Math.floor((Date.now() - startMs) / 1000))
+  const frozenEndMs = useMemo(() => {
+    if (!allReady) return null
+    let max = 0
+    for (const o of group.orders) {
+      const t = o.readyAt?.toMillis?.() ?? o.readyAtClient ?? 0
+      if (t > max) max = t
+    }
+    return max || Date.now()
+  }, [allReady, group.orders])
+
+  // Tickeo:
+  //  - Pendiente: cada 1s para urgencia visible.
+  //  - Archivado (todo listo): cada 60s — el badge muestra "hace Xh Ym" desde
+  //    que se marcó listo; precisión de minuto es suficiente y ahorra battery
+  //    cuando hay 40+ archivados expandidos.
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
-    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startMs) / 1000)), 1000)
+    const intervalMs = frozenEndMs != null ? 60000 : 1000
+    const t = setInterval(() => setNow(Date.now()), intervalMs)
     return () => clearInterval(t)
-  }, [startMs])
+  }, [frozenEndMs])
 
-  const elapsedLabel = formatElapsed(elapsed)
-  const elapsedColor = elapsed < 300 ? T.neutral[600] : elapsed < 600 ? T.warn : T.bad
+  // Para PENDIENTES: cuánto lleva esperando = now - createdAt.
+  // Para ARCHIVADOS: cuánto hace que se marcó listo = now - readyAt.
+  // Antes mostrábamos prep-time (createdAt → readyAt) que confundía a la
+  // cocinera porque se veía "7 min" para un pedido de hace 23h.
+  const elapsedSecs = frozenEndMs != null
+    ? Math.max(0, Math.floor((now - frozenEndMs) / 1000))
+    : Math.max(0, Math.floor((now - startMs) / 1000))
+  const elapsedLabel = frozenEndMs != null
+    ? `Hace ${formatElapsed(elapsedSecs)}`
+    : formatElapsed(elapsedSecs)
+  const elapsedColor = frozenEndMs != null
+    ? T.ok
+    : elapsedSecs < 300 ? T.neutral[600] : elapsedSecs < 600 ? T.warn : T.bad
+  const elapsedPrefix = frozenEndMs != null ? '✓' : '⏱'
 
-  // Color del header según destino
-  const destBg = isLlevar ? '#FFF4DD' : '#FBF5F0'
-  const destBorder = isLlevar ? '#F0D699' : T.copper[100]
-  const destLabel = isLlevar ? '📦 PARA LLEVAR' : '🍽️ PARA MESA'
-  const destColor = isLlevar ? '#8A5E12' : T.copper[700]
+  // Color del header según el tipo de tab (mesa vs llevar)
+  const destBg = isLlevarTab ? '#FFF4DD' : '#FBF5F0'
+  const destBorder = isLlevarTab ? '#F0D699' : T.copper[100]
+  const destLabel = isLlevarTab ? '📦 PARA LLEVAR' : '🍽️ EN MESA'
+  const destColor = isLlevarTab ? '#8A5E12' : T.copper[700]
+
+  // Mezcla: si hay almuerzos con destination distinto al de la tab, avisar.
+  // (Caso típico: mesa numerada con un almuerzo "para llevar" porque alguien
+  // se va a llevar el suyo a la oficina.)
+  const llevarCount = group.orders.filter(o => o.destination === 'llevar').length
+  const mesaCount = group.orders.filter(o => o.destination === 'mesa').length
+  const isMixed = llevarCount > 0 && mesaCount > 0
 
   return (
     <div style={{
@@ -344,12 +461,12 @@ function CommandaCard({ group }) {
           width: 60, height: 60, borderRadius: 14,
           background: '#fff', flexShrink: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 28, fontWeight: 900,
+          fontSize: isLlevarTab ? 30 : 28, fontWeight: 900,
           color: destColor,
           fontVariantNumeric: 'tabular-nums',
           border: `2px solid ${destBorder}`,
         }}>
-          {group.tableNumber || '?'}
+          {isLlevarTab ? '📦' : (group.tableNumber || '?')}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
@@ -361,9 +478,22 @@ function CommandaCard({ group }) {
           <div style={{
             fontSize: 19, fontWeight: 800, color: T.neutral[900],
             letterSpacing: -0.2, marginTop: 2,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
           }}>
-            Mesa {group.tableNumber} · {group.orders.length} {group.orders.length === 1 ? 'almuerzo' : 'almuerzos'}
+            {isLlevarTab
+              ? (group.customerName || 'Cliente')
+              : `Mesa ${group.tableNumber}`}
+            {' · '}
+            {group.orders.length} {group.orders.length === 1 ? 'almuerzo' : 'almuerzos'}
           </div>
+          {isMixed && (
+            <div style={{
+              fontSize: 11.5, fontWeight: 700, color: T.warn,
+              marginTop: 2, letterSpacing: 0.3,
+            }}>
+              ⚠ Mezcla: {mesaCount} mesa + {llevarCount} llevar — revisar cada plato
+            </div>
+          )}
         </div>
         <div style={{
           padding: '10px 16px', borderRadius: 999,
@@ -373,7 +503,7 @@ function CommandaCard({ group }) {
           fontVariantNumeric: 'tabular-nums',
           flexShrink: 0,
         }}>
-          ⏱ {elapsedLabel}
+          {elapsedPrefix} {elapsedLabel}
         </div>
       </div>
 
@@ -403,141 +533,450 @@ function CommandaCard({ group }) {
   )
 }
 
+// Helper: principio puede ser objeto único (legacy) o array (nuevo, hasta 2).
+// Devuelve siempre array.
+function principioToArray(value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value.filter(Boolean)
+  return [value]
+}
+
 function KitchenOrderRow({ order, isLast }) {
+  const isReady = order.status === 'ready'
+  const [detailOpen, setDetailOpen] = useState(false)
+
+  // Resumen breve — sin las categorías "siempre se sirven" cuando van por
+  // defecto. Cuando la cajera las quita explícitamente, las mostramos como
+  // SIN [X] grande para alertar a la cocinera.
+  const selections = order.selections || {}
+  const description = order.description
+
+  // OJO: usamos <div role="button"> y NO <button> porque el contenido interno
+  // tiene <div>s con flex (no es phrasing content). Ponerlos dentro de un
+  // <button> hace HTML inválido y el navegador "cierra" el botón temprano,
+  // sacando los hijos fuera y rompiendo el layout (incluido el modal hermano
+  // que aparece descentrado en posición absoluta). Con role="button" el
+  // navegador respeta la estructura y mantiene la accesibilidad.
+  return (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setDetailOpen(true)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setDetailOpen(true)
+          }
+        }}
+        style={{
+          display: 'block', width: '100%', textAlign: 'left',
+          padding: '18px 20px',
+          borderBottom: isLast ? 'none' : `1px solid ${T.neutral[100]}`,
+          background: isReady ? '#F5FBF5' : '#fff',
+          cursor: 'pointer', fontFamily: 'inherit',
+          transition: 'background 0.15s',
+          outline: 'none',
+          boxSizing: 'border-box',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = isReady ? '#EAF6EA' : '#FBF5F0'}
+        onMouseLeave={e => e.currentTarget.style.background = isReady ? '#F5FBF5' : '#fff'}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 18, fontWeight: 900, color: isReady ? T.ok : T.copper[700],
+              letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 10,
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+            }}>
+              {isReady && <span>✓</span>}
+              {order.productName || 'Almuerzo'}
+              {order.kind === 'special' && <span>⭐</span>}
+              {order.destination === 'llevar' && (
+                <span style={{
+                  fontSize: 12, fontWeight: 800, color: '#7A5C00',
+                  background: '#FFF7E6', border: '1px solid #F0D699',
+                  padding: '2px 8px', borderRadius: 999,
+                  letterSpacing: 0.3,
+                }}>
+                  📦 LLEVAR
+                </span>
+              )}
+            </div>
+
+            {/* Selecciones — solo lo IMPORTANTE para la cocinera. Si una
+                categoría "siempre se sirve" (acompañante/ensalada/jugo) está
+                presente, la ocultamos para no llenar el espacio. */}
+            {order.kind === 'menu' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {CATEGORIES.map(cat => {
+                  const sel = selections[cat.id]
+                  const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
+                  const isAlwaysServed = !!cat.alwaysServed
+
+                  // Categoría "siempre se sirve" SIN valor → alerta en grande.
+                  if (isAlwaysServed && (sel === null || sel === undefined)) {
+                    return (
+                      <div key={cat.id} style={{
+                        fontSize: 18, fontWeight: 900, color: T.bad,
+                        letterSpacing: 0.5, textTransform: 'uppercase',
+                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
+                        display: 'inline-block', alignSelf: 'flex-start',
+                        border: `2px solid ${T.bad}55`,
+                      }}>
+                        ⚠ SIN {cat.label.toUpperCase()}
+                      </div>
+                    )
+                  }
+                  // Categoría "siempre se sirve" CON valor → NO mostrar (la
+                  // cocinera ya sabe que va).
+                  if (isAlwaysServed) return null
+
+                  // Principio multi-select (puede ser MIXTO)
+                  if (principioArr) {
+                    if (principioArr.length === 0) return null
+                    const value = principioArr.length === 2
+                      ? `MIXTO ${principioArr.map(p => p.name).join(' / ')}`
+                      : principioArr[0].name
+                    return (
+                      <div key={cat.id} style={{
+                        display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+                      }}>
+                        <span style={{
+                          fontSize: 13, fontWeight: 800, color: T.neutral[500],
+                          minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
+                        }}>
+                          {cat.emoji} {cat.label}
+                        </span>
+                        <span style={{
+                          fontSize: 18, fontWeight: 800,
+                          color: principioArr.length === 2 ? T.copper[700] : T.neutral[900],
+                          letterSpacing: -0.1,
+                        }}>
+                          {value}
+                        </span>
+                      </div>
+                    )
+                  }
+
+                  // Categoría normal (sopa/proteína).
+                  if (!sel) return null
+                  return (
+                    <div key={cat.id} style={{
+                      display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+                    }}>
+                      <span style={{
+                        fontSize: 13, fontWeight: 800, color: T.neutral[500],
+                        minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
+                      }}>
+                        {cat.emoji} {cat.label}
+                      </span>
+                      <span style={{
+                        fontSize: 18, fontWeight: 800, color: T.neutral[900],
+                        letterSpacing: -0.1,
+                      }}>
+                        {sel.name}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Descripción libre del especial */}
+            {order.kind === 'special' && description && (
+              <div style={{
+                fontSize: 17, color: T.neutral[800], lineHeight: 1.55,
+                padding: '12px 16px', borderRadius: 12,
+                background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+                whiteSpace: 'pre-wrap', fontWeight: 600,
+              }}>
+                {description}
+              </div>
+            )}
+
+            {/* Pagado antes (solo para llevar) */}
+            {order.paid && (
+              <div style={{
+                marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 12px', borderRadius: 999,
+                background: T.ok + '20', color: T.ok,
+                fontSize: 14, fontWeight: 800,
+              }}>
+                💳 Pagado
+              </div>
+            )}
+
+            {/* Hint para la cocinera */}
+            <div style={{
+              marginTop: 12, fontSize: 12, fontWeight: 700,
+              color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase',
+            }}>
+              {isReady ? 'Toca para deshacer' : 'Toca para confirmar listo'}
+            </div>
+          </div>
+
+          {/* Pill estado, no botón. Al tocar la fila se abre el modal. */}
+          <div style={{
+            flexShrink: 0,
+            padding: '12px 16px', borderRadius: 14,
+            background: isReady ? T.ok + '22' : T.copper[50],
+            color: isReady ? T.ok : T.copper[700],
+            fontSize: 13, fontWeight: 900, letterSpacing: 0.4, textTransform: 'uppercase',
+            display: 'flex', alignItems: 'center', gap: 6,
+          }}>
+            {isReady ? '✓ Listo' : '🍳 Cocinando'}
+          </div>
+        </div>
+      </div>
+
+      {detailOpen && (
+        <KitchenOrderDetailModal
+          order={order}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
+    </>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Popup grande con el detalle del almuerzo + botones de confirmar/volver.
+// La cocinera ya no marca listo con un solo click "por accidente": ahora
+// debe abrir, revisar y confirmar — o si ya está listo, deshacer.
+// ──────────────────────────────────────────────────────────────
+function KitchenOrderDetailModal({ order, onClose }) {
   const isReady = order.status === 'ready'
   const [busy, setBusy] = useState(false)
 
-  async function handleToggle() {
+  async function handleConfirm() {
     if (busy) return
     setBusy(true)
     try {
       if (isReady) await unmarkOrderReady(order.id)
       else await markOrderReady(order.id)
+      onClose()
     } catch (err) {
       console.error('[kitchen] toggle ready error:', err)
-    } finally {
       setBusy(false)
     }
   }
 
-  // Listado de selecciones
   const selections = order.selections || {}
   const description = order.description
+  const isLlevar = order.destination === 'llevar'
 
-  return (
-    <div style={{
-      padding: '18px 20px',
-      borderBottom: isLast ? 'none' : `1px solid ${T.neutral[100]}`,
-      background: isReady ? '#F5FBF5' : '#fff',
-      display: 'flex', alignItems: 'flex-start', gap: 14,
-      transition: 'background 0.2s',
-    }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
+  // PORTAL: renderizamos el modal en document.body para escapar la jerarquía
+  // de CommandaCard, que tiene `animation` con keyframes de transform y crea
+  // un containing block para los hijos position:fixed. Sin portal, `inset:0`
+  // se mide contra la card en vez del viewport y el modal aparece chiquito y
+  // descentrado. Con createPortal eso se elimina de raíz.
+  return createPortal((
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 110,
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16, animation: 'fadeIn 0.15s ease',
+      }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 540,
+        maxHeight: '92vh', display: 'flex', flexDirection: 'column',
+        background: '#fff', borderRadius: 22,
+        boxShadow: '0 16px 48px rgba(0,0,0,0.4)',
+        overflow: 'hidden',
+        animation: 'fadeScaleIn 0.2s cubic-bezier(0.2,0.9,0.3,1.05)',
+      }}>
+        {/* Header */}
         <div style={{
-          fontSize: 18, fontWeight: 900, color: isReady ? T.ok : T.copper[700],
-          letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 10,
+          padding: '20px 22px',
+          background: isReady ? '#E8F4E8' : (isLlevar ? '#FFF4DD' : '#FBF5F0'),
+          borderBottom: `1.5px solid ${isReady ? T.ok + '55' : (isLlevar ? '#F0D699' : T.copper[100])}`,
+          display: 'flex', alignItems: 'center', gap: 14,
         }}>
-          {order.productName || 'Almuerzo'}
-          {order.kind === 'special' && <span style={{ marginLeft: 8 }}>⭐</span>}
+          <div style={{
+            width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+            background: '#fff',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 30,
+            border: `2px solid ${isReady ? T.ok + '88' : (isLlevar ? '#F0D699' : T.copper[200])}`,
+          }}>
+            {isReady ? '✓' : (isLlevar ? '📦' : '🍽️')}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 13, fontWeight: 900,
+              color: isReady ? T.ok : (isLlevar ? '#8A5E12' : T.copper[700]),
+              letterSpacing: 0.6, textTransform: 'uppercase',
+            }}>
+              {isReady ? 'YA ESTÁ LISTO' : (isLlevar ? 'PARA LLEVAR' : 'PARA MESA')}
+            </div>
+            <div style={{
+              fontSize: 22, fontWeight: 900, color: T.neutral[900],
+              letterSpacing: -0.3, marginTop: 2,
+            }}>
+              {order.productName || 'Almuerzo'}
+              {order.kind === 'special' && ' ⭐'}
+            </div>
+            <div style={{ fontSize: 13, color: T.neutral[600], marginTop: 2 }}>
+              {order.tableNumber ? `Mesa ${order.tableNumber}` : (order.customerName || 'Cliente')}
+            </div>
+          </div>
         </div>
 
-        {/* Selecciones por categoría — fuentes GRANDES para visibilidad */}
-        {order.kind === 'menu' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {CATEGORIES.map(cat => {
-              const sel = selections[cat.id]
-              // Solo el ACOMPAÑANTE (arroz) genera alerta "SIN ARROZ" en grande
-              // cuando la cajera lo quita explícitamente — porque va por defecto.
-              // Las demás categorías opcionales (principio, ensalada) que no se
-              // eligen simplemente no aparecen en la comanda.
-              const isFixedSingle = cat.id === 'side'
-              if (!sel) {
-                if (isFixedSingle) {
+        {/* Cuerpo */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 22px' }}>
+          {/* Comentario de la comanda — destacado arriba */}
+          {order.commandaNote && (
+            <div style={{
+              marginBottom: 18,
+              padding: '14px 16px', borderRadius: 14,
+              background: '#FFF7E6', border: `1.5px solid #F4E0BC`,
+              fontSize: 18, fontWeight: 700, color: '#7A5C00',
+              fontStyle: 'italic', lineHeight: 1.4,
+            }}>
+              📝 {order.commandaNote}
+            </div>
+          )}
+
+          {/* Selecciones */}
+          {order.kind === 'menu' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {CATEGORIES.map(cat => {
+                const sel = selections[cat.id]
+                const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
+                const isAlwaysServed = !!cat.alwaysServed
+
+                if (isAlwaysServed && (sel === null || sel === undefined)) {
                   return (
                     <div key={cat.id} style={{
-                      fontSize: 18, fontWeight: 900, color: T.bad,
+                      fontSize: 20, fontWeight: 900, color: T.bad,
                       letterSpacing: 0.5, textTransform: 'uppercase',
-                      background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
-                      display: 'inline-block', alignSelf: 'flex-start',
+                      background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
                       border: `2px solid ${T.bad}55`,
                     }}>
                       ⚠ SIN {cat.label.toUpperCase()}
                     </div>
                   )
                 }
-                return null
-              }
-              return (
-                <div key={cat.id} style={{
-                  display: 'flex', alignItems: 'baseline', gap: 12,
-                  flexWrap: 'wrap',
-                }}>
-                  <span style={{
-                    fontSize: 13, fontWeight: 800, color: T.neutral[500],
-                    minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
-                  }}>
-                    {cat.emoji} {cat.label}
-                  </span>
-                  <span style={{
-                    fontSize: 18, fontWeight: 800, color: T.neutral[900],
-                    letterSpacing: -0.1,
-                  }}>
-                    {sel.name}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
+                if (isAlwaysServed) return null
 
-        {/* Descripción libre del especial */}
-        {order.kind === 'special' && description && (
-          <div style={{
-            fontSize: 17, color: T.neutral[800], lineHeight: 1.55,
-            padding: '12px 16px', borderRadius: 12,
-            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-            whiteSpace: 'pre-wrap', fontWeight: 600,
-          }}>
-            {description}
-          </div>
-        )}
+                if (principioArr) {
+                  if (principioArr.length === 0) return null
+                  const value = principioArr.length === 2
+                    ? `MIXTO ${principioArr.map(p => p.name).join(' / ')}`
+                    : principioArr[0].name
+                  return (
+                    <div key={cat.id} style={{
+                      display: 'flex', flexDirection: 'column', gap: 4,
+                      padding: '12px 14px', borderRadius: 12,
+                      background: principioArr.length === 2 ? T.copper[50] : T.neutral[50],
+                      border: `1px solid ${principioArr.length === 2 ? T.copper[200] : T.neutral[100]}`,
+                    }}>
+                      <span style={{
+                        fontSize: 12, fontWeight: 800, color: T.neutral[500],
+                        letterSpacing: 0.5, textTransform: 'uppercase',
+                      }}>
+                        {cat.emoji} {cat.label}
+                      </span>
+                      <span style={{
+                        fontSize: 20, fontWeight: 900,
+                        color: principioArr.length === 2 ? T.copper[700] : T.neutral[900],
+                      }}>
+                        {value}
+                      </span>
+                    </div>
+                  )
+                }
 
-        {/* Pagado antes (solo para llevar) */}
-        {order.paid && (
-          <div style={{
-            marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '5px 12px', borderRadius: 999,
-            background: T.ok + '20', color: T.ok,
-            fontSize: 14, fontWeight: 800,
-          }}>
-            💳 Pagado
-          </div>
-        )}
+                if (!sel) return null
+                return (
+                  <div key={cat.id} style={{
+                    display: 'flex', flexDirection: 'column', gap: 4,
+                    padding: '12px 14px', borderRadius: 12,
+                    background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+                  }}>
+                    <span style={{
+                      fontSize: 12, fontWeight: 800, color: T.neutral[500],
+                      letterSpacing: 0.5, textTransform: 'uppercase',
+                    }}>
+                      {cat.emoji} {cat.label}
+                    </span>
+                    <span style={{
+                      fontSize: 20, fontWeight: 900, color: T.neutral[900],
+                    }}>
+                      {sel.name}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {order.kind === 'special' && description && (
+            <div style={{
+              fontSize: 18, color: T.neutral[800], lineHeight: 1.6,
+              padding: '14px 16px', borderRadius: 12,
+              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+              whiteSpace: 'pre-wrap', fontWeight: 600,
+            }}>
+              {description}
+            </div>
+          )}
+        </div>
+
+        {/* Footer con acciones */}
+        <div style={{
+          padding: '16px 20px',
+          borderTop: `1px solid ${T.neutral[100]}`,
+          background: '#fff',
+          display: 'flex', gap: 10,
+          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
+        }}>
+          <button
+            onClick={onClose}
+            disabled={busy}
+            style={{
+              flex: 1, padding: '16px', borderRadius: 14,
+              background: T.neutral[100], color: T.neutral[700],
+              border: 'none', cursor: busy ? 'wait' : 'pointer',
+              fontFamily: 'inherit', fontSize: 15, fontWeight: 800,
+            }}
+          >
+            ← Volver
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={busy}
+            style={{
+              flex: 1.5, padding: '16px', borderRadius: 14,
+              background: isReady ? T.warn : T.ok,
+              color: '#fff',
+              border: 'none', cursor: busy ? 'wait' : 'pointer',
+              fontFamily: 'inherit', fontSize: 16, fontWeight: 900,
+              letterSpacing: 0.3,
+              boxShadow: isReady
+                ? `0 6px 18px ${T.warn}66`
+                : `0 6px 18px ${T.ok}66`,
+              opacity: busy ? 0.7 : 1,
+            }}
+          >
+            {busy ? '...' : (isReady ? '↺ Volver a pendiente' : '✓ Confirmar listo')}
+          </button>
+        </div>
       </div>
 
-      {/* Botón LISTO MUY grande (cocinera con guantes — sin esfuerzo) */}
-      <button
-        onClick={handleToggle}
-        disabled={busy}
-        style={{
-          flexShrink: 0,
-          minWidth: 140, padding: '24px 18px', borderRadius: 18,
-          background: isReady ? T.ok : T.copper[500],
-          color: '#fff',
-          border: 'none', cursor: busy ? 'wait' : 'pointer',
-          fontFamily: 'inherit', fontSize: 18, fontWeight: 900,
-          letterSpacing: 0.4,
-          boxShadow: isReady
-            ? `0 6px 18px ${T.ok}66`
-            : '0 6px 18px rgba(184,122,86,0.45)',
-          opacity: busy ? 0.7 : 1,
-          transition: 'background 0.2s',
-        }}
-      >
-        {isReady ? '✓ Listo' : 'Marcar listo'}
-      </button>
+      <style>{`
+        @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes fadeScaleIn {
+          from { opacity: 0; transform: scale(0.94) translateY(10px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+      `}</style>
     </div>
-  )
+  ), document.body)
 }
 
 function formatElapsed(secs) {
@@ -546,7 +985,11 @@ function formatElapsed(secs) {
   if (min < 60) return `${min} min`
   const h = Math.floor(min / 60)
   const m = min % 60
-  return `${h}h ${m}m`
+  if (h < 24) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  // Archivados pueden tener varios días — reportar en días+horas.
+  const days = Math.floor(h / 24)
+  const remH = h % 24
+  return remH > 0 ? `${days}d ${remH}h` : `${days}d`
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -671,6 +1114,7 @@ function CorrienteSection({ corriente, date, authUser, adminName, existingPriceM
   const [priceMesa, setPriceMesa] = useState(String(existingPriceMesa || ''))
   const [priceLlevar, setPriceLlevar] = useState(String(existingPriceLlevar || ''))
   const [busy, setBusy] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   // Cuando los datos del doc cambian (snapshot), reflejarlos en los inputs
   // si NO estamos editando — para no sobrescribir lo que la cocinera escribe.
@@ -686,12 +1130,27 @@ function CorrienteSection({ corriente, date, authUser, adminName, existingPriceM
     const pl = Number(priceLlevar) || 0
     if (pm <= 0) return
     setBusy(true)
+    setSaveError(null)
     try {
       await setDailyCorriente(date, {
         priceMesa: pm,
         priceLlevar: pl > 0 ? pl : pm,
       }, { publishedBy: authUser.uid, publishedByName: adminName })
       setEditing(false)
+    } catch (err) {
+      // Antes esto tiraba "uncaught promise" sin feedback. Ahora la
+      // cocinera ve qué pasó y puede reintentar.
+      console.error('[corriente] no se pudo guardar el precio:', err)
+      const code = err?.code || ''
+      if (code === 'permission-denied') {
+        setSaveError('Permisos insuficientes. Avisa al admin para revisar reglas de Firestore.')
+      } else if (code === 'invalid-argument' || /reserved/i.test(err?.message || '')) {
+        setSaveError('Error interno con el id del documento. Avisa al programador.')
+      } else if (code === 'unavailable') {
+        setSaveError('Sin conexión. Intenta de nuevo cuando vuelva la red.')
+      } else {
+        setSaveError(`No se pudo guardar. ${err?.message || 'Intenta de nuevo.'}`)
+      }
     } finally {
       setBusy(false)
     }
@@ -738,8 +1197,23 @@ function CorrienteSection({ corriente, date, authUser, adminName, existingPriceM
           <FieldLabel>Precio para llevar ($)</FieldLabel>
           <input type="number" value={priceLlevar} onChange={e => setPriceLlevar(e.target.value)}
             placeholder="Si vacío, se usa el de mesa" style={inputStyle()} />
+          <div style={{
+            fontSize: 11.5, color: T.neutral[600], lineHeight: 1.45,
+            marginTop: 4, marginBottom: 8,
+          }}>
+            💡 Estos precios <b>se guardan permanentes</b> — no se reinician al día siguiente. Solo cámbialos cuando suba el precio.
+          </div>
+          {saveError && (
+            <div style={{
+              padding: '10px 12px', borderRadius: 10, marginBottom: 8,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+              fontSize: 12.5, fontWeight: 600, lineHeight: 1.4,
+            }}>
+              ⚠ {saveError}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <button onClick={() => setEditing(false)} disabled={busy} style={btnSecondary()}>Cancelar</button>
+            <button onClick={() => { setEditing(false); setSaveError(null) }} disabled={busy} style={btnSecondary()}>Cancelar</button>
             <button onClick={handleSave} disabled={busy || !priceMesa} style={btnPrimary(T.copper[500])}>
               {busy ? 'Guardando...' : 'Guardar precios'}
             </button>

@@ -30,8 +30,15 @@ export default function LunchPickerModal({
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
-  const [destination, setDestination] = useState('mesa') // 'mesa' | 'llevar'
   const [selections, setSelections] = useState({})       // { soup: {id,name}, ... }
+  // Step:
+  //   'compose'     → escoger sopa/proteína/jugo, escribir comentario.
+  //   'destination' → elegir mesa/llevar (paso explícito para no olvidar).
+  // Avanza con "Continuar"; al destino se llama onAdd con el payload final.
+  const [step, setStep] = useState('compose')
+  // Recordamos si el usuario quiere "+ Otro almuerzo" o "Enviar" tras escoger
+  // destino — la diferencia importa para el handler en el padre.
+  const [pendingAnother, setPendingAnother] = useState(false)
 
   useEffect(() => watchMenuItems(setAllItems), [])
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
@@ -59,10 +66,35 @@ export default function LunchPickerModal({
   }, [menu.side, menu.salad, menu.juice]) // eslint-disable-line
 
   function selectMulti(catId, item) {
-    setSelections(prev => ({
-      ...prev,
-      [catId]: prev[catId]?.id === item.id ? null : { id: item.id, name: item.name },
-    }))
+    const cat = CATEGORIES.find(c => c.id === catId)
+    const maxSel = cat?.maxSelections || 1
+    setSelections(prev => {
+      const current = prev[catId]
+      if (maxSel <= 1) {
+        // Lógica clásica: tap mismo = deseleccionar. Tap distinto = reemplazar.
+        return {
+          ...prev,
+          [catId]: current?.id === item.id ? null : { id: item.id, name: item.name },
+        }
+      }
+      // Multi-select (principio: hasta 2 para "mixto").
+      // Normalizamos current a array. Compatible con datos viejos donde podía
+      // ser objeto único.
+      const arr = Array.isArray(current) ? current : (current ? [current] : [])
+      const idx = arr.findIndex(x => x?.id === item.id)
+      let next
+      if (idx >= 0) {
+        // Ya estaba → quitarlo
+        next = arr.filter((_, i) => i !== idx)
+      } else if (arr.length < maxSel) {
+        // Cabe → agregarlo
+        next = [...arr, { id: item.id, name: item.name }]
+      } else {
+        // Lleno → reemplazar el más viejo (FIFO)
+        next = [...arr.slice(1), { id: item.id, name: item.name }]
+      }
+      return { ...prev, [catId]: next.length === 0 ? null : next }
+    })
   }
   function toggleFixed(catId, item) {
     setSelections(prev => ({
@@ -72,10 +104,9 @@ export default function LunchPickerModal({
     }))
   }
 
-  const isLlevar = destination === 'llevar'
-  const price = isLlevar
-    ? Number(product.priceLlevar || product.priceMesa || 0)
-    : Number(product.priceMesa || 0)
+  // Precios visibles como info; el real se decide al elegir destino.
+  const priceMesa = Number(product.priceMesa || 0)
+  const priceLlevar = Number(product.priceLlevar || product.priceMesa || 0)
 
   // Validación blanda: las categorías "multi y required" (sopa/proteína/jugo)
   // necesitan al menos una. Las fijas pueden quedar en null.
@@ -85,11 +116,13 @@ export default function LunchPickerModal({
     .map(c => c.label)
   const canSubmit = missingRequired.length === 0
 
-  function buildPayload() {
+  function buildPayload(destination) {
     const sel = {}
     for (const cat of CATEGORIES) {
       sel[cat.id] = selections[cat.id] || null
     }
+    const isLlevar = destination === 'llevar'
+    const price = isLlevar ? priceLlevar : priceMesa
     return {
       kind: 'menu',
       productId: product.id,
@@ -100,15 +133,23 @@ export default function LunchPickerModal({
     }
   }
 
-  function handleAddAnother() {
+  // Click en "+ Otro" o "Enviar" desde el paso de compose: NO envía aún —
+  // pasa al paso de destino para forzar la decisión.
+  function proceedToDestination(another) {
     if (!canSubmit) return
-    onAdd(buildPayload(), { another: true })
-    // Reset para próximo almuerzo (mantiene destino)
-    setSelections({})
+    setPendingAnother(another)
+    setStep('destination')
   }
-  function handleSendCommand() {
-    if (!canSubmit) return
-    onAdd(buildPayload(), { another: false })
+
+  // Click en "🍽️ Para mesa" o "📦 Para llevar" desde el paso de destino.
+  function pickDestination(destination) {
+    onAdd(buildPayload(destination), { another: pendingAnother })
+    if (pendingAnother) {
+      // Reset para el siguiente almuerzo y volver al compose.
+      setSelections({})
+      setStep('compose')
+    }
+    setPendingAnother(false)
   }
 
   return (
@@ -124,27 +165,38 @@ export default function LunchPickerModal({
         boxShadow: '0 -8px 32px rgba(0,0,0,0.25)',
         animation: 'lunchSlideUp 0.28s cubic-bezier(0.2,0.9,0.3,1.05)',
       }}>
-        {/* Header sticky */}
+        {/* Header sticky.
+            En 'compose': X cierra el modal (con confirm si hay almuerzos).
+            En 'destination': la flecha vuelve al compose. */}
         <div style={{
           padding: '16px 20px',
           background: '#fff', borderBottom: `1px solid ${T.neutral[100]}`,
           display: 'flex', alignItems: 'center', gap: 12,
           flexShrink: 0,
         }}>
-          <button onClick={onCancel} style={{
-            width: 36, height: 36, borderRadius: 999,
-            background: T.neutral[100], border: 'none',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexShrink: 0,
-          }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round"/>
-            </svg>
+          <button
+            onClick={() => step === 'destination' ? setStep('compose') : onCancel()}
+            style={{
+              width: 36, height: 36, borderRadius: 999,
+              background: T.neutral[100], border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            {step === 'destination' ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M10 3 L4 8 L10 13" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            )}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
-              {product.name}
-              {currentCount > 0 && (
+              {step === 'destination' ? '¿Para mesa o para llevar?' : product.name}
+              {step === 'compose' && currentCount > 0 && (
                 <span style={{
                   marginLeft: 8, fontSize: 11, fontWeight: 700, color: T.copper[700],
                   background: T.copper[50], padding: '2px 8px', borderRadius: 999,
@@ -155,23 +207,53 @@ export default function LunchPickerModal({
               )}
             </div>
             <div style={{ fontSize: 12.5, color: T.neutral[500] }}>
-              {fmtCOP(price)} · {isLlevar ? '📦 Para llevar' : '🍽️ Para mesa'}
+              {step === 'destination'
+                ? `${product.name} · selecciona dónde se sirve`
+                : `Mesa ${fmtCOP(priceMesa)} · Llevar ${fmtCOP(priceLlevar)}`}
             </div>
           </div>
         </div>
 
-        {/* Switch destino */}
-        <div style={{ padding: '12px 20px 0' }}>
+        {/* Paso 2: destino — DOS BOTONES GRANDES con precio claro.
+            Se renderiza en lugar del cuerpo + footer normales para que la
+            cajera no se distraiga. */}
+        {step === 'destination' && (
           <div style={{
-            display: 'flex', gap: 4, padding: 4, borderRadius: 14,
-            background: T.neutral[100],
+            flex: 1, overflowY: 'auto', padding: '24px 20px',
+            display: 'flex', flexDirection: 'column', gap: 14,
           }}>
-            <DestPill active={destination === 'mesa'} onClick={() => setDestination('mesa')} icon="🍽️" label="Para mesa" />
-            <DestPill active={destination === 'llevar'} onClick={() => setDestination('llevar')} icon="📦" label="Para llevar" />
+            <DestinationBigButton
+              icon="🍽️"
+              title="Para mesa"
+              subtitle="Cliente come en el local"
+              price={priceMesa}
+              accentBg={T.copper[50]}
+              accentBorder={T.copper[400]}
+              accentColor={T.copper[700]}
+              onClick={() => pickDestination('mesa')}
+            />
+            <DestinationBigButton
+              icon="📦"
+              title="Para llevar"
+              subtitle="Cliente se lo lleva empacado"
+              price={priceLlevar}
+              accentBg="#FFF7E6"
+              accentBorder="#F0D699"
+              accentColor="#7A5C00"
+              onClick={() => pickDestination('llevar')}
+            />
+            <div style={{
+              marginTop: 8, padding: '10px 12px', borderRadius: 10,
+              background: T.neutral[100], color: T.neutral[600],
+              fontSize: 12, lineHeight: 1.5, textAlign: 'center',
+            }}>
+              Toca una opción para enviar este almuerzo. Puedes volver con la flecha si te equivocaste.
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Categorías */}
+        {/* Paso 1: categorías + comentario. Solo se renderiza en 'compose'. */}
+        {step === 'compose' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px 14px' }}>
           {CATEGORIES.map(cat => (
             <CategoryBlock
@@ -288,8 +370,11 @@ export default function LunchPickerModal({
             )}
           </div>
         </div>
+        )}
 
-        {/* Footer sticky con botones */}
+        {/* Footer sticky con botones — solo en compose. En destination los
+            CTA son los dos botones grandes del cuerpo. */}
+        {step === 'compose' && (
         <div style={{
           padding: '14px 20px',
           background: '#fff', borderTop: `1px solid ${T.neutral[100]}`,
@@ -298,7 +383,7 @@ export default function LunchPickerModal({
         }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
             <button
-              onClick={handleAddAnother}
+              onClick={() => proceedToDestination(true)}
               disabled={!canSubmit}
               style={{
                 padding: '14px', borderRadius: 14,
@@ -312,7 +397,7 @@ export default function LunchPickerModal({
               + Otro almuerzo
             </button>
             <button
-              onClick={handleSendCommand}
+              onClick={() => proceedToDestination(false)}
               disabled={!canSubmit}
               style={{
                 padding: '14px', borderRadius: 14,
@@ -325,10 +410,11 @@ export default function LunchPickerModal({
                 boxShadow: canSubmit ? '0 4px 14px rgba(184,122,86,0.3)' : 'none',
               }}
             >
-              {currentCount > 0 ? 'Agregar y enviar' : 'Enviar comanda'}
+              Continuar →
             </button>
           </div>
         </div>
+        )}
       </div>
 
       <style>{`
@@ -341,23 +427,49 @@ export default function LunchPickerModal({
   )
 }
 
-function DestPill({ active, onClick, icon, label }) {
+// Botón grande del paso de destino — separado y obvio para que la cajera
+// no pueda equivocarse "por click rápido". Cada uno muestra su precio.
+function DestinationBigButton({ icon, title, subtitle, price, accentBg, accentBorder, accentColor, onClick }) {
   return (
     <button
       onClick={onClick}
       style={{
-        flex: 1, padding: '10px', borderRadius: 11,
-        background: active ? '#fff' : 'transparent',
-        color: active ? T.neutral[900] : T.neutral[500],
-        border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-        fontSize: 13.5, fontWeight: 700,
-        boxShadow: active ? '0 1px 4px rgba(0,0,0,0.06)' : 'none',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-        transition: 'background 0.15s, color 0.15s',
+        width: '100%', padding: '20px 22px', borderRadius: 18,
+        background: accentBg,
+        border: `2px solid ${accentBorder}`,
+        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        display: 'flex', alignItems: 'center', gap: 16,
+        transition: 'transform 0.1s ease',
       }}
+      onMouseDown={e => e.currentTarget.style.transform = 'scale(0.985)'}
+      onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+      onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
     >
-      <span style={{ fontSize: 16 }}>{icon}</span>
-      {label}
+      <div style={{
+        width: 56, height: 56, borderRadius: 16, flexShrink: 0,
+        background: '#fff', border: `1.5px solid ${accentBorder}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 30,
+      }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 19, fontWeight: 900, color: accentColor,
+          letterSpacing: -0.3, marginBottom: 2,
+        }}>
+          {title}
+        </div>
+        <div style={{ fontSize: 12.5, color: accentColor, opacity: 0.75, lineHeight: 1.4 }}>
+          {subtitle}
+        </div>
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 900, color: accentColor,
+        fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+      }}>
+        ${(price || 0).toLocaleString('es-CO')}
+      </div>
     </button>
   )
 }
@@ -425,13 +537,21 @@ function CategoryBlock({ category, options, selected, onSelect }) {
     )
   }
 
-  // Multi (sopa/proteína/jugo): chips horizontales
+  // Multi (sopa/proteína/jugo/principio): chips horizontales.
+  // selected puede ser objeto único, null, o array (principio multi-select).
+  const selectedArr = Array.isArray(selected) ? selected : (selected ? [selected] : [])
+  const isMultiSelect = (category.maxSelections || 1) > 1
+  const isMixto = isMultiSelect && selectedArr.length === 2
   return (
     <div style={{ marginBottom: 16 }}>
-      <CategoryHeader category={category} status={selected ? 'on' : (category.required ? 'required' : 'off')} />
+      <CategoryHeader
+        category={category}
+        status={selectedArr.length > 0 ? 'on' : (category.required ? 'required' : 'off')}
+        extraLabel={isMixto ? 'MIXTO' : null}
+      />
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {options.map(opt => {
-          const active = selected?.id === opt.id
+          const active = selectedArr.some(s => s?.id === opt.id)
           return (
             <button
               key={opt.id}
@@ -463,7 +583,7 @@ function CategoryBlock({ category, options, selected, onSelect }) {
   )
 }
 
-function CategoryHeader({ category, status }) {
+function CategoryHeader({ category, status, extraLabel }) {
   // status: 'on' | 'off' | 'required' | 'empty'
   const cfg = {
     on:        { bg: T.ok + '15', color: T.ok, label: '✓' },
@@ -475,9 +595,9 @@ function CategoryHeader({ category, status }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-      margin: '0 4px 8px',
+      margin: '0 4px 8px', gap: 8,
     }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flex: 1, minWidth: 0 }}>
         <span style={{ fontSize: 16 }}>{category.emoji}</span>
         <div style={{
           fontSize: 13, fontWeight: 800, color: T.neutral[900],
@@ -485,11 +605,29 @@ function CategoryHeader({ category, status }) {
         }}>
           {category.label}
         </div>
+        {extraLabel && (
+          <span style={{
+            fontSize: 10, fontWeight: 800, color: T.copper[700],
+            background: T.copper[100], padding: '2px 7px', borderRadius: 999,
+            letterSpacing: 0.4,
+          }}>
+            {extraLabel}
+          </span>
+        )}
+        {(category.maxSelections || 1) > 1 && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, color: T.neutral[500],
+            letterSpacing: 0.2,
+          }}>
+            (hasta {category.maxSelections})
+          </span>
+        )}
       </div>
       <span style={{
         fontSize: 10, fontWeight: 700, color: cfg.color,
         background: cfg.bg, padding: '2px 8px', borderRadius: 999,
         letterSpacing: 0.4, textTransform: 'uppercase',
+        flexShrink: 0,
       }}>
         {cfg.label}
       </span>

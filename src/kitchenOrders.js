@@ -15,11 +15,14 @@ import { addDocOffline } from './utils/firestoreOffline'
 // ──────────────────────────────────────────────────────────────────────────
 // kitchenOrders/{id}
 //   tabId             → mesa (openTab) a la que pertenece
-//   tableNumber       → denormalizado para la cocinera
+//   tableNumber       → denormalizado para la cocinera (puede ser null si la
+//                       tab es de tipo 'llevar' sin número)
+//   customerName?     → nombre del cliente cuando la tab es de 'llevar'
+//                       (denormalizado de openTab.customerName)
 //   sessionId         → cashSession activa que la creó
 //   branchId, branchName
 //   cashierUid, cashierName
-//   destination: 'mesa' | 'llevar'
+//   destination: 'mesa' | 'llevar'   (POR ALMUERZO — puede mezclarse en una comanda)
 //   kind: 'menu' | 'special'
 //      'menu':    almuerzo con selecciones por categoría
 //      'special': almuerzo especial sin categorías, solo descripción y precio
@@ -57,7 +60,9 @@ function timeOf(o) {
 export async function createKitchenOrder(payload) {
   const data = {
     tabId: payload.tabId,
-    tableNumber: payload.tableNumber,
+    // tableNumber puede ser null cuando la tab es de tipo 'llevar' (sin mesa).
+    tableNumber: payload.tableNumber ?? null,
+    customerName: payload.customerName?.trim() || null,
     sessionId: payload.sessionId,
     branchId: payload.branchId ?? null,
     branchName: payload.branchName || null,

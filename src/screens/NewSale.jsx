@@ -378,7 +378,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     // Cerrar modal y abrir el de envío de comanda
     setLunchModal(null)
     setSendCommandaModal({
-      number: tableNumber || nextFreeTableNumber(openTabs),
+      tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+      customerName: '',
       error: null,
       busy: false,
     })
@@ -427,6 +428,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   }
 
   // Convierte cada almuerzo de la comanda en un item shim para el carrito de la mesa.
+  // Guarda denormalizado lo necesario para que la cajera pueda RE-VER las
+  // selecciones después de enviar (sin tener que ir a buscar el kitchenOrder).
   function lunchToCartItem(lunch, kitchenOrderId) {
     const destLabel = lunch.destination === 'llevar' ? '📦 Para llevar' : '🍽️ Mesa'
     return {
@@ -438,6 +441,13 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       name: `${lunch.productName} · ${destLabel}`,
       qty: 1,
       unitPrice: Number(lunch.price) || 0,
+      // Denormalizado para que CartItem pueda mostrar lo que se envió:
+      lunchKind: lunch.kind,                  // 'menu' | 'special'
+      lunchDestination: lunch.destination,    // 'mesa' | 'llevar'
+      lunchProductName: lunch.productName,    // sin el sufijo del destino
+      lunchSelections: lunch.selections || null,    // {soup,principio,...}
+      lunchDescription: lunch.description || null,  // para 'special'
+      commandaNote: commandaNote || null,
     }
   }
 
@@ -448,7 +458,10 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   //   3. Actualizar la openTab para incluir los items shim.
   // Si falla en el paso 2, la mesa queda creada normal (sin shims) y la cajera
   // ve sus items normales — los almuerzos no se cobran sin haberse cocinado.
-  async function handleSendCommanda(numberToUse) {
+  //
+  // payload: { kind: 'mesa' | 'llevar', tableNumber?: number, customerName?: string }
+  //   En modo tab (mesa ya abierta), kind se ignora — se usa el de la tab existente.
+  async function handleSendCommanda(payload) {
     if (lunchCommanda.length === 0) return null
     const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
     const cashierName = session.cashierName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
@@ -456,38 +469,72 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 
     try {
       let targetTabId
-      let targetTableNumber
+      let targetTableNumber = null
+      let targetCustomerName = null
+      let targetTabKind = 'mesa'
 
-      // Paso 1: asegurar la mesa.
+      // Paso 1: asegurar la mesa o el "ticket llevar".
       if (!isTabMode) {
-        if (isTableNumberTaken(openTabs, numberToUse, null)) {
-          return 'Ese número de mesa ya está ocupado. Escoge otro.'
+        targetTabKind = payload.kind === 'llevar' ? 'llevar' : 'mesa'
+        if (targetTabKind === 'mesa') {
+          const numberToUse = Number(payload.tableNumber)
+          if (!numberToUse || numberToUse <= 0) {
+            return 'Pon un número de mesa válido.'
+          }
+          if (isTableNumberTaken(openTabs, numberToUse, null)) {
+            return 'Ese número de mesa ya está ocupado. Escoge otro.'
+          }
+          targetTableNumber = numberToUse
+          targetTabId = await createOpenTab({
+            sessionId: session.id,
+            cashierUid: ownerUid,
+            branchId: session.branchId,
+            branchName: session.branchName,
+            kind: 'mesa',
+            tableNumber: numberToUse,
+            items: cart,
+            ...(isAssistMode ? {
+              recordedByUid: authUser.uid,
+              recordedByName: assistMode.adminName,
+              recordedByRole: 'admin',
+            } : {}),
+          })
+        } else {
+          // kind === 'llevar' — necesita nombre del cliente.
+          const cn = String(payload.customerName || '').trim()
+          if (!cn) return 'Pon un nombre para identificar al cliente.'
+          targetCustomerName = cn
+          targetTabId = await createOpenTab({
+            sessionId: session.id,
+            cashierUid: ownerUid,
+            branchId: session.branchId,
+            branchName: session.branchName,
+            kind: 'llevar',
+            customerName: cn,
+            items: cart,
+            ...(isAssistMode ? {
+              recordedByUid: authUser.uid,
+              recordedByName: assistMode.adminName,
+              recordedByRole: 'admin',
+            } : {}),
+          })
         }
-        targetTabId = await createOpenTab({
-          sessionId: session.id,
-          cashierUid: ownerUid,
-          branchId: session.branchId,
-          branchName: session.branchName,
-          tableNumber: numberToUse,
-          items: cart, // solo items normales por ahora
-          ...(isAssistMode ? {
-            recordedByUid: authUser.uid,
-            recordedByName: assistMode.adminName,
-            recordedByRole: 'admin',
-          } : {}),
-        })
-        targetTableNumber = numberToUse
       } else {
         targetTabId = tab.id
-        targetTableNumber = tableNumber
+        targetTabKind = tab.kind || 'mesa'
+        targetTableNumber = tab.tableNumber || null
+        targetCustomerName = tab.customerName || null
       }
 
       // Paso 2: crear los kitchenOrders apuntando al tabId real.
+      // tableNumber puede ser null cuando la tab es 'llevar' — la cocinera
+      // verá el customerName en lugar del número.
       const orderIds = []
       for (const lunch of lunchCommanda) {
         const orderId = await createKitchenOrder({
           tabId: targetTabId,
           tableNumber: targetTableNumber,
+          customerName: targetCustomerName,
           sessionId: session.id,
           branchId: session.branchId,
           branchName: session.branchName,
@@ -623,15 +670,26 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             )}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-              {isTabMode ? `Mesa ${tableNumber}` : 'Nueva venta'}
+            <div style={{
+              fontSize: isTabMode && (tab?.kind || 'mesa') === 'llevar' ? 19 : 17,
+              fontWeight: 800, color: T.neutral[900], letterSpacing: -0.2,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {isTabMode
+                ? ((tab?.kind || 'mesa') === 'llevar'
+                    ? `📦 ${tab?.customerName || 'Cliente'}`
+                    : `Mesa ${tableNumber}`)
+                : 'Nueva venta'}
             </div>
             <div style={{ fontSize: 12, color: T.neutral[500] }}>
+              {isTabMode && (tab?.kind || 'mesa') === 'llevar' && (
+                <span style={{ color: '#9A7200', fontWeight: 700 }}>Para llevar · </span>
+              )}
               {session.branchName || 'Panadería'}
               {isAssistMode && session.cashierName && ` · turno de ${session.cashierName}`}
             </div>
           </div>
-          {isTabMode && (
+          {isTabMode && (tab?.kind || 'mesa') === 'mesa' && (
             <TableNumberEditButton
               currentNumber={tableNumber}
               openTabs={openTabs}
@@ -706,7 +764,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             </button>
             <button
               onClick={() => setSendCommandaModal({
-                number: tableNumber || nextFreeTableNumber(openTabs),
+                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+                customerName: '',
                 error: null, busy: false,
               })}
               style={{
@@ -1042,7 +1101,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
               setSendCommandaModal({
-                number: tableNumber || nextFreeTableNumber(openTabs),
+                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+                customerName: '',
                 error: null, busy: false,
               })
             } else {
@@ -1059,7 +1119,8 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
               setSendCommandaModal({
-                number: tableNumber || nextFreeTableNumber(openTabs),
+                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+                customerName: '',
                 error: null, busy: false,
               })
             } else {
@@ -1070,15 +1131,16 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         />
       )}
 
-      {/* Modal de envío de comanda: pide # de mesa (si no estamos ya en una)
-          y nota opcional. Permite editar el pedido (eliminar almuerzos,
-          editar comentario, agregar otro) antes de enviarlo a cocina. */}
+      {/* Modal de envío de comanda: si no estamos en tab, pide MESA# o
+          NOMBRE CLIENTE según el tipo de tab a crear (llevar vs mesa).
+          Permite editar el pedido (✕ por almuerzo, comentario, + otro) antes
+          de enviarlo a cocina. */}
       {sendCommandaModal && (
         <SendCommandaModal
           state={sendCommandaModal}
           setState={setSendCommandaModal}
           isTabMode={isTabMode}
-          tableNumber={tableNumber}
+          tab={tab}
           openTabs={openTabs}
           commandaNote={commandaNote}
           setCommandaNote={setCommandaNote}
@@ -1095,33 +1157,78 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 }
 
 // ──────────────────────────────────────────────────────────────
-// Modal de envío de comanda (#mesa + nota + confirmar)
+// Modal de envío de comanda (mesa# o nombre cliente + comentario + confirmar)
+//
+// Determina el "kind" de la tab a crear/usar:
+//   - Modo tab (mesa ya abierta): se hereda tab.kind.
+//   - Modo nuevo: si TODOS los almuerzos son 'llevar' → kind 'llevar' (pide nombre).
+//                 Si hay al menos uno 'mesa' → kind 'mesa' (pide número).
+//
+// Ojo: el destino es POR ALMUERZO. Una mesa numerada PUEDE contener almuerzos
+// con destination='llevar' (cliente sentado pero pide algo para llevar).
 // ──────────────────────────────────────────────────────────────
-function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, commandaNote, setCommandaNote, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
-  const num = state.number
-  const taken = !isTabMode && isTableNumberTaken(openTabs, num, null)
+function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commandaNote, setCommandaNote, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
+  // Determinar kind de la tab destino.
+  const tabKind = isTabMode
+    ? (tab?.kind || 'mesa')
+    : (lunchCommanda.length > 0 && lunchCommanda.every(l => l.destination === 'llevar')
+        ? 'llevar'
+        : 'mesa')
+
+  const num = state.tableNumber
+  const customerName = (state.customerName || '').trim()
+  const taken = !isTabMode && tabKind === 'mesa' && isTableNumberTaken(openTabs, num, null)
 
   // Lista de números ya ocupados — útil para que la cajera vea qué evitar.
   const occupiedNumbers = useMemo(() => {
-    if (isTabMode) return []
+    if (isTabMode || tabKind !== 'mesa') return []
     return (openTabs || [])
+      .filter(t => (t.kind || 'mesa') === 'mesa')
       .map(t => Number(t.tableNumber))
       .filter(n => n > 0)
       .sort((a, b) => a - b)
-  }, [openTabs, isTabMode])
+  }, [openTabs, isTabMode, tabKind])
+
+  // Reparto del breakdown — si hay mezcla mesa+llevar, lo mostramos.
+  const countMesa = lunchCommanda.filter(l => l.destination === 'mesa').length
+  const countLlevar = lunchCommanda.filter(l => l.destination === 'llevar').length
+  const isMixed = countMesa > 0 && countLlevar > 0
 
   async function handleConfirm() {
     if (state.busy) return
-    if (!num || num <= 0) {
-      setState(s => ({ ...s, error: 'Pon un número de mesa válido.' }))
+    if (isTabMode) {
+      // Ya tenemos tabId — solo enviar.
+      setState(s => ({ ...s, busy: true, error: null }))
+      const error = await onSubmit({ kind: tabKind })
+      if (error) setState(s => ({ ...s, busy: false, error }))
       return
     }
+    if (tabKind === 'mesa') {
+      if (!num || num <= 0) {
+        setState(s => ({ ...s, error: 'Pon un número de mesa válido.' }))
+        return
+      }
+    } else {
+      if (!customerName) {
+        setState(s => ({ ...s, error: 'Escribe el nombre del cliente.' }))
+        return
+      }
+    }
     setState(s => ({ ...s, busy: true, error: null }))
-    const error = await onSubmit(num)
+    const error = await onSubmit({
+      kind: tabKind,
+      tableNumber: tabKind === 'mesa' ? num : null,
+      customerName: tabKind === 'llevar' ? customerName : null,
+    })
     if (error) {
       setState(s => ({ ...s, busy: false, error }))
     }
   }
+
+  const canConfirm = !state.busy && (
+    isTabMode ||
+    (tabKind === 'mesa' ? !!num && !taken : customerName.length > 0)
+  )
 
   return (
     <div onClick={state.busy ? undefined : () => setState(null)} style={{
@@ -1209,8 +1316,21 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
           </button>
         )}
 
-        {/* Selector de mesa (solo si no estamos ya en una) */}
-        {!isTabMode && (
+        {/* Breakdown si hay mezcla — la cajera ve cuántos van a mesa y cuántos llevar */}
+        {isMixed && (
+          <div style={{
+            marginBottom: 10, padding: '8px 12px', borderRadius: 10,
+            background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`,
+            fontSize: 12, color: T.neutral[700], lineHeight: 1.5,
+            display: 'flex', justifyContent: 'space-around',
+          }}>
+            <span>🍽️ <b>{countMesa}</b> {countMesa === 1 ? 'mesa' : 'mesa'}</span>
+            <span>📦 <b>{countLlevar}</b> {countLlevar === 1 ? 'llevar' : 'llevar'}</span>
+          </div>
+        )}
+
+        {/* Selector de mesa (solo si no estamos en tab y kind='mesa') */}
+        {!isTabMode && tabKind === 'mesa' && (
           <>
             <div style={{
               fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
@@ -1220,7 +1340,7 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
             </div>
             <input
               type="number" min="1" value={num || ''}
-              onChange={e => setState(s => ({ ...s, number: Number(e.target.value) || 0, error: null }))}
+              onChange={e => setState(s => ({ ...s, tableNumber: Number(e.target.value) || 0, error: null }))}
               autoFocus
               style={{
                 width: '100%', padding: '14px', borderRadius: 12,
@@ -1247,6 +1367,42 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
                 <span style={{ color: T.neutral[500] }}>usa otro número</span>
               </div>
             )}
+          </>
+        )}
+
+        {/* Input nombre cliente (solo si no estamos en tab y kind='llevar') */}
+        {!isTabMode && tabKind === 'llevar' && (
+          <>
+            <div style={{
+              fontSize: 11.5, fontWeight: 700, color: '#7A5C00',
+              letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 14 }}>📦</span>
+              Nombre del cliente para llevar
+            </div>
+            <input
+              type="text" value={state.customerName || ''}
+              onChange={e => setState(s => ({ ...s, customerName: e.target.value, error: null }))}
+              placeholder='Ej: "Juan", "Cliente con gorra azul"'
+              maxLength={40}
+              autoFocus
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                border: `1.5px solid #F0D699`,
+                fontSize: 16, fontFamily: 'inherit', fontWeight: 700,
+                background: '#fff', color: T.neutral[900],
+                outline: 'none', marginBottom: 10,
+                boxSizing: 'border-box',
+              }}
+            />
+            <div style={{
+              marginBottom: 10, padding: '8px 12px', borderRadius: 10,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 11.5, color: '#7A5C00', lineHeight: 1.45,
+            }}>
+              Para llevar no se asigna mesa. La cajera ve este nombre en la burbuja de la izquierda.
+            </div>
           </>
         )}
 
@@ -1302,13 +1458,13 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
               fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
             }}
           >Más tarde</button>
-          <button onClick={handleConfirm} disabled={state.busy || taken || !num} style={{
+          <button onClick={handleConfirm} disabled={!canConfirm} style={{
             flex: 1.6, padding: '12px', borderRadius: 12,
-            background: state.busy || taken || !num ? T.neutral[200] : T.copper[500],
-            color: state.busy || taken || !num ? T.neutral[500] : '#fff',
-            border: 'none', cursor: state.busy || taken || !num ? 'not-allowed' : 'pointer',
+            background: !canConfirm ? T.neutral[200] : T.copper[500],
+            color: !canConfirm ? T.neutral[500] : '#fff',
+            border: 'none', cursor: !canConfirm ? 'not-allowed' : 'pointer',
             fontFamily: 'inherit', fontSize: 14, fontWeight: 800, letterSpacing: 0.2,
-            boxShadow: state.busy || taken || !num ? 'none' : '0 4px 14px rgba(184,122,86,0.35)',
+            boxShadow: !canConfirm ? 'none' : '0 4px 14px rgba(184,122,86,0.35)',
           }}>
             {state.busy ? 'Enviando...' : '🚀 Enviar comanda'}
           </button>
@@ -1316,6 +1472,59 @@ function SendCommandaModal({ state, setState, isTabMode, tableNumber, openTabs, 
       </div>
     </div>
   )
+}
+
+// Construye un resumen legible del almuerzo enviado.
+//
+// Reglas alineadas con la vista de la cocinera:
+//   - 'special': muestra la descripción libre.
+//   - 'menu':
+//     · Sopa, Principio, Proteína: SIEMPRE se muestran si están elegidos.
+//     · Acompañante / Ensalada / Jugo (alwaysServed): SOLO se muestran si la
+//       cajera los QUITÓ (null) — como alerta "SIN [X]". Cuando van por
+//       defecto, no ensucian el resumen porque la cocinera ya sabe.
+//     · Principio puede ser ARRAY de hasta 2 (caso "MIXTO Frijol / Pasta").
+//   - 'commandaNote': se muestra al final como "📝 ..." si existe.
+function buildLunchSummary(item) {
+  const lines = []
+  if (item.lunchKind === 'special' && item.lunchDescription) {
+    lines.push(item.lunchDescription)
+  } else if (item.lunchKind === 'menu' && item.lunchSelections) {
+    const sel = item.lunchSelections
+    const ICONS = { soup: '🥣', principio: '🫘', protein: '🍗', side: '🍚', salad: '🥗', juice: '🥤' }
+    const LABELS = { soup: 'sopa', principio: 'principio', protein: 'proteína', side: 'acompañante', salad: 'ensalada', juice: 'jugo' }
+    const ALWAYS_SERVED = new Set(['side', 'salad', 'juice'])
+    const parts = []
+    const sins = []  // categorías "siempre" que están null → alerta
+    for (const cat of ['soup', 'principio', 'protein', 'side', 'salad', 'juice']) {
+      const v = sel[cat]
+      if (ALWAYS_SERVED.has(cat)) {
+        // Si hay valor → no mostrar (ya va por defecto). Si es null → SIN.
+        if (v === null || (Array.isArray(v) && v.length === 0)) {
+          sins.push(`SIN ${LABELS[cat].toUpperCase()}`)
+        }
+        continue
+      }
+      // No-alwaysServed: sopa, principio, proteína. Mostrar si está elegido.
+      if (Array.isArray(v) && v.length > 0) {
+        // Principio mixto
+        const names = v.map(x => x.name).filter(Boolean)
+        if (names.length === 2) {
+          parts.push(`${ICONS[cat] || '·'} MIXTO ${names.join(' / ')}`)
+        } else if (names.length === 1) {
+          parts.push(`${ICONS[cat] || '·'} ${names[0]}`)
+        }
+      } else if (v && v.name) {
+        parts.push(`${ICONS[cat] || '·'} ${v.name}`)
+      }
+    }
+    if (parts.length > 0) lines.push(parts.join(' · '))
+    if (sins.length > 0) lines.push(`⚠ ${sins.join(' · ')}`)
+  }
+  if (item.commandaNote) {
+    lines.push(`📝 ${item.commandaNote}`)
+  }
+  return lines
 }
 
 function useCashierProducts() {
@@ -1400,21 +1609,29 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
   // Items shim de cocina (almuerzos enviados): sin qty, sin edit. Tap en remover
   // cancela el kitchenOrder y lo quita del carrito.
   if (item.source === 'kitchen') {
-    const isLlevar = item.name?.includes('Para llevar')
+    // Preferir el campo nuevo `lunchDestination` (denormalizado en lunchToCartItem)
+    // sobre el legacy de leer del nombre. Compatible con tabs viejas.
+    const isLlevar = item.lunchDestination
+      ? item.lunchDestination === 'llevar'
+      : item.name?.includes('Para llevar')
     const labelColor = isLlevar ? T.warn : T.copper[700]
-    const labelBg = isLlevar ? '#FFF7E6' : T.copper[50]
+
+    // Resumen de lo que se envió a cocina (visible POST-envío). Ahora la
+    // cajera puede revisar sin tener que ir a buscar el kitchenOrder.
+    const summaryLines = buildLunchSummary(item)
+
     return (
       <div style={{
         padding: '12px 16px',
-        display: 'flex', alignItems: 'center', gap: 10,
+        display: 'flex', alignItems: 'flex-start', gap: 10,
         borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
-        background: '#FBF5F0',
+        background: isLlevar ? '#FFFAEC' : '#FBF5F0',
       }}>
         <div style={{
           width: 32, height: 32, borderRadius: 10, flexShrink: 0,
           background: '#fff', border: `1px solid ${labelColor}33`,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 16,
+          fontSize: 16, marginTop: 1,
         }}>
           {isLlevar ? '📦' : '🍽️'}
         </div>
@@ -1425,8 +1642,23 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
           }}>
             {item.name}
           </div>
+          {summaryLines.length > 0 && (
+            <div style={{
+              fontSize: 11.5, color: T.neutral[700], marginTop: 4, lineHeight: 1.5,
+              padding: '6px 8px', borderRadius: 8,
+              background: '#fff', border: `0.5px solid ${T.neutral[200]}`,
+            }}>
+              {summaryLines.map((line, i) => (
+                <div key={i} style={{
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
           <div style={{
-            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 2,
+            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 4,
             letterSpacing: 0.4, textTransform: 'uppercase',
           }}>
             En cocina · No editable
@@ -1434,7 +1666,8 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
         </div>
         <div style={{
           minWidth: 70, textAlign: 'right',
-          fontSize: 14, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+          fontSize: 14, fontWeight: 700, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0, marginTop: 1,
         }}>
           {fmtCOP(subtotal)}
         </div>
@@ -1442,6 +1675,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
           width: 32, height: 32, borderRadius: 999, marginLeft: 4,
           background: 'transparent', border: 'none',
           cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0,
         }}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.bad} strokeWidth="1.7" strokeLinecap="round"/>

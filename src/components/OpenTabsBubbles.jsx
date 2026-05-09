@@ -8,14 +8,17 @@ import { watchLiveOrdersForSession, tabKitchenState } from '../kitchenOrders'
  * Burbujas flotantes con las mesas abiertas de la cajera.
  * Se renderiza siempre que haya sesión activa.
  *
- * Posición: franja fija en el lado derecho, scroll vertical si hay >5.
+ * Layout (D + 'llevar'):
+ *   - Tabs MESA (kind='mesa' o legacy)  → franja DERECHA
+ *   - Tabs LLEVAR (kind='llevar')        → franja IZQUIERDA
+ * Cada franja scroll vertical independiente.
  *
  * Props:
  *   - sessionId: id de la cashSession activa
  *   - onSelect(tab): callback al tocar una burbuja
  *
  * Estados de color (fase 12 — almuerzos):
- *   - cobre: mesa normal (sin almuerzos en cocina)
+ *   - cobre / amarillo: tab normal (sin almuerzos en cocina)
  *   - rojo:  al menos un almuerzo pending en cocina
  *   - verde + parpadeo: TODOS los almuerzos en ready
  */
@@ -43,54 +46,94 @@ export default function OpenTabsBubbles({ sessionId, onSelect }) {
     return map
   }, [tabs, liveOrders])
 
-  if (!tabs || tabs.length === 0) return null
+  // Separar por kind
+  const mesaTabs = useMemo(
+    () => tabs.filter(t => (t.kind || 'mesa') === 'mesa'),
+    [tabs]
+  )
+  const llevarTabs = useMemo(
+    () => tabs.filter(t => (t.kind || 'mesa') === 'llevar'),
+    [tabs]
+  )
+
+  if (mesaTabs.length === 0 && llevarTabs.length === 0) return null
+
+  const animations = (
+    <style>{`
+      @keyframes bubblePulseGreen {
+        0%, 100% {
+          transform: scale(1);
+          box-shadow: 0 4px 14px rgba(91,138,90,0.55);
+        }
+        50% {
+          transform: scale(1.06);
+          box-shadow: 0 6px 22px rgba(91,138,90,0.85);
+        }
+      }
+    `}</style>
+  )
 
   return (
-    <div style={{
-      position: 'fixed',
-      right: 8,
-      // Centrado vertical aproximado, dejando margen arriba para la barra de la cajera
-      top: '50%',
-      transform: 'translateY(-50%)',
-      zIndex: 50,
-      display: 'flex', flexDirection: 'column', gap: 10,
-      maxHeight: '70vh',
-      overflowY: 'auto',
-      // Animación fade-in al aparecer
-      animation: 'fadeIn 0.18s ease',
-      // Scrollbar discreto
-      paddingRight: 2,
-    }}>
-      {tabs.map(t => (
-        <Bubble
-          key={t.id}
-          tab={t}
-          kitchenState={stateByTab[t.id] || 'idle'}
-          onClick={() => onSelect?.(t)}
-        />
-      ))}
+    <>
+      {/* Franja derecha: mesas */}
+      {mesaTabs.length > 0 && (
+        <div style={{
+          ...stripStyle(),
+          right: 8,
+        }}>
+          {mesaTabs.map(t => (
+            <Bubble
+              key={t.id}
+              tab={t}
+              kitchenState={stateByTab[t.id] || 'idle'}
+              onClick={() => onSelect?.(t)}
+            />
+          ))}
+        </div>
+      )}
 
-      <style>{`
-        @keyframes bubblePulseGreen {
-          0%, 100% {
-            transform: scale(1);
-            box-shadow: 0 4px 14px rgba(91,138,90,0.55);
-          }
-          50% {
-            transform: scale(1.06);
-            box-shadow: 0 6px 22px rgba(91,138,90,0.85);
-          }
-        }
-      `}</style>
-    </div>
+      {/* Franja izquierda: llevar */}
+      {llevarTabs.length > 0 && (
+        <div style={{
+          ...stripStyle(),
+          left: 8,
+        }}>
+          {llevarTabs.map(t => (
+            <Bubble
+              key={t.id}
+              tab={t}
+              kitchenState={stateByTab[t.id] || 'idle'}
+              onClick={() => onSelect?.(t)}
+            />
+          ))}
+        </div>
+      )}
+
+      {animations}
+    </>
   )
 }
 
+function stripStyle() {
+  return {
+    position: 'fixed',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    zIndex: 50,
+    display: 'flex', flexDirection: 'column', gap: 10,
+    maxHeight: '70vh',
+    overflowY: 'auto',
+    animation: 'fadeIn 0.18s ease',
+    paddingRight: 2,
+  }
+}
+
 function Bubble({ tab, kitchenState, onClick }) {
+  const isLlevar = (tab.kind || 'mesa') === 'llevar'
   const hasItems = (tab.items?.length || 0) > 0
   const total = Number(tab.total) || 0
 
-  // Color de fondo según estado de cocina, fallback a estética actual
+  // Color de fondo según estado de cocina, fallback a estética por kind
   let bg, shadow, animation
   if (kitchenState === 'cooking') {
     bg = T.bad
@@ -100,6 +143,13 @@ function Bubble({ tab, kitchenState, onClick }) {
     bg = T.ok
     shadow = '0 4px 14px rgba(91,138,90,0.55)'
     animation = 'bubblePulseGreen 1.2s ease-in-out infinite'
+  } else if (isLlevar) {
+    // Llevar idle: tono ámbar/dorado para diferenciar visualmente.
+    bg = hasItems ? T.warn : T.neutral[300]
+    shadow = hasItems
+      ? '0 4px 14px rgba(214,155,33,0.45)'
+      : '0 2px 8px rgba(0,0,0,0.15)'
+    animation = 'none'
   } else {
     bg = hasItems ? T.copper[500] : T.neutral[300]
     shadow = hasItems
@@ -112,10 +162,15 @@ function Bubble({ tab, kitchenState, onClick }) {
     : kitchenState === 'ready' ? '¡Listo!'
     : null
 
+  // Identificador para el tooltip (mesa# o nombre cliente)
+  const idLabel = isLlevar
+    ? `📦 ${tab.customerName || 'Cliente'}`
+    : `Mesa ${tab.tableNumber}`
+
   return (
     <button
       onClick={onClick}
-      title={`Mesa ${tab.tableNumber} · ${fmtCOP(total)}${stateLabel ? ` · ${stateLabel}` : ''}`}
+      title={`${idLabel} · ${fmtCOP(total)}${stateLabel ? ` · ${stateLabel}` : ''}`}
       style={{
         width: 64, height: 64, borderRadius: 999,
         background: bg,
@@ -131,12 +186,22 @@ function Bubble({ tab, kitchenState, onClick }) {
         animation,
       }}
     >
-      <div style={{
-        fontSize: 24, fontWeight: 800, lineHeight: 1, letterSpacing: -0.5,
-        fontVariantNumeric: 'tabular-nums',
-      }}>
-        {tab.tableNumber}
-      </div>
+      {isLlevar ? (
+        // Burbuja de llevar: ícono prominente; el nombre se ve grande al
+        // abrir la mesa. La user pidió ícono — sin texto encima.
+        <div style={{
+          fontSize: 28, lineHeight: 1, letterSpacing: -0.5,
+        }}>
+          📦
+        </div>
+      ) : (
+        <div style={{
+          fontSize: 24, fontWeight: 800, lineHeight: 1, letterSpacing: -0.5,
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          {tab.tableNumber}
+        </div>
+      )}
       {hasItems && kitchenState !== 'ready' && (
         <div style={{
           fontSize: 9, fontWeight: 700, marginTop: 3,

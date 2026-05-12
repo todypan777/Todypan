@@ -18,6 +18,7 @@ import {
 import { watchAllUsers } from '../users'
 import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
+import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import NewSale from '../screens/NewSale'
 import OpenTabsBubbles from './OpenTabsBubbles'
 
@@ -472,10 +473,7 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
   }, [activeSales])
   const salesByMethod = useMemo(() => {
     const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0 }
-    activeSales.forEach(s => {
-      const m = s.paymentMethod || 'efectivo'
-      acc[m] = (acc[m] || 0) + (Number(s.total) || 0)
-    })
+    activeSales.forEach(s => addSaleToBreakdown(acc, s))
     return acc
   }, [activeSales])
   const totalSales = activeSales.reduce((acc, s) => acc + (Number(s.total) || 0), 0)
@@ -1282,7 +1280,13 @@ function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled })
 // filtrado para mostrar quién pagó/debe.
 // ──────────────────────────────────────────────────────────────
 function ClickableMethodRow({ label, method, sales, amount, onOpen, bold }) {
-  const matching = sales.filter(s => (s.paymentMethod || 'efectivo') === method)
+  // Una venta cuenta en este método si:
+  //  - su paymentMethod es exactamente el método, O
+  //  - tiene paymentSplit con porción > 0 en este método
+  const matching = sales.filter(s => {
+    if (s.paymentSplit && Number(s.paymentSplit[method]) > 0) return true
+    return (s.paymentMethod || 'efectivo') === method
+  })
   const count = matching.length
   const hasContent = count > 0
   const muted = !bold
@@ -1333,8 +1337,13 @@ function ClickableMethodRow({ label, method, sales, amount, onOpen, bold }) {
 function SalesListModal({ sales, totalSales, methodFilter, onClose }) {
   // Ordenar más recientes primero (las que vienen de watchSessionSales ya
   // vienen ordenadas, pero por seguridad)
+  // Igual que ClickableMethodRow: incluir ventas mixto que tengan porción en
+  // el método filtrado.
   const filtered = methodFilter
-    ? sales.filter(s => (s.paymentMethod || 'efectivo') === methodFilter)
+    ? sales.filter(s => {
+        if (s.paymentSplit && Number(s.paymentSplit[methodFilter]) > 0) return true
+        return (s.paymentMethod || 'efectivo') === methodFilter
+      })
     : [...sales]
 
   // Para deuda mostramos el grupo por deudor (suma por persona) además de la
@@ -1472,8 +1481,8 @@ function SaleDetailRow({ sale, isLast }) {
   const timeStr = time
     ? new Date(time).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
     : '—'
-  const methodIcon = { efectivo: '💵', nequi: '📱', daviplata: '📲', deuda: '📋' }[sale.paymentMethod] || '·'
-  const methodLabel = { efectivo: 'Efectivo', nequi: 'Nequi', daviplata: 'Daviplata', deuda: 'Deuda' }[sale.paymentMethod] || sale.paymentMethod
+  const { icon: methodIcon, label: methodLabel } = paymentDisplay(sale)
+  const splitSummary = paymentSplitSummary(sale)
   const isFlagged = sale.status === 'flagged'
 
   return (
@@ -1488,6 +1497,11 @@ function SaleDetailRow({ sale, isLast }) {
             {timeStr} · {methodLabel}
             {isFlagged && <span style={{ color: T.warn, marginLeft: 6, fontWeight: 700 }}>⚠ reportada</span>}
           </div>
+          {splitSummary && (
+            <div style={{ fontSize: 11, color: T.copper[700], marginTop: 1, fontWeight: 600 }}>
+              {splitSummary}
+            </div>
+          )}
           {sale.debtorName && (
             <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
               Deudor: {sale.debtorName}

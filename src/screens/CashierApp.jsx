@@ -1423,6 +1423,7 @@ function SaleRow({ sale, isLast, onClick }) {
     nequi: '📱',
     daviplata: '📱',
     deuda: '🤝',
+    mixto: '🔀',
   }
   const methodIcon = methodIcons[sale.paymentMethod] || ''
 

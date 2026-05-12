@@ -6,6 +6,7 @@ import { ScreenHeader } from '../components/Nav'
 import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
 import { watchAllSales } from '../sales'
 import ActiveTurnsCard from '../components/ActiveTurnsCard'
+import CookAssistCard from '../components/CookAssistCard'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
   const today = todayStr()
@@ -113,6 +114,8 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
 
       {/* Turnos activos (vivos): asistir a cajeras ausentes */}
       <ActiveTurnsCard />
+
+      <CookAssistCard />
 
       {/* Balance hero card */}
       <div style={{ padding: '0 16px' }}>

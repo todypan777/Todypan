@@ -32,9 +32,10 @@ function timeOf(doc) {
  *  - sessionId, branchId, cashierUid, cashierName
  *  - items: [{ productId, source: 'admin'|'cashier'|'inline', name, qty, unitPrice, subtotal }]
  *  - total
- *  - paymentMethod: 'efectivo' | 'nequi' | 'daviplata' | 'deuda'
+ *  - paymentMethod: 'efectivo' | 'nequi' | 'daviplata' | 'deuda' | 'mixto'
+ *  - paymentSplit?  (solo si paymentMethod === 'mixto') ej: { efectivo: 10000, nequi: 5000 }
  *  - cashReceived?  (solo efectivo)
- *  - photoUrl?      (solo nequi/daviplata, Fase 4)
+ *  - photoUrl?      (solo nequi/daviplata o mixto con porción digital, Fase 4)
  *  - debtorId?, debtorName?  (solo deuda)
  *  - recordedByUid?, recordedByName?, recordedByRole?
  *      → cuando admin asiste un turno: la venta SE CONTABILIZA a la cajera
@@ -58,6 +59,16 @@ export async function createSale(payload) {
   }
   if (payload.cashReceived !== undefined && payload.cashReceived !== null) {
     data.cashReceived = Number(payload.cashReceived) || 0
+  }
+  // Pago dividido: el desglose por método. Solo se guarda si la venta
+  // realmente es 'mixto' — para el resto de métodos queda ausente y los
+  // consumidores que no conocen split siguen funcionando como antes.
+  if (payload.paymentMethod === 'mixto' && payload.paymentSplit) {
+    data.paymentSplit = {}
+    for (const [m, amt] of Object.entries(payload.paymentSplit)) {
+      const a = Number(amt) || 0
+      if (a > 0) data.paymentSplit[m] = a
+    }
   }
   if (payload.photoUrl) {
     data.photoUrl = payload.photoUrl

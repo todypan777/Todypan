@@ -8,6 +8,7 @@ import { watchClosedSessionsForDate } from '../cashSessions'
 import { watchSessionSales } from '../sales'
 import { watchSessionExpenses } from '../cashExpenses'
 import { watchTasksCompletedInSession, watchTasksForCashier } from '../tasks'
+import { paymentIcon } from '../utils/payment'
 
 // Registro es solo VISUALIZACIÓN + acceso al formulario de confirmación.
 // No permite edición inline — toda edición pasa por DailyConfirmation o DayEditModal.
@@ -500,9 +501,18 @@ function ClosureDetailModal({ session, onClose }) {
     const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
     sales.forEach(s => {
       if ((s.status || 'active') === 'deleted') return
-      const m = s.paymentMethod || 'efectivo'
       const t = Number(s.total) || 0
-      acc[m] = (acc[m] || 0) + t
+      // Ventas mixtas (paymentSplit): distribuir cada porción a su categoría
+      // para que el cuadre del turno refleje la plata real por método.
+      if (s.paymentSplit) {
+        for (const [m, amt] of Object.entries(s.paymentSplit)) {
+          const a = Number(amt) || 0
+          if (a > 0) acc[m] = (acc[m] || 0) + a
+        }
+      } else {
+        const m = s.paymentMethod || 'efectivo'
+        acc[m] = (acc[m] || 0) + t
+      }
       acc.total += t
       acc.count += 1
     })
@@ -805,7 +815,7 @@ function SaleDetailRow({ sale, isLast }) {
   const timeStr = time
     ? new Date(time).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
     : '—'
-  const methodIcon = { efectivo: '💵', nequi: '📱', daviplata: '📲', deuda: '📋' }[sale.paymentMethod] || '·'
+  const methodIcon = paymentIcon(sale)
   const isDeleted = sale.status === 'deleted'
   const isFlagged = sale.status === 'flagged'
 

@@ -53,8 +53,12 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
   if (existing) {
     const newTotal = (Number(existing.totalOwed) || 0) + (Number(amount) || 0)
     // Fire-and-forget: en modo ahorro `await updateDoc` se cuelga.
+    // Importante: re-calculamos `status`. Si el deudor estaba en 'paid' por
+    // haber saldado, una nueva deuda lo devuelve a 'active' — sin esto se
+    // quedaba en la pestaña "Ya pagaron" para siempre aunque debiera plata.
     updateDoc(debtorRef(existing.id), {
       totalOwed: newTotal,
+      status: newTotal > 0 ? 'active' : 'paid',
       lastUpdate: serverTimestamp(),
       history: arrayUnion({
         type: 'sale',

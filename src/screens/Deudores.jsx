@@ -25,10 +25,15 @@ export default function Deudores({ onBack }) {
     return unsub
   }, [])
 
+  // Filtros y conteos basados ÚNICAMENTE en `totalOwed` (no en `status`).
+  // El campo `status` es solo un cache denormalizado: si por bug histórico
+  // hay deudores con totalOwed>0 y status='paid', deben aparecer como activos.
+  // La verdad es la plata pendiente, no el flag.
   const filtered = useMemo(() => {
     const list = debtors.filter(d => {
-      if (tab === 'active' && (d.status === 'paid' || (d.totalOwed || 0) <= 0)) return false
-      if (tab === 'paid' && (d.status !== 'paid' && (d.totalOwed || 0) > 0)) return false
+      const owed = Number(d.totalOwed) || 0
+      if (tab === 'active' && owed <= 0) return false
+      if (tab === 'paid' && owed > 0) return false
       if (search.trim()) {
         const q = search.toLowerCase().trim()
         if (!(d.name || '').toLowerCase().includes(q)) return false
@@ -40,10 +45,10 @@ export default function Deudores({ onBack }) {
   }, [debtors, tab, search])
 
   const totalActive = debtors
-    .filter(d => d.status !== 'paid' && (d.totalOwed || 0) > 0)
+    .filter(d => (Number(d.totalOwed) || 0) > 0)
     .reduce((s, d) => s + (d.totalOwed || 0), 0)
-  const activeCount = debtors.filter(d => d.status !== 'paid' && (d.totalOwed || 0) > 0).length
-  const paidCount = debtors.filter(d => d.status === 'paid' || (d.totalOwed || 0) <= 0).length
+  const activeCount = debtors.filter(d => (Number(d.totalOwed) || 0) > 0).length
+  const paidCount = debtors.filter(d => (Number(d.totalOwed) || 0) <= 0).length
 
   return (
     <div style={{ paddingBottom: isDesktop ? 0 : 110 }}>
@@ -177,7 +182,9 @@ export default function Deudores({ onBack }) {
 }
 
 function DebtorRow({ debtor, isLast, onClick }) {
-  const isPaid = debtor.status === 'paid' || (debtor.totalOwed || 0) <= 0
+  // Igual que el filtro: confiamos solo en `totalOwed`. El flag `status` es
+  // un cache que puede quedar desincronizado por escrituras viejas.
+  const isPaid = (Number(debtor.totalOwed) || 0) <= 0
   const initials = (debtor.name || '?').split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
 
   return (
@@ -245,7 +252,9 @@ function DebtorRow({ debtor, isLast, onClick }) {
 function DebtorDetailModal({ debtor, onClose }) {
   const [paying, setPaying] = useState(false)
   const [debtorSales, setDebtorSales] = useState([])
-  const isPaid = debtor.status === 'paid' || (debtor.totalOwed || 0) <= 0
+  // Igual que el filtro: confiamos solo en `totalOwed`. El flag `status` es
+  // un cache que puede quedar desincronizado por escrituras viejas.
+  const isPaid = (Number(debtor.totalOwed) || 0) <= 0
 
   // Cargar ventas asociadas al deudor para mostrar qué productos compró
   // en cada entry de historial.

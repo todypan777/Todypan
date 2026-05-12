@@ -23,6 +23,7 @@ const METHOD_INFO = {
   nequi:     { icon: '📱', label: 'NEQUI' },
   daviplata: { icon: '📱', label: 'DAVIPLATA' },
   deuda:     { icon: '🤝', label: 'Deuda' },
+  mixto:     { icon: '🔀', label: 'Mixto' },
 }
 
 function bogotaToday() {
@@ -185,7 +186,7 @@ export default function MyHistoricalSales({ authUser, userDoc, onClose, onReport
           active={methodFilter === null}
           onClick={() => setMethodFilter(null)}
         />
-        {['efectivo', 'nequi', 'daviplata', 'deuda'].map(m => (
+        {['efectivo', 'nequi', 'daviplata', 'mixto', 'deuda'].map(m => (
           <Chip
             key={m}
             label={`${METHOD_INFO[m].icon} ${METHOD_INFO[m].label}`}

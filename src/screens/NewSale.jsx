@@ -76,6 +76,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   // Modal de envío de la comanda (pide # de mesa si no estamos en isTabMode)
   // shape: { number, error, busy }
   const [sendCommandaModal, setSendCommandaModal] = useState(null)
+  // Modal de confirmación para eliminar mesa (botón rojo del footer en modo
+  // tab). shape: null | { busy, error }
+  const [confirmDeleteTab, setConfirmDeleteTab] = useState(null)
 
   // Listener de tabs abiertas para validar números duplicados
   const [openTabs, setOpenTabs] = useState([])
@@ -1036,7 +1039,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
             {/* En modo mesa: botón secundario "Eliminar mesa" */}
             {isTabMode && (
               <button
-                onClick={() => setConfirmDeleteTab(true)}
+                onClick={() => setConfirmDeleteTab({ busy: false, error: null })}
                 style={{
                   width: '100%', marginTop: 8, padding: '12px',
                   background: 'transparent', color: T.bad,
@@ -1170,6 +1173,19 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           onAddAnother={handleAddAnotherLunch}
           onSubmit={handleSendCommanda}
           onBack={() => setSendCommandaModal(null)}
+        />
+      )}
+
+      {confirmDeleteTab && isTabMode && (
+        <ConfirmDeleteTabModal
+          tab={tab}
+          cart={cart}
+          state={confirmDeleteTab}
+          setState={setConfirmDeleteTab}
+          onConfirmed={() => {
+            setConfirmDeleteTab(null)
+            onCancel()
+          }}
         />
       )}
 
@@ -2287,20 +2303,40 @@ function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfir
 // MODAL: Método de pago
 // ──────────────────────────────────────────────────────────────
 function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onCancel, onConfirmed }) {
+  // method primario seleccionado por la cajera. Cuando hay split, 'mixto' es
+  // un estado derivado — no se elige directamente.
   const [method, setMethod] = useState(null) // 'efectivo' | 'deuda' | 'nequi' | 'daviplata'
   const [cashReceivedStr, setCashReceivedStr] = useState('')
   const [debtorName, setDebtorName] = useState('')
   const [debtors, setDebtors] = useState([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  // Split de pago: cuando hay mezcla efectivo + digital. Solo se activa si la
+  // cajera entra al flujo (sin botón extra arriba): tipea efectivo<total y
+  // escoge digital para el resto, o tipea digital y agrega efectivo abajo.
+  // shape: { efectivo: number, digitalMethod: 'nequi'|'daviplata', digitalAmount: number }
+  const [split, setSplit] = useState(null)
+  // Input visible para la "porción efectivo" cuando el método primario es
+  // nequi/daviplata. Si tipea algo válido, el split se activa.
+  const [splitCashStr, setSplitCashStr] = useState('')
 
   useEffect(() => {
     const unsub = watchDebtors(setDebtors)
     return unsub
   }, [])
 
+  // Reset del split cuando la cajera cambia de método primario — evitamos
+  // estado fantasma de un flujo previo.
+  useEffect(() => {
+    setSplit(null)
+    setSplitCashStr('')
+  }, [method])
+
   const cashReceived = Number(cashReceivedStr) || 0
   const change = cashReceived - total
+  // En split desde efectivo: la cajera dice cuánto efectivo recibió y el
+  // sistema infiere que el resto va al método digital escogido. No hay vuelto.
+  const isSplit = !!split
 
   // Sugerencias de deudores existentes (ordenadas por relevancia: prefijo > contiene)
   const debtorSuggestions = useMemo(() => {
@@ -2319,13 +2355,47 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   const canConfirm = (() => {
     if (!method) return false
     if (method === 'deuda') return debtorName.trim().length >= 2 && !busy
-    if (method === 'efectivo') return !busy
-    if (isDigital) return !busy
+    // Para efectivo o digital, con o sin split: el modal valida los montos
+    // antes de habilitar (en split, ambas porciones deben sumar el total).
+    if (method === 'efectivo') {
+      if (isSplit) return split.digitalAmount > 0 && split.efectivo > 0 && !busy
+      return !busy
+    }
+    if (isDigital) {
+      if (isSplit) return split.digitalAmount > 0 && split.efectivo > 0 && !busy
+      return !busy
+    }
     return false
   })()
 
   function selectMethod(m) {
     setMethod(m)
+  }
+
+  // Activa el split desde el flujo "efectivo": la cajera ya tipeó cashReceived
+  // (< total) y escogió el digital para el resto. Calculamos las dos porciones.
+  function activateSplitFromCash(digitalMethod) {
+    const efectivo = cashReceived
+    const digitalAmount = total - efectivo
+    if (efectivo <= 0 || digitalAmount <= 0) return
+    setSplit({ efectivo, digitalMethod, digitalAmount })
+  }
+
+  // Activa el split desde el flujo "digital": la cajera tipeó cuánto efectivo
+  // recibió del cliente además del pago digital.
+  function activateSplitFromDigital(efectivoAmount) {
+    const efectivo = Number(efectivoAmount) || 0
+    const digitalAmount = total - efectivo
+    if (efectivo <= 0 || efectivo >= total) {
+      setSplit(null)
+      return
+    }
+    setSplit({ efectivo, digitalMethod: method, digitalAmount })
+  }
+
+  function clearSplit() {
+    setSplit(null)
+    setSplitCashStr('')
   }
 
   async function handleConfirm() {
@@ -2342,6 +2412,9 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
         : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
 
+      // Si hay split, la venta se guarda como 'mixto' con paymentSplit. Para
+      // los downstream que no conocen split (filtros antiguos, etc.), el
+      // helper `addSaleToBreakdown` y `paymentDisplay` los manejan.
       const payload = {
         sessionId: session.id,
         branchId: session.branchId,
@@ -2356,10 +2429,17 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           subtotal: it.qty * it.unitPrice,
         })),
         total,
-        paymentMethod: method,
+        paymentMethod: isSplit ? 'mixto' : method,
       }
 
-      if (method === 'efectivo' && cashReceivedStr) {
+      if (isSplit) {
+        payload.paymentSplit = {
+          efectivo: split.efectivo,
+          [split.digitalMethod]: split.digitalAmount,
+        }
+        // Conservamos cashReceived para auditoría / vuelto = 0 (cliente cubrió exacto).
+        payload.cashReceived = split.efectivo
+      } else if (method === 'efectivo' && cashReceivedStr) {
         payload.cashReceived = cashReceived
       }
 
@@ -2439,14 +2519,14 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
         </div>
 
         {/* Detalles según método */}
-        {method === 'efectivo' && (
+        {method === 'efectivo' && !isSplit && (
           <>
             <ModalNumberInput
               label="¿Cuánto recibió? (opcional)"
               value={cashReceivedStr}
               onChange={setCashReceivedStr}
               disabled={busy}
-              hint="Si lo digitas, te calcula el vuelto."
+              hint="Si lo digitas, te calcula el vuelto o te ofrece dividir."
             />
             {cashReceivedStr && cashReceived >= total && (
               <div style={{
@@ -2461,16 +2541,79 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
                 </span>
               </div>
             )}
-            {cashReceivedStr && cashReceived < total && (
+            {/* En lugar del error rojo "monto menor al total", ofrecemos
+                dividir el pago. La cajera escoge con qué método digital
+                cubre el faltante y el split queda armado. */}
+            {cashReceivedStr && cashReceived > 0 && cashReceived < total && (
               <div style={{
-                padding: '10px 14px', borderRadius: 12,
-                background: '#FBE9E5', border: `1px solid #F0C8BE`,
-                marginBottom: 12, fontSize: 13, color: T.bad, fontWeight: 600,
+                padding: '12px 14px', borderRadius: 12,
+                background: '#FFF7E6', border: `1px solid #F4E0BC`,
+                marginBottom: 12,
               }}>
-                El monto recibido es menor al total.
+                <div style={{ fontSize: 13, color: '#7A5C00', fontWeight: 600, lineHeight: 1.45, marginBottom: 10 }}>
+                  Faltan <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(total - cashReceived)}</b> para el total.
+                  <br/>¿El cliente cubre el resto con?
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    onClick={() => activateSplitFromCash('nequi')}
+                    disabled={busy}
+                    style={splitOptionBtnStyle()}
+                  >
+                    <span style={{ fontSize: 18 }}>📱</span>
+                    <span>NEQUI</span>
+                  </button>
+                  <button
+                    onClick={() => activateSplitFromCash('daviplata')}
+                    disabled={busy}
+                    style={splitOptionBtnStyle()}
+                  >
+                    <span style={{ fontSize: 18 }}>📲</span>
+                    <span>DAVIPLATA</span>
+                  </button>
+                </div>
               </div>
             )}
           </>
+        )}
+
+        {/* Método digital sin split aún — link discreto para combinar con efectivo */}
+        {isDigital && !isSplit && (
+          <>
+            <button
+              onClick={() => setSplit({ efectivo: 0, digitalMethod: method, digitalAmount: total })}
+              disabled={busy}
+              style={{
+                width: '100%', padding: '10px 12px', borderRadius: 12,
+                background: 'transparent', color: T.copper[700],
+                border: `1.5px dashed ${T.copper[200]}`,
+                cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+                fontSize: 12.5, fontWeight: 700, letterSpacing: 0.2,
+                marginBottom: 12,
+              }}
+            >
+              + Combinar con efectivo
+            </button>
+          </>
+        )}
+
+        {/* Modo split activo — card resumen + botón para deshacer */}
+        {isSplit && (
+          <SplitSummary
+            split={split}
+            method={method}
+            splitCashStr={splitCashStr}
+            setSplitCashStr={(v) => {
+              setSplitCashStr(v)
+              // Si la cajera entró por flujo digital, el input controla la
+              // porción efectivo en vivo. Si entró por flujo efectivo, el
+              // efectivo ya está fijado en cashReceivedStr.
+              if (isDigital) activateSplitFromDigital(v)
+            }}
+            cameFromCash={method === 'efectivo'}
+            onClear={clearSplit}
+            disabled={busy}
+          />
         )}
 
         {method === 'deuda' && (
@@ -2539,6 +2682,211 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
         </div>
       </div>
     </ModalOverlay>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Modal "Eliminar mesa": pide confirmación y cancela kitchenOrders
+// asociados (si la mesa tenía almuerzos enviados a cocina) antes de
+// borrar la tab. Funciona igual en cajera y en modo asistir admin —
+// la diferencia la maneja Firestore Rules (cajera dueña o admin).
+// ──────────────────────────────────────────────────────────────
+function ConfirmDeleteTabModal({ tab, cart, state, setState, onConfirmed }) {
+  const kitchenItems = (cart || []).filter(it => it.source === 'kitchen' && it.kitchenOrderId)
+  const hasKitchen = kitchenItems.length > 0
+  const otherCount = (cart || []).length - kitchenItems.length
+
+  async function handleConfirm() {
+    if (state.busy) return
+    setState(s => ({ ...s, busy: true, error: null }))
+    try {
+      // Cancelar kitchenOrders asociados (fire-and-forget, mismo patrón que
+      // removeItem en el carrito).
+      if (hasKitchen) {
+        const m = await import('../kitchenOrders')
+        await Promise.all(
+          kitchenItems.map(it =>
+            m.cancelKitchenOrder(it.kitchenOrderId, { reason: 'Mesa eliminada' })
+              .catch(err => console.warn('[NewSale] cancel order on tab delete:', err?.message || err))
+          )
+        )
+      }
+      await deleteOpenTab(tab.id)
+      onConfirmed()
+    } catch (err) {
+      console.error('[NewSale] eliminar mesa falló:', err)
+      const code = err?.code || ''
+      const msg = code === 'permission-denied'
+        ? 'No tienes permisos para eliminar esta mesa.'
+        : (err?.message || 'No se pudo eliminar.')
+      setState(s => ({ ...s, busy: false, error: msg }))
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={state.busy ? undefined : () => setState(null)}>
+      <div onClick={e => e.stopPropagation()} style={modalCard()}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+          Eliminar mesa
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[600], marginTop: 6, marginBottom: 14, lineHeight: 1.5 }}>
+          Vas a eliminar esta mesa y todo lo que tiene encima. <b>No se cobra</b> y no queda registrada como venta.
+        </div>
+
+        {hasKitchen && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 10, marginBottom: 12,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 12.5, color: '#7A5C00', lineHeight: 1.5,
+          }}>
+            Hay <b>{kitchenItems.length} {kitchenItems.length === 1 ? 'almuerzo' : 'almuerzos'}</b> en
+            cocina que se cancelarán automáticamente.
+            {otherCount > 0 && (
+              <> {otherCount} {otherCount === 1 ? 'producto' : 'productos'} adicionales también se descartan.</>
+            )}
+          </div>
+        )}
+
+        {!hasKitchen && (cart || []).length > 0 && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 10, marginBottom: 12,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`,
+            fontSize: 12.5, color: T.bad, lineHeight: 1.5,
+          }}>
+            La mesa tiene <b>{cart.length} {cart.length === 1 ? 'producto' : 'productos'}</b> que se van a descartar.
+          </div>
+        )}
+
+        {state.error && (
+          <div style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+            fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+          }}>
+            ⚠ {state.error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={() => setState(null)}
+            disabled={state.busy}
+            style={btnSecondary()}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={state.busy}
+            style={{
+              ...btnPrimary(state.busy ? T.neutral[300] : T.bad),
+              cursor: state.busy ? 'wait' : 'pointer',
+              boxShadow: state.busy ? 'none' : `0 3px 10px ${T.bad}33`,
+            }}
+          >
+            {state.busy ? 'Eliminando...' : 'Sí, eliminar mesa'}
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
+  )
+}
+
+// Estilo del botón de selección dentro del aviso "Faltan $X · ¿con qué?".
+// Pequeño y discreto — no compite visualmente con los botones primarios.
+function splitOptionBtnStyle() {
+  return {
+    flex: 1, padding: '10px 8px', borderRadius: 10,
+    background: '#fff', color: '#7A5C00',
+    border: `1.5px solid #F0D699`,
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 12.5, fontWeight: 800, letterSpacing: 0.3,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+  }
+}
+
+// Card resumen del split activo. Aparece cuando hay 2 métodos en la venta.
+// Si la cajera entró por flujo digital, expone un input para tipear cuánto
+// recibió en efectivo. Si entró por flujo efectivo, las dos porciones ya
+// están fijadas y solo se muestran.
+function SplitSummary({ split, method, splitCashStr, setSplitCashStr, cameFromCash, onClear, disabled }) {
+  const METHOD_LABEL = { nequi: 'NEQUI', daviplata: 'DAVIPLATA' }
+  const METHOD_ICON  = { nequi: '📱',    daviplata: '📲' }
+  const digitalLabel = METHOD_LABEL[split.digitalMethod] || split.digitalMethod
+  const digitalIcon  = METHOD_ICON[split.digitalMethod]  || '📱'
+
+  return (
+    <div style={{
+      padding: '12px 14px', borderRadius: 14, marginBottom: 12,
+      background: T.copper[50], border: `1.5px solid ${T.copper[200]}`,
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        marginBottom: 10,
+      }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase' }}>
+          🔀 Pago dividido
+        </div>
+        <button
+          onClick={onClear}
+          disabled={disabled}
+          style={{
+            padding: '4px 10px', borderRadius: 999,
+            background: 'transparent', color: T.copper[700],
+            border: `1px solid ${T.copper[200]}`,
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11, fontWeight: 700,
+          }}
+        >
+          Deshacer
+        </button>
+      </div>
+
+      {/* Si vino del flujo digital, dejamos editar el efectivo en vivo */}
+      {!cameFromCash && (
+        <ModalNumberInput
+          label="¿Cuánto recibió en efectivo?"
+          value={splitCashStr}
+          onChange={setSplitCashStr}
+          disabled={disabled}
+          hint="El resto se cobra por el método digital."
+        />
+      )}
+
+      <div style={{
+        padding: '10px 12px', borderRadius: 10, background: '#fff',
+        border: `1px solid ${T.copper[100]}`,
+      }}>
+        <SplitRow icon="💵" label="Efectivo" amount={split.efectivo} />
+        <SplitRow icon={digitalIcon} label={digitalLabel} amount={split.digitalAmount} />
+        <div style={{
+          marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${T.copper[200]}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+        }}>
+          <span style={{ fontSize: 12, color: T.neutral[600], fontWeight: 600 }}>Total</span>
+          <span style={{ fontSize: 16, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(split.efectivo + split.digitalAmount)}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SplitRow({ icon, label, amount }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+      padding: '3px 0',
+    }}>
+      <span style={{ fontSize: 13, color: T.neutral[700], fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 15 }}>{icon}</span>
+        {label}
+      </span>
+      <span style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+        {fmtCOP(amount)}
+      </span>
+    </div>
   )
 }
 

@@ -153,13 +153,23 @@ async function buildSessionSnapshot(sessionId) {
   const expensesQ = query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', sessionId))
   const [salesSnap, expensesSnap] = await Promise.all([getDocs(salesQ), getDocs(expensesQ)])
 
+  // Para ventas con paymentSplit (pago dividido efectivo + digital), cada
+  // porción se suma a su categoría para que el cuadre sea exacto. Las ventas
+  // 'mixto' sin paymentSplit (no debería pasar) caen al else por seguridad.
   const salesBreakdown = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
   salesSnap.docs.forEach(d => {
     const s = d.data()
     if ((s.status || 'active') === 'deleted') return
-    const m = s.paymentMethod || 'efectivo'
     const t = Number(s.total) || 0
-    salesBreakdown[m] = (salesBreakdown[m] || 0) + t
+    if (s.paymentSplit) {
+      for (const [m, amt] of Object.entries(s.paymentSplit)) {
+        const a = Number(amt) || 0
+        if (a > 0) salesBreakdown[m] = (salesBreakdown[m] || 0) + a
+      }
+    } else {
+      const m = s.paymentMethod || 'efectivo'
+      salesBreakdown[m] = (salesBreakdown[m] || 0) + t
+    }
     salesBreakdown.total += t
     salesBreakdown.count += 1
   })

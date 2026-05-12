@@ -806,7 +806,7 @@ function timeOf(sale) {
 }
 
 function methodIcon(m) {
-  return { efectivo: '💵', nequi: '📱', daviplata: '📱', deuda: '🤝' }[m] || '?'
+  return { efectivo: '💵', nequi: '📱', daviplata: '📱', deuda: '🤝', mixto: '🔀' }[m] || '?'
 }
 
 function StatusBadge({ status, small }) {

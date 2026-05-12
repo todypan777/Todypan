@@ -58,17 +58,13 @@ export default function OpenTabsBubbles({ sessionId, onSelect }) {
 
   if (mesaTabs.length === 0 && llevarTabs.length === 0) return null
 
+  // Sin sombras en el pulse — la escala sola transmite el "listo" sin
+  // ensuciar visualmente con drop-shadows.
   const animations = (
     <style>{`
       @keyframes bubblePulseGreen {
-        0%, 100% {
-          transform: scale(1);
-          box-shadow: 0 4px 14px rgba(91,138,90,0.55);
-        }
-        50% {
-          transform: scale(1.06);
-          box-shadow: 0 6px 22px rgba(91,138,90,0.85);
-        }
+        0%, 100% { transform: scale(1); }
+        50%      { transform: scale(1.06); }
       }
     `}</style>
   )
@@ -133,28 +129,21 @@ function Bubble({ tab, kitchenState, onClick }) {
   const hasItems = (tab.items?.length || 0) > 0
   const total = Number(tab.total) || 0
 
-  // Color de fondo según estado de cocina, fallback a estética por kind
-  let bg, shadow, animation
+  // Color de fondo según estado de cocina, fallback a estética por kind.
+  // Sin sombras: el color sólido + borde blanco son suficientes para
+  // que la burbuja se lea sobre cualquier fondo, y queda más limpio.
+  let bg, animation
   if (kitchenState === 'cooking') {
     bg = T.bad
-    shadow = '0 4px 14px rgba(176,78,60,0.55)'
     animation = 'none'
   } else if (kitchenState === 'ready') {
     bg = T.ok
-    shadow = '0 4px 14px rgba(91,138,90,0.55)'
     animation = 'bubblePulseGreen 1.2s ease-in-out infinite'
   } else if (isLlevar) {
-    // Llevar idle: tono ámbar/dorado para diferenciar visualmente.
     bg = hasItems ? T.warn : T.neutral[300]
-    shadow = hasItems
-      ? '0 4px 14px rgba(214,155,33,0.45)'
-      : '0 2px 8px rgba(0,0,0,0.15)'
     animation = 'none'
   } else {
     bg = hasItems ? T.copper[500] : T.neutral[300]
-    shadow = hasItems
-      ? '0 4px 14px rgba(184,122,86,0.45)'
-      : '0 2px 8px rgba(0,0,0,0.15)'
     animation = 'none'
   }
 
@@ -180,7 +169,6 @@ function Bubble({ tab, kitchenState, onClick }) {
         cursor: 'pointer', fontFamily: 'inherit',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
-        boxShadow: shadow,
         transition: 'background 0.25s',
         flexShrink: 0,
         padding: 0,

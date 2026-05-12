@@ -33,6 +33,7 @@ import {
 } from './screens/AccountStates'
 import CashierApp from './screens/CashierApp'
 import CookApp from './screens/CookApp'
+import PublicMenu from './screens/PublicMenu'
 
 const SIDEBAR_W = 230
 
@@ -48,7 +49,25 @@ function LoadingScreen({ label = 'Cargando TodyPan...' }) {
   )
 }
 
+// Rutas públicas (sin login, sin AuthProvider). Se interceptan ANTES del
+// AuthGate para que el cliente NO vea Login ni quede mezclado con la app
+// admin. Cualquier path que comience con uno de estos se considera público.
+const PUBLIC_PATHS = ['/menu']
+
+function isPublicRoute() {
+  if (typeof window === 'undefined') return false
+  const p = window.location.pathname || '/'
+  return PUBLIC_PATHS.some(base => p === base || p.startsWith(base + '/'))
+}
+
 export default function App() {
+  if (isPublicRoute()) {
+    return (
+      <ErrorBoundary label="la página pública">
+        <PublicMenu />
+      </ErrorBoundary>
+    )
+  }
   return (
     <ErrorBoundary label="la app">
       <AuthProvider>

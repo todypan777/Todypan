@@ -643,8 +643,17 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 
   return (
     <div style={{
-      minHeight: '100dvh', background: T.neutral[50],
+      // height (no minHeight) + overflowY: auto convierten a NewSale en su
+      // propio contenedor scrollable. Necesario porque NewSale siempre se
+      // monta dentro de un wrapper `position: fixed; inset: 0` (CashierApp,
+      // ActiveTurnsCard modo asistir): ese wrapper fija el tamaño al
+      // viewport y bloquea el scroll del documento. Sin esto, los últimos
+      // items del carrito quedan tapados por el footer sticky con muchos
+      // almuerzos y no hay manera de hacer scroll.
+      height: '100dvh', background: T.neutral[50],
       display: 'flex', flexDirection: 'column',
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
     }}>
       {/* Header (fondo full-width, contenido en maxWidth) */}
       <div style={{
@@ -937,7 +946,11 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       </div>
 
       {/* Carrito */}
-      <div style={{ flex: 1, padding: '8px 18px 24px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+      {/* paddingBottom generoso: el footer es sticky y, con muchos almuerzos,
+          el carrito crece más que el viewport. Sin esta reserva, el botón
+          Cobrar tapa los últimos items al hacer scroll. 220px cubre el peor
+          caso (Total + Cobrar + botón secundario + safe-area iOS). */}
+      <div style={{ flex: 1, padding: '8px 18px 220px', maxWidth: 640, margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
         {cart.length === 0 ? (
           <div style={{
             marginTop: 20, padding: '32px 20px', textAlign: 'center',

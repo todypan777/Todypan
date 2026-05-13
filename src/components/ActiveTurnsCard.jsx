@@ -502,9 +502,10 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
   const baseLowered = declared < cashFloor
   const baseShortfall = baseLowered ? cashFloor - declared : 0
   const overBase = declared - cashFloor
-
-  // Decisión admin sobre la base reducida (si bajó)
-  const [floorAction, setFloorAction] = useState(null) // 'replenish' | 'reduce'
+  // La base es FIJA — siempre $200.000 (CASH_FLOOR_DEFAULT). Si la caja
+  // quedó por debajo, el admin SIEMPRE repone físicamente: no hay opción
+  // de "bajar la base". Esto evita que la base se anclara en valores bajos
+  // por decisiones de un día específico.
 
   const cashiers = useMemo(
     () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
@@ -521,7 +522,6 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
     declaredStr.trim() !== '' &&
     pendingExpensesCount === 0 &&
     (!hasShortage || !!resolution) &&
-    (!baseLowered || !!floorAction) &&
     (handoverChoice !== 'cashier' || !!nextCashierUid)
 
   async function handleConfirm() {
@@ -597,9 +597,9 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
         deductionId,
         handover,
         session,
-        nextCashFloor: baseLowered
-          ? (floorAction === 'reduce' ? declared : CASH_FLOOR_DEFAULT)
-          : null,
+        // La base SIEMPRE se restaura al default si quedó por debajo.
+        // No hay opción de bajar la base — el admin repone físicamente.
+        nextCashFloor: baseLowered ? CASH_FLOOR_DEFAULT : null,
       })
 
       // 5. Si admin marcó "abrir nuevo turno ya", devolver el branch al padre
@@ -755,33 +755,9 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
           {/* Acción física para el admin */}
           <AdminActionCard declared={declared} cashFloor={cashFloor} handoverChoice={handoverChoice} />
 
-          {/* Si la base bajó, decisión sobre próximo turno */}
-          {baseLowered && (
-            <div style={{
-              padding: '12px 14px', borderRadius: 12,
-              background: '#FBE9E5', border: `1px solid #F0C8BE`,
-              marginBottom: 14,
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: T.bad, marginBottom: 4 }}>
-                ¿Qué hacer con la base?
-              </div>
-              <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5, marginBottom: 10 }}>
-                La caja quedó por debajo de los {fmtCOP(cashFloor)}. Decide cómo arranca el próximo turno:
-              </div>
-              <RadioOption
-                selected={floorAction === 'replenish'}
-                onClick={() => setFloorAction('replenish')}
-                title={`Repongo ${fmtCOP(baseShortfall)} ahora`}
-                subtitle="El siguiente turno arranca con la base completa."
-              />
-              <RadioOption
-                selected={floorAction === 'reduce'}
-                onClick={() => setFloorAction('reduce')}
-                title={`Iniciar con base reducida (${fmtCOP(declared)})`}
-                subtitle="El siguiente turno arrancará con menos base."
-              />
-            </div>
-          )}
+          {/* Cuando baseLowered, el AdminActionCard de arriba ya muestra
+              "Repón $X.XXX para devolver la caja a $200.000". No hay
+              decisión adicional: la base es fija. */}
 
           {/* Si hay FALTA: pide resolución */}
           {hasShortage && (

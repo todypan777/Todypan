@@ -15,6 +15,9 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
   const today = useBogotaDate()
   const [dailyMenu, setDailyMenu] = useState(null)
   const [description, setDescription] = useState('')
+  // Comentario PER-ALMUERZO (igual que en el corriente). Se resetea al
+  // "+ Otro almuerzo" para que cada especial tenga su propio contexto.
+  const [note, setNote] = useState('')
   // Step: 'compose' (descripción) → 'destination' (mesa/llevar).
   const [step, setStep] = useState('compose')
   const [pendingAnother, setPendingAnother] = useState(false)
@@ -46,6 +49,7 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
       destination,
       description: description.trim() || null,
       price,
+      note: note.trim() || null,
     }
   }
 
@@ -59,6 +63,7 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
     onAdd(buildPayload(destination), { another: pendingAnother })
     if (pendingAnother) {
       setDescription(special?.description || '')
+      setNote('')
       setStep('compose')
     }
     setPendingAnother(false)
@@ -201,6 +206,49 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
                   boxSizing: 'border-box',
                 }}
               />
+
+              {/* Comentario per-almuerzo */}
+              <div style={{
+                marginTop: 18,
+                padding: '14px 14px 12px',
+                borderRadius: 14,
+                background: '#FFF7E6',
+                border: `1.5px solid #F4E0BC`,
+              }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+                }}>
+                  <span style={{ fontSize: 16 }}>📝</span>
+                  <div style={{
+                    fontSize: 13, fontWeight: 800, color: '#7A5C00',
+                    letterSpacing: -0.2,
+                  }}>
+                    Comentario para este almuerzo
+                  </div>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, color: '#9A7200',
+                    background: '#FFE9C2', padding: '2px 7px', borderRadius: 999,
+                    letterSpacing: 0.3, textTransform: 'uppercase', marginLeft: 'auto',
+                  }}>
+                    Opcional
+                  </span>
+                </div>
+                <textarea
+                  value={note}
+                  onChange={e => setNote(e.target.value)}
+                  placeholder='Ej: "Sin aguacate", "Bien caliente"'
+                  rows={2}
+                  maxLength={200}
+                  style={{
+                    width: '100%', padding: '11px 12px', borderRadius: 12,
+                    border: `1.5px solid #F4E0BC`,
+                    fontSize: 14, fontFamily: 'inherit',
+                    background: '#fff', color: T.neutral[900],
+                    outline: 'none', resize: 'vertical', minHeight: 50,
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
             </div>
 
             {/* Footer */}

@@ -25,12 +25,16 @@ import { useBogotaDate } from '../utils/useBogotaDate'
 // ──────────────────────────────────────────────────────────────────
 export default function LunchPickerModal({
   product, onCancel, onAdd, currentCount = 0,
-  commandaNote = '', setCommandaNote = () => {},
 }) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
   const [selections, setSelections] = useState({})       // { soup: {id,name}, ... }
+  // Nota PER-ALMUERZO. Antes era state compartido del padre (una sola nota
+  // para toda la comanda) y se copiaba idéntica a cada kitchenOrder. Ahora
+  // vive aquí, se incluye en el payload del almuerzo, y se resetea cuando
+  // la cajera tap "+ Otro almuerzo".
+  const [note, setNote] = useState('')
   // Step:
   //   'compose'     → escoger sopa/proteína/jugo, escribir comentario.
   //   'destination' → elegir mesa/llevar (paso explícito para no olvidar).
@@ -130,6 +134,7 @@ export default function LunchPickerModal({
       destination,
       selections: sel,
       price,
+      note: note.trim() || null,
     }
   }
 
@@ -146,7 +151,9 @@ export default function LunchPickerModal({
     onAdd(buildPayload(destination), { another: pendingAnother })
     if (pendingAnother) {
       // Reset para el siguiente almuerzo y volver al compose.
+      // Incluye la nota — cada almuerzo arranca limpio.
       setSelections({})
+      setNote('')
       setStep('compose')
     }
     setPendingAnother(false)
@@ -275,10 +282,9 @@ export default function LunchPickerModal({
             </div>
           )}
 
-          {/* Comentario de la comanda — destacado debajo de Jugo (última
-              categoría) para que la cajera lo vea sin perderlo. La nota es
-              UNA por comanda, no por almuerzo: si la cajera agrega varios
-              almuerzos a la misma comanda el comentario se mantiene. */}
+          {/* Comentario PARA ESTE ALMUERZO específico. Si la cajera agrega
+              otro almuerzo a la misma comanda, la nota se reinicia — cada
+              uno tiene su contexto propio que llega aislado a la cocinera. */}
           <div style={{
             marginTop: 18,
             padding: '14px 14px 12px',
@@ -294,7 +300,7 @@ export default function LunchPickerModal({
                 fontSize: 13, fontWeight: 800, color: '#7A5C00',
                 letterSpacing: -0.2,
               }}>
-                Comentario para cocina
+                Comentario para este almuerzo
               </div>
               <span style={{
                 fontSize: 10, fontWeight: 700, color: '#9A7200',
@@ -317,7 +323,7 @@ export default function LunchPickerModal({
                   key={chip}
                   type="button"
                   onClick={() => {
-                    setCommandaNote(prev => {
+                    setNote(prev => {
                       const t = (prev || '').trim()
                       if (!t) return chip
                       // Evitar duplicados exactos
@@ -339,9 +345,9 @@ export default function LunchPickerModal({
             </div>
 
             <textarea
-              value={commandaNote}
-              onChange={e => setCommandaNote(e.target.value)}
-              placeholder='O escribe libremente: "Para el chico de la peluquería"'
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder='O escribe libremente: "Sin cilantro"'
               rows={2}
               maxLength={200}
               style={{
@@ -353,10 +359,10 @@ export default function LunchPickerModal({
                 boxSizing: 'border-box',
               }}
             />
-            {commandaNote && (
+            {note && (
               <button
                 type="button"
-                onClick={() => setCommandaNote('')}
+                onClick={() => setNote('')}
                 style={{
                   marginTop: 8, padding: '4px 10px', borderRadius: 8,
                   background: 'transparent', color: T.bad,

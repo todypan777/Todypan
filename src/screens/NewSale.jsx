@@ -68,11 +68,11 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   // Modal de almuerzo abierto (cuando la cajera escoge un producto isLunch)
   // shape: { product, kind: 'menu' | 'special' }
   const [lunchModal, setLunchModal] = useState(null)
-  // Comanda en construcción: lista de almuerzos seleccionados antes de enviar
-  // shape: [{ kind, productId, productName, destination, selections|description, price }]
+  // Comanda en construcción: lista de almuerzos seleccionados antes de enviar.
+  // Cada item lleva SU PROPIA `note` — ya no hay nota global. Si la cajera
+  // agrega varios almuerzos, cada uno carga su comentario independiente.
+  // shape: [{ kind, productId, productName, destination, selections|description, price, note }]
   const [lunchCommanda, setLunchCommanda] = useState([])
-  // Nota a nivel de toda la comanda (opcional). Editable desde el modal "enviar".
-  const [commandaNote, setCommandaNote] = useState('')
   // Modal de envío de la comanda (pide # de mesa si no estamos en isTabMode)
   // shape: { number, error, busy }
   const [sendCommandaModal, setSendCommandaModal] = useState(null)
@@ -307,7 +307,6 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       )
       if (!ok) return
       setLunchCommanda([])
-      setCommandaNote('')
     }
     if (isTabMode) {
       // Si la cajera vacio el carrito, eliminar la mesa (no dejar burbujas vacias)
@@ -395,11 +394,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   function handleRemoveLunchFromCommanda(index) {
     setLunchCommanda(prev => {
       const next = prev.filter((_, i) => i !== index)
-      // Si se queda sin almuerzos, también cerramos el modal de envío y
-      // limpiamos la nota — no tiene sentido seguir en ese flujo.
+      // Si se queda sin almuerzos, también cerramos el modal de envío.
       if (next.length === 0) {
         setSendCommandaModal(null)
-        setCommandaNote('')
       }
       return next
     })
@@ -452,7 +449,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       lunchProductName: lunch.productName,    // sin el sufijo del destino
       lunchSelections: lunch.selections || null,    // {soup,principio,...}
       lunchDescription: lunch.description || null,  // para 'special'
-      commandaNote: commandaNote || null,
+      // Nota PER-ALMUERZO. El campo Firestore se mantiene como `commandaNote`
+      // para no romper datos viejos, pero semánticamente ahora es per-lunch.
+      commandaNote: lunch.note || null,
     }
   }
 
@@ -559,7 +558,9 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           productId: lunch.productId,
           productName: lunch.productName,
           commandaId,
-          commandaNote,
+          // commandaNote es per-almuerzo. Mantenemos el nombre del campo
+          // por backward compat con la cocina que ya lo lee.
+          commandaNote: lunch.note || null,
         })
         orderIds.push(orderId)
       }
@@ -572,7 +573,6 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 
       // Reset y cerrar
       setLunchCommanda([])
-      setCommandaNote('')
       setSendCommandaModal(null)
       setLunchModal(null)
       onCancel() // vuelve al home — la burbuja roja aparece sola
@@ -770,7 +770,6 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
                 if (lunchCommanda.length === 0) return
                 if (!confirm('¿Descartar los almuerzos en construcción? No se han enviado a cocina.')) return
                 setLunchCommanda([])
-                setCommandaNote('')
               }}
               style={{
                 padding: '6px 10px', borderRadius: 8,
@@ -1119,8 +1118,6 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
         <LunchPickerModal
           product={lunchModal.product}
           currentCount={lunchCommanda.length}
-          commandaNote={commandaNote}
-          setCommandaNote={setCommandaNote}
           onCancel={() => {
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
@@ -1166,8 +1163,6 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           isTabMode={isTabMode}
           tab={tab}
           openTabs={openTabs}
-          commandaNote={commandaNote}
-          setCommandaNote={setCommandaNote}
           lunchCommanda={lunchCommanda}
           onRemoveLunch={handleRemoveLunchFromCommanda}
           onAddAnother={handleAddAnotherLunch}
@@ -1204,7 +1199,7 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
 // Ojo: el destino es POR ALMUERZO. Una mesa numerada PUEDE contener almuerzos
 // con destination='llevar' (cliente sentado pero pide algo para llevar).
 // ──────────────────────────────────────────────────────────────
-function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commandaNote, setCommandaNote, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
+function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
   // Determinar kind de la tab destino.
   const tabKind = isTabMode
     ? (tab?.kind || 'mesa')
@@ -1456,35 +1451,9 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, commanda
           </>
         )}
 
-        {/* Comentario editable — la cajera puede ajustarlo antes de enviar
-            sin tener que volver al modal del almuerzo. */}
-        <div style={{
-          marginBottom: 14, padding: '10px 12px', borderRadius: 10,
-          background: '#FFF7E6', border: `1px solid #F4E0BC`,
-        }}>
-          <div style={{
-            fontSize: 11, fontWeight: 700, color: '#7A5C00',
-            letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
-          }}>
-            📝 Comentario para cocina <span style={{ color: '#9A7200', fontWeight: 500 }}>· opcional</span>
-          </div>
-          <textarea
-            value={commandaNote}
-            onChange={e => setCommandaNote(e.target.value)}
-            placeholder='Ej: "Sin sal" · "Huevo bien cocido"'
-            rows={2}
-            maxLength={200}
-            disabled={state.busy}
-            style={{
-              width: '100%', padding: '9px 11px', borderRadius: 10,
-              border: `1px solid #F4E0BC`,
-              fontSize: 13.5, fontFamily: 'inherit',
-              background: '#fff', color: T.neutral[900],
-              outline: 'none', resize: 'vertical', minHeight: 50,
-              boxSizing: 'border-box',
-            }}
-          />
-        </div>
+        {/* Nota: el comentario va PER-ALMUERZO desde el modal de armar
+            el almuerzo. No hay nota global para toda la comanda — cada
+            almuerzo lleva su propio contexto a la cocina. */}
 
         {state.error && (
           <div style={{

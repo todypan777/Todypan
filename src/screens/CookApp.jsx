@@ -682,16 +682,9 @@ function CommandaCard({ group }) {
         </div>
       </div>
 
-      {group.commandaNote && (
-        <div style={{
-          padding: '14px 18px',
-          background: '#FFF7E6', borderBottom: `1.5px solid #F4E0BC`,
-          fontSize: 17, color: '#7A5C00',
-          fontWeight: 600, fontStyle: 'italic', lineHeight: 1.4,
-        }}>
-          📝 {group.commandaNote}
-        </div>
-      )}
+      {/* Las notas ahora son PER-ALMUERZO y se muestran dentro de cada
+          KitchenOrderRow. No hay banner global de comanda — eso evita la
+          confusión de "¿esta nota aplica a cuál?". */}
 
       <div>
         {group.orders.map((order, i) => (
@@ -845,6 +838,20 @@ function KitchenOrderRow({ order, isLast }) {
                 whiteSpace: 'pre-wrap', fontWeight: 600,
               }}>
                 {description}
+              </div>
+            )}
+
+            {/* Comentario PER-ALMUERZO. Destacado amarillo grande para que
+                la cocinera no se lo pierda — va asociado A ESTE almuerzo,
+                no al grupo. */}
+            {order.commandaNote && (
+              <div style={{
+                marginTop: 12, padding: '12px 14px', borderRadius: 12,
+                background: '#FFF7E6', border: `1.5px solid #F4E0BC`,
+                fontSize: 16, color: '#7A5C00',
+                fontWeight: 700, fontStyle: 'italic', lineHeight: 1.4,
+              }}>
+                📝 {order.commandaNote}
               </div>
             )}
 

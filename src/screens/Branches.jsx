@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { T, BRANCH_PALETTE } from '../tokens'
 import { Card, BackButton, Modal, InputField, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { fmtCOP } from '../utils/format'
-import { updateBranch, getCashFloor, setCashFloor, CASH_FLOOR_DEFAULT } from '../db'
+import { updateBranch } from '../db'
 
 export default function Branches({ branches, onBack, onRefresh }) {
   const [editId, setEditId] = useState(null)
@@ -35,7 +34,7 @@ export default function Branches({ branches, onBack, onRefresh }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 16, fontWeight: 700, color: T.neutral[900] }}>{b.name}</div>
                   <div style={{ fontSize: 12, color: pal.main, fontWeight: 600, marginTop: 2 }}>
-                    {pal.label} · Base {fmtCOP(getCashFloor(b.id))}
+                    {pal.label}
                   </div>
                 </div>
                 <button onClick={() => setEditId(b.id)} style={{
@@ -56,15 +55,9 @@ export default function Branches({ branches, onBack, onRefresh }) {
       {editId && (
         <EditBranchModal
           branch={branches.find(b => b.id === editId)}
-          currentCashFloor={getCashFloor(editId)}
           onClose={() => setEditId(null)}
-          onSave={({ name, colorKey, cashFloor }) => {
-            updateBranch(editId, { name, colorKey })
-            // Si el admin cambió la base manualmente, persiste el override.
-            // Si la dejó igual al default (CASH_FLOOR_DEFAULT), el setter
-            // limpia el override automáticamente y la panadería vuelve al
-            // comportamiento por defecto.
-            setCashFloor(editId, cashFloor)
+          onSave={updates => {
+            updateBranch(editId, updates)
             setEditId(null)
             onRefresh()
           }}
@@ -74,53 +67,13 @@ export default function Branches({ branches, onBack, onRefresh }) {
   )
 }
 
-function EditBranchModal({ branch, currentCashFloor, onClose, onSave }) {
+function EditBranchModal({ branch, onClose, onSave }) {
   const [name, setName] = useState(branch?.name || '')
   const [colorKey, setColorKey] = useState(branch?.colorKey || 'copper')
-  // Base de caja para esta panadería. La cajera al abrir verá este valor
-  // como referencia y el cierre lo usa como "lo que debe quedar en caja".
-  const [cashFloorStr, setCashFloorStr] = useState(String(currentCashFloor || CASH_FLOOR_DEFAULT))
-  const cashFloorNum = Number(cashFloorStr) || 0
-  const cashFloorValid = cashFloorNum >= 0
 
   return (
     <Modal onClose={onClose} title="Editar panadería">
       <InputField label="Nombre" value={name} onChange={setName} placeholder="Ej: Panadería Centro"/>
-
-      {/* Base de caja — la cantidad que debe quedar siempre en la registradora
-          entre turnos. Se usa en el cierre para calcular cuánto "sobra" o
-          cuánto falta reponer. Si en algún cierre el admin bajó la base, este
-          campo lo deja volver al valor que quiera. */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{
-          fontSize: 11, fontWeight: 600, color: T.neutral[500],
-          textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
-        }}>
-          Base de caja
-        </div>
-        <input
-          type="number"
-          min="0"
-          value={cashFloorStr}
-          onChange={e => setCashFloorStr(e.target.value)}
-          placeholder={String(CASH_FLOOR_DEFAULT)}
-          style={{
-            width: '100%', padding: '12px 14px', borderRadius: 12,
-            border: `1.5px solid ${T.neutral[200]}`,
-            fontSize: 16, fontFamily: 'inherit', fontWeight: 700,
-            background: '#fff', color: T.neutral[900],
-            outline: 'none', boxSizing: 'border-box',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        />
-        <div style={{
-          fontSize: 11.5, color: T.neutral[500], marginTop: 6, lineHeight: 1.45,
-        }}>
-          Plata que se mantiene fija en la caja para devolver vueltos.
-          Default: {fmtCOP(CASH_FLOOR_DEFAULT)}. El cierre de turno usa este valor
-          para calcular sobras y faltantes.
-        </div>
-      </div>
 
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>
@@ -176,12 +129,8 @@ function EditBranchModal({ branch, currentCashFloor, onClose, onSave }) {
 
       <PrimaryButton
         label="Guardar"
-        onClick={() => name && cashFloorValid && onSave({
-          name: name.trim(),
-          colorKey,
-          cashFloor: cashFloorNum,
-        })}
-        disabled={!name || !cashFloorValid}
+        onClick={() => name && onSave({ name: name.trim(), colorKey })}
+        disabled={!name}
       />
     </Modal>
   )

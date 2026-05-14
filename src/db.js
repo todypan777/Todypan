@@ -494,27 +494,31 @@ export function updateBranch(id, updates) {
   persist()
 }
 
-// ─── CashFloor por panaderia ─────────────────────────────────
-/** Devuelve la base actual de una panaderia (default si no hay override) */
-export function getCashFloor(branchId) {
-  if (branchId == null) return CASH_FLOOR_DEFAULT
-  const key = String(branchId)
-  const override = _data?.branchCashFloors?.[key]
-  if (typeof override === 'number' && override >= 0) return override
+// ─── CashFloor (base de caja) ────────────────────────────────
+// REGLA DE NEGOCIO: la base es FIJA en CASH_FLOOR_DEFAULT ($200.000)
+// para TODAS las panaderías, siempre. No hay overrides por sucursal.
+//
+// Antes existía `branchCashFloors` (override por panadería) que se podía
+// bajar en un cierre. Eso anclaba la base en valores erróneos (ej. $115k)
+// y rompía la lógica de "sobra/falta". Ahora getCashFloor IGNORA por
+// completo cualquier override viejo que haya quedado en la data — se
+// vuelve data muerta inofensiva.
+
+/** Devuelve la base de caja. SIEMPRE el default — sin overrides. */
+export function getCashFloor(_branchId) {
   return CASH_FLOOR_DEFAULT
 }
 
-/** Setea la base actual de una panaderia. Si value === CASH_FLOOR_DEFAULT, limpia el override. */
-export function setCashFloor(branchId, value) {
-  if (branchId == null) return
-  if (!_data.branchCashFloors) _data.branchCashFloors = {}
+/**
+ * No-op conservado por compatibilidad: cashSessions.js aún lo llama al
+ * cerrar un turno. Como la base es fija, limpiar el override viejo (si
+ * lo hay) es lo único útil — así la data se va auto-limpiando sola.
+ */
+export function setCashFloor(branchId, _value) {
+  if (branchId == null || !_data?.branchCashFloors) return
   const key = String(branchId)
-  const num = Number(value)
-  if (!isFinite(num) || num < 0) return
-  if (num === CASH_FLOOR_DEFAULT) {
+  if (_data.branchCashFloors[key] !== undefined) {
     delete _data.branchCashFloors[key]
-  } else {
-    _data.branchCashFloors[key] = num
+    persist()
   }
-  persist()
 }

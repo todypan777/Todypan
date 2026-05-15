@@ -160,6 +160,80 @@ export async function markCommandaPaid(commandaId, _ids) {
   await Promise.all(_ids.map(id => updateDoc(orderRef(id), { paid: true })))
 }
 
+/**
+ * Libera todos los kitchenOrders activos de una openTab — limpia sessionId
+ * y cashierUid para que queden "huérfanos" junto con la tab. La cocinera
+ * sigue viéndolos en su cola (esa query no filtra por sessionId), pero
+ * las burbujas de la nueva cajera no los muestran hasta que se reclamen.
+ */
+export async function releaseOrdersForTab(tabId) {
+  if (!tabId) return
+  try {
+    const { getDocs } = await import('firebase/firestore')
+    const q = query(
+      ordersCol(),
+      where('tabId', '==', tabId),
+      where('status', 'in', ['pending', 'ready']),
+    )
+    const snap = await getDocs(q)
+    await Promise.all(snap.docs.map(d => updateDoc(orderRef(d.id), {
+      sessionId: null,
+      cashierUid: null,
+    })))
+  } catch (err) {
+    console.warn('[kitchen] releaseOrdersForTab falló:', err?.message || err)
+  }
+}
+
+/**
+ * Reclama todos los kitchenOrders huérfanos de una openTab — asigna sessionId
+ * y cashierUid al turno de la nueva cajera. Llamado al heredar tabs del
+ * turno anterior.
+ */
+export async function claimOrdersForTab(tabId, { sessionId, cashierUid }) {
+  if (!tabId) return
+  try {
+    const { getDocs } = await import('firebase/firestore')
+    const q = query(
+      ordersCol(),
+      where('tabId', '==', tabId),
+      where('status', 'in', ['pending', 'ready']),
+    )
+    const snap = await getDocs(q)
+    await Promise.all(snap.docs.map(d => updateDoc(orderRef(d.id), {
+      sessionId: sessionId || null,
+      cashierUid: cashierUid || null,
+    })))
+  } catch (err) {
+    console.warn('[kitchen] claimOrdersForTab falló:', err?.message || err)
+  }
+}
+
+/**
+ * Cancela todos los kitchenOrders activos de una openTab. Llamado cuando
+ * el admin decide eliminar mesas pendientes al cerrar un turno (en lugar
+ * de pasarlas a la próxima cajera).
+ */
+export async function cancelOrdersForTab(tabId, { reason } = {}) {
+  if (!tabId) return
+  try {
+    const { getDocs } = await import('firebase/firestore')
+    const q = query(
+      ordersCol(),
+      where('tabId', '==', tabId),
+      where('status', 'in', ['pending', 'ready']),
+    )
+    const snap = await getDocs(q)
+    await Promise.all(snap.docs.map(d => updateDoc(orderRef(d.id), {
+      status: 'cancelled',
+      cancelledAt: serverTimestamp(),
+      cancelReason: reason?.trim() || 'Mesa eliminada al cerrar turno',
+    })))
+  } catch (err) {
+    console.warn('[kitchen] cancelOrdersForTab falló:', err?.message || err)
+  }
+}
+
 // ─── Watchers ──────────────────────────────────────────────────────
 
 /**

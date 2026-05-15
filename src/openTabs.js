@@ -245,3 +245,57 @@ export async function updateOpenTab(id, { items, tableNumber, customerName }) {
 export async function deleteOpenTab(id) {
   await deleteDoc(tabRef(id))
 }
+
+/**
+ * Marca una openTab como "huérfana" — sin sesión ni cajera asignada — para
+ * que la siguiente cajera que abra turno en la misma panadería la herede
+ * automáticamente. Se conserva `branchId` para que la herencia respete la
+ * sucursal correcta.
+ *
+ * Solo el admin debe llamar esto (al cerrar un turno con mesas pendientes).
+ */
+export async function releaseTabForNextCashier(id, fromSessionId) {
+  await updateDoc(tabRef(id), {
+    sessionId: null,
+    cashierUid: null,
+    transferredFromSessionId: fromSessionId || null,
+    transferredAt: serverTimestamp(),
+  })
+}
+
+/**
+ * Asigna una openTab huérfana al turno activo de una cajera. Llamado por
+ * el admin al abrir un nuevo turno cuando detecta tabs sin dueño en esa
+ * panadería.
+ */
+export async function claimOrphanTab(id, { sessionId, cashierUid }) {
+  await updateDoc(tabRef(id), {
+    sessionId: sessionId || null,
+    cashierUid: cashierUid || null,
+    claimedAt: serverTimestamp(),
+  })
+}
+
+/**
+ * Lectura puntual: devuelve las openTabs huérfanas (sin sesión) de una
+ * panadería. Usado al abrir un turno para detectar mesas pendientes del
+ * turno anterior y heredarlas.
+ *
+ * Devuelve [] si Firestore no responde — no bloquea el flujo de abrir.
+ */
+export async function listOrphanTabsForBranch(branchId) {
+  if (branchId == null) return []
+  try {
+    const { getDocs } = await import('firebase/firestore')
+    const q = query(
+      collection(firestoreDb, 'openTabs'),
+      where('branchId', '==', branchId),
+      where('sessionId', '==', null),
+    )
+    const snap = await getDocs(q)
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  } catch (err) {
+    console.warn('[openTabs] listOrphanTabsForBranch falló:', err?.message || err)
+    return []
+  }
+}

@@ -20,6 +20,19 @@ import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import { getCustomerOrder } from '../customerOrders'
+import {
+  watchOpenTabsForSession,
+  deleteOpenTab,
+  releaseTabForNextCashier,
+  claimOrphanTab,
+  listOrphanTabsForBranch,
+  formatTableLabel,
+} from '../openTabs'
+import {
+  releaseOrdersForTab,
+  claimOrdersForTab,
+  cancelOrdersForTab,
+} from '../kitchenOrders'
 import NewSale from '../screens/NewSale'
 import OpenTabsBubbles from './OpenTabsBubbles'
 
@@ -439,7 +452,7 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
       // - Si admin abre con MÁS que la base (ej. cadena de turno con extras heredados) →
       //   openingFloat = monto total ingresado, type='handover' (la base ya está incluida).
       const isJustBase = amount === cashFloor
-      await openSession({
+      const newSessionId = await openSession({
         branchId: branch.id,
         branchName: branch.name,
         cashierUid: selectedCashier.uid,
@@ -447,6 +460,29 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
         openingFloat: isJustBase ? 0 : amount,
         openingSource: isJustBase ? { type: 'empty' } : { type: 'handover' },
       })
+
+      // Heredar tabs huérfanas: si el cierre anterior dejó mesas pendientes
+      // (admin eligió "pasar a la próxima cajera"), las re-atamos a la nueva
+      // sesión + cajera. Sus kitchenOrders activos también se reatan.
+      try {
+        const orphans = await listOrphanTabsForBranch(branch.id)
+        if (orphans.length > 0) {
+          for (const tab of orphans) {
+            await claimOrdersForTab(tab.id, {
+              sessionId: newSessionId,
+              cashierUid: selectedCashier.uid,
+            })
+            await claimOrphanTab(tab.id, {
+              sessionId: newSessionId,
+              cashierUid: selectedCashier.uid,
+            })
+          }
+        }
+      } catch (e) {
+        // No bloqueamos la apertura por esto — el admin puede resolver luego.
+        console.warn('[OpenShiftModal] no se pudieron heredar tabs huérfanas:', e?.message || e)
+      }
+
       onOpened()
     } catch (err) {
       console.error(err)
@@ -537,8 +573,16 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
   // Datos en vivo del turno
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
+  // openTabs activas de la cajera — si quedan pendientes al cerrar, el admin
+  // debe decidir qué hacer con ellas (transferir a próxima cajera o eliminar).
+  const [pendingTabs, setPendingTabs] = useState([])
+  // Decisión del admin sobre las tabs pendientes: 'transfer' | 'delete' | null.
+  // Solo es requerida si pendingTabs.length > 0.
+  const [tabsDecision, setTabsDecision] = useState(null)
+
   useEffect(() => watchSessionSales(session.id, setSales), [session.id])
   useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
+  useEffect(() => watchOpenTabsForSession(session.id, setPendingTabs), [session.id])
 
   // Decisiones tentativas del admin sobre gastos pendientes
   const [expenseDecisions, setExpenseDecisions] = useState({})
@@ -629,6 +673,7 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
     declaredStr.trim() !== '' &&
     pendingExpensesCount === 0 &&
     (!hasShortage || !!resolution) &&
+    (pendingTabs.length === 0 || !!tabsDecision) &&
     (handoverChoice !== 'cashier' || !!nextCashierUid)
 
   async function handleConfirm() {
@@ -692,6 +737,32 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
         }
       } else {
         handover = { type: 'none', amount: declared }
+      }
+
+      // 3.5. Aplicar decisión sobre tabs pendientes ANTES de cerrar la sesión.
+      // - 'transfer' → liberar (sessionId/cashierUid = null) tabs + sus
+      //   kitchenOrders activos. La próxima cajera que abra turno en esta
+      //   panadería las hereda automáticamente.
+      // - 'delete'   → borrar las tabs + cancelar sus kitchenOrders
+      //   pending/ready (no se cobran, ojo).
+      if (pendingTabs.length > 0 && tabsDecision === 'transfer') {
+        for (const tab of pendingTabs) {
+          try {
+            await releaseOrdersForTab(tab.id)
+            await releaseTabForNextCashier(tab.id, session.id)
+          } catch (err) {
+            console.warn('[CloseSessionModal] no se pudo liberar tab:', tab.id, err?.message || err)
+          }
+        }
+      } else if (pendingTabs.length > 0 && tabsDecision === 'delete') {
+        for (const tab of pendingTabs) {
+          try {
+            await cancelOrdersForTab(tab.id, { reason: 'Mesa eliminada al cerrar turno' })
+            await deleteOpenTab(tab.id)
+          } catch (err) {
+            console.warn('[CloseSessionModal] no se pudo eliminar tab:', tab.id, err?.message || err)
+          }
+        }
       }
 
       // 4. Cerrar la sesión (una sola operación que hace todo)
@@ -865,6 +936,17 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
           {/* Cuando baseLowered, el AdminActionCard de arriba ya muestra
               "Repón $X.XXX para devolver la caja a $200.000". No hay
               decisión adicional: la base es fija. */}
+
+          {/* Mesas/burbujas pendientes — si la cajera deja mesas sin cobrar
+              al cerrar, el admin debe decidir si pasárselas a la próxima
+              cajera que abra turno en esta panadería, o eliminarlas. */}
+          {pendingTabs.length > 0 && (
+            <PendingTabsPanel
+              tabs={pendingTabs}
+              decision={tabsDecision}
+              onDecision={setTabsDecision}
+            />
+          )}
 
           {/* Si hay FALTA: pide resolución */}
           {hasShortage && (
@@ -1052,6 +1134,70 @@ function AdminActionCard({ declared, cashFloor, handoverChoice }) {
       <div style={{ fontSize: 13, color: T.neutral[600], lineHeight: 1.5, marginTop: 4 }}>
         Deja los <b>{fmtCOP(cashFloor)}</b> de base intactos.
       </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Panel "Mesas pendientes" en el cierre. Aparece si la cajera deja
+// burbujas sin cobrar al cerrar. El admin DEBE escoger una opción:
+//   - Pasar a la próxima cajera: tabs se quedan huérfanas con sus
+//     kitchenOrders. La siguiente cajera que abra turno en esta
+//     panadería las hereda automáticamente.
+//   - Eliminar: tabs + kitchenOrders activos se borran/cancelan.
+// ──────────────────────────────────────────────────────────────
+function PendingTabsPanel({ tabs, decision, onDecision }) {
+  const totalAmount = tabs.reduce((s, t) => s + (Number(t.total) || 0), 0)
+  return (
+    <div style={{
+      padding: '12px 14px', borderRadius: 12, marginBottom: 14,
+      background: '#FFF7E6', border: `1.5px solid #F4E0BC`,
+    }}>
+      <div style={{ fontSize: 13.5, fontWeight: 900, color: '#7A5C00', letterSpacing: -0.2, marginBottom: 4 }}>
+        ⚠ {tabs.length} {tabs.length === 1 ? 'mesa pendiente' : 'mesas pendientes'}
+      </div>
+      <div style={{ fontSize: 12, color: '#7A5C00', lineHeight: 1.5, marginBottom: 10 }}>
+        La cajera deja {tabs.length === 1 ? 'una mesa abierta' : 'mesas abiertas'} sin cobrar
+        {totalAmount > 0 && <> (total {fmtCOP(totalAmount)})</>}. Decide qué hacer:
+      </div>
+
+      <div style={{
+        background: '#fff', borderRadius: 10, padding: '8px 12px',
+        border: `1px solid #F4E0BC`, marginBottom: 10,
+        maxHeight: 140, overflowY: 'auto',
+      }}>
+        {tabs.map((t, i) => (
+          <div key={t.id} style={{
+            fontSize: 12, color: T.neutral[700], lineHeight: 1.5,
+            padding: '4px 0',
+            borderBottom: i < tabs.length - 1 ? `0.5px dashed ${T.neutral[200]}` : 'none',
+            display: 'flex', justifyContent: 'space-between', gap: 8,
+          }}>
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {(t.kind || 'mesa') === 'llevar'
+                ? `📦 ${t.customerName || 'Cliente'}`
+                : `🍽️ Mesa ${formatTableLabel(t)}`}
+              {(t.items?.length || 0) > 0 && <> · {t.items.length} {t.items.length === 1 ? 'item' : 'items'}</>}
+            </span>
+            <span style={{ fontVariantNumeric: 'tabular-nums', flexShrink: 0, fontWeight: 700 }}>
+              {fmtCOP(Number(t.total) || 0)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <RadioOption
+        selected={decision === 'transfer'}
+        onClick={() => onDecision('transfer')}
+        title="Pasar a la próxima cajera"
+        subtitle="Quedan guardadas. La cajera que abra el próximo turno aquí las hereda."
+      />
+      <RadioOption
+        selected={decision === 'delete'}
+        onClick={() => onDecision('delete')}
+        title="Eliminar todas"
+        subtitle="Se borran las mesas y se cancelan los almuerzos en cocina. No se cobra."
+      />
     </div>
   )
 }

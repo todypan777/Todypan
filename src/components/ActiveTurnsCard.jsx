@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { Card } from './Atoms'
 import { fmtCOP } from '../utils/format'
@@ -19,8 +19,29 @@ import { watchAllUsers } from '../users'
 import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
+import { getCustomerOrder } from '../customerOrders'
 import NewSale from '../screens/NewSale'
 import OpenTabsBubbles from './OpenTabsBubbles'
+
+// Panadería destino de los pedidos web (debe coincidir con OrderConfirm.jsx).
+const WEB_ORDER_BRANCH_NAME = 'Panadería B'
+
+// Convierte un item del cart de customerOrder al shape que usa el state
+// `lunchCommanda` de NewSale (mismo que producen LunchPickerModal /
+// SpecialLunchModal al armar un almuerzo).
+function customerOrderItemToLunchPayload(item) {
+  const isEspecial = item.kind === 'especial'
+  return {
+    kind: isEspecial ? 'special' : 'menu',
+    productId: null,
+    productName: isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente',
+    destination: 'llevar',
+    selections: isEspecial ? null : (item.selections || null),
+    description: isEspecial ? (item.description || null) : null,
+    price: Number(item.price) || 0,
+    note: item.note || null,
+  }
+}
 
 /**
  * Panel central del admin (D25): controla TODOS los turnos.
@@ -45,11 +66,70 @@ export default function ActiveTurnsCard() {
   // NewSale (carrito vacío) SIN salir del modo asistir — así el admin sigue
   // vendiendo de corrido cuando hay voleo, en vez de ser devuelto al inicio.
   const [assistSaleNonce, setAssistSaleNonce] = useState(0)
+  // Pedido web pendiente que el admin entró a atender desde /comanda/{id}.
+  // Cuando está poblado, el NewSale del modo asistir recibe sus almuerzos
+  // pre-cargados en lunchCommanda y, al enviar la comanda, se marca el
+  // customerOrder como confirmado.
+  // shape: null | { id, lunchCommanda: [...] }
+  const [pendingCustomerOrder, setPendingCustomerOrder] = useState(null)
   const [openingBranch, setOpeningBranch] = useState(null)
   const [closingSession, setClosingSession] = useState(null)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
   useEffect(() => watchAllUsers(setAllUsers), [])
+
+  // Pedido web pendiente de atender: se captura del query param ?assistOrder
+  // al montar y se procesa cuando openSessions ya tiene la sesión de
+  // Panadería B. Usamos ref (no state) porque no afecta el render.
+  const pendingOrderIdRef = useRef(null)
+
+  // 1) Captura: leer el query param al montar y limpiarlo de la URL.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const orderId = params.get('assistOrder')
+    if (!orderId) return
+    pendingOrderIdRef.current = orderId
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('assistOrder')
+      window.history.replaceState({}, '', url.toString())
+    } catch {}
+  }, [])
+
+  // 2) Procesa: cuando openSessions cambia, intentamos abrir el modo asistir
+  //    si hay un orderId pendiente y un turno abierto en Panadería B.
+  useEffect(() => {
+    const orderId = pendingOrderIdRef.current
+    if (!orderId) return
+    if (assistingSession) return // ya estamos asistiendo, no re-abrir
+    let cancelled = false
+    ;(async () => {
+      try {
+        const branchesNow = getData().branches || []
+        const targetBranch = branchesNow.find(b => b.name === WEB_ORDER_BRANCH_NAME)
+        if (!targetBranch) return
+        const targetSession = openSessions.find(s => s.branchId === targetBranch.id)
+        if (!targetSession) return  // sin turno abierto, esperamos a que abra
+        const order = await getCustomerOrder(orderId)
+        if (cancelled) return
+        if (!order || order.status === 'confirmed') {
+          // Pedido ya confirmado o no encontrado — limpiar y salir.
+          pendingOrderIdRef.current = null
+          return
+        }
+        const lunchCommanda = (order.cart || []).map(customerOrderItemToLunchPayload)
+        pendingOrderIdRef.current = null
+        setAssistSaleNonce(0)
+        setEditingAssistTab(null)
+        setPendingCustomerOrder({ id: orderId, lunchCommanda })
+        setAssistingSession(targetSession)
+      } catch (err) {
+        console.warn('[ActiveTurnsCard] no se pudo cargar el pedido web:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [openSessions, assistingSession])
 
   const branches = getData().branches || []
   if (branches.length === 0) return null
@@ -145,23 +225,34 @@ export default function ActiveTurnsCard() {
           {/* Capa 1 (base): NewSale para nueva venta a la cajera asistida.
               `key` con el nonce: tras cada venta lo incrementamos para que
               React remonte un NewSale limpio (carrito vacío) sin sacar al
-              admin del modo asistir. */}
+              admin del modo asistir.
+              Si veniamos de /comanda/{id}, `initialLunchCommanda` trae los
+              almuerzos del pedido web pre-cargados y `customerOrderId` deja
+              que NewSale marque el pedido como confirmado al enviar. */}
           <NewSale
             key={`assist-base-${assistSaleNonce}`}
             session={assistingSession}
             authUser={authUser}
             userDoc={userDoc}
-            assistMode={{ adminUid: authUser.uid, adminName }}
+            assistMode={{
+              adminUid: authUser.uid,
+              adminName,
+              customerOrderId: pendingCustomerOrder?.id || null,
+            }}
+            initialLunchCommanda={pendingCustomerOrder?.lunchCommanda || null}
             onCancel={() => {
               // Al salir del NewSale base se cierra todo el modo asistir.
               setAssistingSession(null)
               setEditingAssistTab(null)
+              setPendingCustomerOrder(null)
             }}
             onSaved={() => {
               // NO cerramos el modo asistir — solo reseteamos el NewSale base
               // para la siguiente venta. El admin se queda asistiendo.
+              // El pedido web (si había) ya fue consumido por NewSale.
               setAssistSaleNonce(n => n + 1)
               setEditingAssistTab(null)
+              setPendingCustomerOrder(null)
             }}
           />
 

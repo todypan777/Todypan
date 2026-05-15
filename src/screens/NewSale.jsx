@@ -38,7 +38,16 @@ import SpecialLunchModal from '../components/SpecialLunchModal'
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
-export default function NewSale({ session, authUser, userDoc, tab, assistMode, onCancel, onSaved }) {
+export default function NewSale({
+  session, authUser, userDoc, tab, assistMode,
+  // Cuando admin entra a atender un pedido web (/comanda/{id}), recibe los
+  // almuerzos pre-armados aquí. NewSale los carga en lunchCommanda y abre
+  // el modal de envío automáticamente para que el admin solo ponga el
+  // nombre del cliente y mande. Al enviar exitoso, si assistMode trae
+  // `customerOrderId`, se marca ese pedido web como confirmado.
+  initialLunchCommanda,
+  onCancel, onSaved,
+}) {
   // Modo "asistir": admin haciendo ventas en el turno de una cajera.
   // Las ventas/mesas quedan a nombre de la cajera (session.cashierUid),
   // pero registradas como recordedByUid del admin.
@@ -72,10 +81,25 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   // Cada item lleva SU PROPIA `note` — ya no hay nota global. Si la cajera
   // agrega varios almuerzos, cada uno carga su comentario independiente.
   // shape: [{ kind, productId, productName, destination, selections|description, price, note }]
-  const [lunchCommanda, setLunchCommanda] = useState([])
-  // Modal de envío de la comanda (pide # de mesa si no estamos en isTabMode)
-  // shape: { number, error, busy }
-  const [sendCommandaModal, setSendCommandaModal] = useState(null)
+  //
+  // Si initialLunchCommanda viene poblada (admin entró a atender un pedido
+  // web), arrancamos con esa comanda lista. Lazy init: el prop se lee una
+  // sola vez al montar.
+  const [lunchCommanda, setLunchCommanda] = useState(
+    () => Array.isArray(initialLunchCommanda) && initialLunchCommanda.length > 0
+      ? [...initialLunchCommanda]
+      : []
+  )
+  // Modal de envío de la comanda (pide # de mesa o nombre cliente).
+  // Si entramos con un pedido web pre-cargado, lo abrimos de una — los
+  // almuerzos del pedido siempre son 'llevar', así que el modal pide el
+  // nombre del cliente (obligatorio) y el admin lo escribe.
+  // shape: { tableNumber, customerName, error, busy }
+  const [sendCommandaModal, setSendCommandaModal] = useState(
+    () => (Array.isArray(initialLunchCommanda) && initialLunchCommanda.length > 0)
+      ? { tableNumber: 0, customerName: '', error: null, busy: false }
+      : null
+  )
   // Modal de confirmación para eliminar mesa (botón rojo del footer en modo
   // tab). shape: null | { busy, error }
   const [confirmDeleteTab, setConfirmDeleteTab] = useState(null)
@@ -690,6 +714,22 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       const finalCart = [...cart, ...lunchItems]
       setCart(finalCart)
       await updateOpenTab(targetTabId, { items: finalCart })
+
+      // Si veniamos de un pedido web (/comanda/{id}), marcarlo como
+      // confirmado para que el cliente y otros que abran el link vean
+      // "✓ Pedido confirmado". Fire-and-forget — no bloquea el cierre.
+      if (assistMode?.customerOrderId) {
+        import('../customerOrders').then(m =>
+          m.markCustomerOrderConfirmed(assistMode.customerOrderId, {
+            confirmedBy: authUser.uid,
+            confirmedByName: assistMode.adminName || null,
+            customerName: targetCustomerName,
+            tabId: targetTabId,
+            orderIds,
+          })
+        ).catch(err =>
+          console.warn('[NewSale] no se pudo marcar customerOrder confirmado:', err?.message || err))
+      }
 
       // Reset y cerrar
       setLunchCommanda([])

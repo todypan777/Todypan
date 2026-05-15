@@ -4,13 +4,8 @@ import { fmtCOP } from '../utils/format'
 import { CATEGORIES } from '../menu'
 import { useAuth } from '../context/AuthCtx'
 import { getData, initDB } from '../db'
-import {
-  watchCustomerOrder,
-  markCustomerOrderConfirmed,
-} from '../customerOrders'
+import { watchCustomerOrder } from '../customerOrders'
 import { watchOpenSessions } from '../cashSessions'
-import { createOpenTab, updateOpenTab } from '../openTabs'
-import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
 
 // ──────────────────────────────────────────────────────────────────
 // /comanda/:id — pantalla pública (no fuerza login) que muestra un
@@ -92,8 +87,6 @@ export default function OrderConfirm({ orderId }) {
           <AdminConfirmView
             order={order}
             orderId={orderId}
-            authUser={authUser}
-            userDoc={userDoc}
           />
         )}
       </div>
@@ -358,13 +351,14 @@ function CustomerView({ order }) {
 }
 
 // ─── Vista: admin confirma ────────────────────────────────────────
-
-function AdminConfirmView({ order, orderId, authUser, userDoc }) {
+// El admin NO confirma directo aquí. Tap → entra en MODO ASISTIR de la
+// cajera de Panadería B con los almuerzos del cliente pre-cargados en la
+// comanda. El admin escribe el nombre del cliente en el modal "Enviar
+// comanda" (donde es OBLIGATORIO) y puede agregar bebidas si quiere.
+// Al enviar la comanda, el flujo normal crea openTab + kitchenOrders y
+// marca el customerOrder como confirmado.
+function AdminConfirmView({ order, orderId }) {
   const [openSessions, setOpenSessions] = useState([])
-  const [customerName, setCustomerName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
-  const [done, setDone] = useState(false)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
 
@@ -380,135 +374,13 @@ function AdminConfirmView({ order, orderId, authUser, userDoc }) {
     [openSessions, targetBranch]
   )
 
-  // Nombre por defecto: "Pedido web HH:MM" — el admin lo cambia si quiere.
-  useEffect(() => {
-    if (customerName) return
-    const t = new Date().toLocaleTimeString('es-CO', {
-      hour: '2-digit', minute: '2-digit', hour12: false,
-      timeZone: 'America/Bogota',
-    })
-    setCustomerName(`Pedido web ${t}`)
-  }, []) // eslint-disable-line
-
-  const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
-    || authUser?.email || 'Admin'
-
-  const canConfirm = !!targetSession && customerName.trim().length > 0 && !busy
-
-  async function handleConfirm() {
-    if (!canConfirm) return
-    setBusy(true); setError(null)
-    try {
-      // 1. Crear la openTab "llevar" en la sesión activa de la cajera.
-      const tabId = await createOpenTab({
-        sessionId: targetSession.id,
-        cashierUid: targetSession.cashierUid,
-        branchId: targetSession.branchId,
-        branchName: targetSession.branchName,
-        kind: 'llevar',
-        customerName: customerName.trim(),
-        items: [], // el shim se agrega en el paso 3
-        // Modo asistir: el admin registra a nombre de la cajera del turno
-        recordedByUid: authUser.uid,
-        recordedByName: adminName,
-        recordedByRole: 'admin',
-      })
-
-      // 2. Crear los kitchenOrders (uno por almuerzo del carrito).
-      const commandaId = newCommandaId()
-      const orderIds = []
-      for (const item of (order.cart || [])) {
-        const isEspecial = item.kind === 'especial'
-        const oid = await createKitchenOrder({
-          tabId,
-          tableNumber: null,
-          customerName: customerName.trim(),
-          sessionId: targetSession.id,
-          branchId: targetSession.branchId,
-          branchName: targetSession.branchName,
-          cashierUid: targetSession.cashierUid,
-          cashierName: targetSession.cashierName || null,
-          destination: 'llevar',
-          kind: isEspecial ? 'special' : 'menu',
-          selections: isEspecial ? null : (item.selections || null),
-          description: isEspecial ? (item.description || null) : null,
-          price: Number(item.price) || 0,
-          productId: null,
-          productName: isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente',
-          commandaId,
-          commandaNote: item.note || null,
-        })
-        orderIds.push(oid)
-      }
-
-      // 3. Llenar el carrito de la openTab con shims de cada almuerzo —
-      //    así la cajera puede cobrar la mesa como cualquier otra.
-      const lunchItems = (order.cart || []).map((item, i) => {
-        const isEspecial = item.kind === 'especial'
-        const destLabel = '📦 Para llevar'
-        const productName = isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
-        return {
-          key: `lunch_${orderIds[i]}`,
-          productId: null,
-          source: 'kitchen',
-          kitchenOrderId: orderIds[i],
-          kitchenStatus: 'pending',
-          name: `${productName} · ${destLabel}`,
-          qty: 1,
-          unitPrice: Number(item.price) || 0,
-          lunchKind: isEspecial ? 'special' : 'menu',
-          lunchDestination: 'llevar',
-          lunchProductName: productName,
-          lunchSelections: isEspecial ? null : (item.selections || null),
-          lunchDescription: isEspecial ? (item.description || null) : null,
-          commandaNote: item.note || null,
-        }
-      })
-      await updateOpenTab(tabId, { items: lunchItems })
-
-      // 4. Marcar el customerOrder como confirmado con todas las referencias.
-      await markCustomerOrderConfirmed(orderId, {
-        confirmedBy: authUser.uid,
-        confirmedByName: adminName,
-        customerName: customerName.trim(),
-        tabId,
-        orderIds,
-      })
-
-      setDone(true)
-    } catch (err) {
-      console.error('[OrderConfirm] no se pudo confirmar:', err)
-      const code = err?.code || ''
-      if (code === 'permission-denied') {
-        setError('Permisos insuficientes. Verifica tu sesión de admin.')
-      } else {
-        setError(`No se pudo confirmar. ${err?.message || 'Intenta de nuevo.'}`)
-      }
-      setBusy(false)
-    }
+  function handleAtender() {
+    // Redirige a la app principal con el orderId en query — ActiveTurnsCard
+    // lo detecta al montar, abre modo asistir y pre-carga la comanda.
+    window.location.href = `/?assistOrder=${encodeURIComponent(orderId)}`
   }
 
-  if (done) {
-    return (
-      <>
-        <div style={{
-          marginTop: 8, marginBottom: 16, padding: '20px 22px', borderRadius: 18,
-          background: '#E8F4E8', border: `1.5px solid ${T.ok}55`,
-          textAlign: 'center',
-        }}>
-          <div style={{ fontSize: 44, marginBottom: 6 }}>✅</div>
-          <div style={{ fontSize: 17, fontWeight: 900, color: T.ok, letterSpacing: -0.3, marginBottom: 6 }}>
-            Pedido enviado a cocina
-          </div>
-          <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
-            La cajera ya tiene la mesa de <b>{customerName.trim()}</b> abierta.
-            La cocinera empieza a prepararlo.
-          </div>
-        </div>
-        <OrderSummary order={{ ...order, customerName: customerName.trim() }} />
-      </>
-    )
-  }
+  const canAtender = !!targetSession
 
   return (
     <>
@@ -517,11 +389,13 @@ function AdminConfirmView({ order, orderId, authUser, userDoc }) {
         background: T.copper[50], border: `1.5px solid ${T.copper[200]}`,
       }}>
         <div style={{ fontSize: 13.5, fontWeight: 900, color: T.copper[700], letterSpacing: -0.2, marginBottom: 4 }}>
-          Pedido pendiente · listo para enviar a cocina
+          Pedido pendiente · listo para atender
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5 }}>
-          Lo recibimos desde la página /menu. Pon el nombre del cliente y
-          confirma — un solo tap.
+          Lo recibimos desde /menu. Al tocar el botón entras en <b>modo asistir</b>
+          {' '}con los almuerzos pre-cargados. Pones el nombre del cliente en el
+          modal de envío (obligatorio) y, si quiere algo más (bebida, postre),
+          lo agregas antes de enviar.
         </div>
       </div>
 
@@ -549,66 +423,29 @@ function AdminConfirmView({ order, orderId, authUser, userDoc }) {
         }}>
           <div style={{
             fontSize: 11, fontWeight: 800, color: T.neutral[500],
-            letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8,
+            letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6,
           }}>
             Se carga a
           </div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900], marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900] }}>
             {targetSession.cashierName || 'Cajera'} · {targetSession.branchName || WEB_ORDER_BRANCH_NAME}
           </div>
-
-          <div style={{
-            fontSize: 11, fontWeight: 800, color: T.neutral[500],
-            letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6,
-          }}>
-            Nombre del cliente
-          </div>
-          <input
-            type="text"
-            value={customerName}
-            onChange={e => setCustomerName(e.target.value)}
-            placeholder="Ej: Juan · Chico de la peluquería"
-            maxLength={40}
-            disabled={busy}
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 12,
-              border: `1.5px solid ${T.neutral[200]}`,
-              fontSize: 15, fontFamily: 'inherit', fontWeight: 700,
-              background: '#fff', color: T.neutral[900],
-              outline: 'none', boxSizing: 'border-box',
-            }}
-          />
-          <div style={{
-            fontSize: 11.5, color: T.neutral[500], marginTop: 6, lineHeight: 1.45,
-          }}>
-            Aparece como identificador en la burbuja "Para llevar" de la cajera y la cocinera.
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div style={{
-          marginBottom: 14, padding: '10px 12px', borderRadius: 10,
-          background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-          fontSize: 12.5, fontWeight: 600, textAlign: 'center',
-        }}>
-          ⚠ {error}
         </div>
       )}
 
       <button
-        onClick={handleConfirm}
-        disabled={!canConfirm}
+        onClick={handleAtender}
+        disabled={!canAtender}
         style={{
           width: '100%', padding: '16px', borderRadius: 16,
-          background: canConfirm ? T.copper[500] : T.neutral[200],
-          color: canConfirm ? '#fff' : T.neutral[500],
-          border: 'none', cursor: canConfirm ? 'pointer' : 'not-allowed',
+          background: canAtender ? T.copper[500] : T.neutral[200],
+          color: canAtender ? '#fff' : T.neutral[500],
+          border: 'none', cursor: canAtender ? 'pointer' : 'not-allowed',
           fontFamily: 'inherit', fontSize: 15.5, fontWeight: 800, letterSpacing: 0.3,
-          boxShadow: canConfirm ? '0 4px 14px rgba(184,122,86,0.35)' : 'none',
+          boxShadow: canAtender ? '0 4px 14px rgba(184,122,86,0.35)' : 'none',
         }}
       >
-        {busy ? 'Enviando a cocina...' : 'Confirmar y enviar a cocina'}
+        Atender este pedido →
       </button>
     </>
   )

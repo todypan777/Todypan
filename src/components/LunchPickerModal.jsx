@@ -25,16 +25,24 @@ import { useBogotaDate } from '../utils/useBogotaDate'
 // ──────────────────────────────────────────────────────────────────
 export default function LunchPickerModal({
   product, onCancel, onAdd, currentCount = 0,
+  // Modo edición: la cajera corrige un almuerzo YA enviado a cocina.
+  //   editMode          → activa el flujo de edición (sin "+ Otro almuerzo").
+  //   initialSelections → selecciones actuales del kitchenOrder a editar.
+  //   initialNote       → comentario actual del almuerzo.
+  //   onSaveEdit(payload) → se llama al confirmar; reemplaza a onAdd.
+  editMode = false, initialSelections = null, initialNote = '', onSaveEdit = () => {},
 }) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
   const [dailyMenu, setDailyMenu] = useState(null)
-  const [selections, setSelections] = useState({})       // { soup: {id,name}, ... }
+  // En edición arrancamos con las selecciones actuales del pedido. En modo
+  // normal, vacío (los defaults de side/salad/juice se aplican luego).
+  const [selections, setSelections] = useState(() => initialSelections ? { ...initialSelections } : {})
   // Nota PER-ALMUERZO. Antes era state compartido del padre (una sola nota
   // para toda la comanda) y se copiaba idéntica a cada kitchenOrder. Ahora
   // vive aquí, se incluye en el payload del almuerzo, y se resetea cuando
   // la cajera tap "+ Otro almuerzo".
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(initialNote || '')
   // Step:
   //   'compose'     → escoger sopa/proteína/jugo, escribir comentario.
   //   'destination' → elegir mesa/llevar (paso explícito para no olvidar).
@@ -148,6 +156,11 @@ export default function LunchPickerModal({
 
   // Click en "🍽️ Para mesa" o "📦 Para llevar" desde el paso de destino.
   function pickDestination(destination) {
+    // En modo edición: guardar el cambio sobre el kitchenOrder existente.
+    if (editMode) {
+      onSaveEdit(buildPayload(destination))
+      return
+    }
     onAdd(buildPayload(destination), { another: pendingAnother })
     if (pendingAnother) {
       // Reset para el siguiente almuerzo y volver al compose.
@@ -203,7 +216,16 @@ export default function LunchPickerModal({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 17, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
               {step === 'destination' ? '¿Para mesa o para llevar?' : product.name}
-              {step === 'compose' && currentCount > 0 && (
+              {step === 'compose' && editMode && (
+                <span style={{
+                  marginLeft: 8, fontSize: 11, fontWeight: 700, color: T.warn,
+                  background: '#FFF7E6', padding: '2px 8px', borderRadius: 999,
+                  verticalAlign: 'middle',
+                }}>
+                  Editando
+                </span>
+              )}
+              {step === 'compose' && !editMode && currentCount > 0 && (
                 <span style={{
                   marginLeft: 8, fontSize: 11, fontWeight: 700, color: T.copper[700],
                   background: T.copper[50], padding: '2px 8px', borderRadius: 999,
@@ -216,7 +238,9 @@ export default function LunchPickerModal({
             <div style={{ fontSize: 12.5, color: T.neutral[500] }}>
               {step === 'destination'
                 ? `${product.name} · selecciona dónde se sirve`
-                : `Mesa ${fmtCOP(priceMesa)} · Llevar ${fmtCOP(priceLlevar)}`}
+                : (editMode
+                    ? 'Corrige lo que esté mal y guarda'
+                    : `Mesa ${fmtCOP(priceMesa)} · Llevar ${fmtCOP(priceLlevar)}`)}
             </div>
           </div>
         </div>
@@ -254,7 +278,9 @@ export default function LunchPickerModal({
               background: T.neutral[100], color: T.neutral[600],
               fontSize: 12, lineHeight: 1.5, textAlign: 'center',
             }}>
-              Toca una opción para enviar este almuerzo. Puedes volver con la flecha si te equivocaste.
+              {editMode
+                ? 'Toca una opción para guardar los cambios. Puedes volver con la flecha si te equivocaste.'
+                : 'Toca una opción para enviar este almuerzo. Puedes volver con la flecha si te equivocaste.'}
             </div>
           </div>
         )}
@@ -379,7 +405,8 @@ export default function LunchPickerModal({
         )}
 
         {/* Footer sticky con botones — solo en compose. En destination los
-            CTA son los dos botones grandes del cuerpo. */}
+            CTA son los dos botones grandes del cuerpo.
+            En modo edición: un solo botón "Continuar →" (sin "+ Otro"). */}
         {step === 'compose' && (
         <div style={{
           padding: '14px 20px',
@@ -387,21 +414,27 @@ export default function LunchPickerModal({
           paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
           flexShrink: 0,
         }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
-            <button
-              onClick={() => proceedToDestination(true)}
-              disabled={!canSubmit}
-              style={{
-                padding: '14px', borderRadius: 14,
-                background: canSubmit ? '#fff' : T.neutral[100],
-                color: canSubmit ? T.copper[700] : T.neutral[400],
-                border: `1.5px solid ${canSubmit ? T.copper[400] : T.neutral[200]}`,
-                cursor: canSubmit ? 'pointer' : 'not-allowed',
-                fontFamily: 'inherit', fontSize: 13.5, fontWeight: 800,
-              }}
-            >
-              + Otro almuerzo
-            </button>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: editMode ? '1fr' : '1fr 1.4fr',
+            gap: 10,
+          }}>
+            {!editMode && (
+              <button
+                onClick={() => proceedToDestination(true)}
+                disabled={!canSubmit}
+                style={{
+                  padding: '14px', borderRadius: 14,
+                  background: canSubmit ? '#fff' : T.neutral[100],
+                  color: canSubmit ? T.copper[700] : T.neutral[400],
+                  border: `1.5px solid ${canSubmit ? T.copper[400] : T.neutral[200]}`,
+                  cursor: canSubmit ? 'pointer' : 'not-allowed',
+                  fontFamily: 'inherit', fontSize: 13.5, fontWeight: 800,
+                }}
+              >
+                + Otro almuerzo
+              </button>
+            )}
             <button
               onClick={() => proceedToDestination(false)}
               disabled={!canSubmit}

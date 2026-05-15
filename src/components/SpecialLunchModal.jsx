@@ -11,13 +11,23 @@ import { useBogotaDate } from '../utils/useBogotaDate'
 //
 // Si la cocinera no activó el especial hoy, muestra mensaje y NO permite agregar.
 // ──────────────────────────────────────────────────────────────────
-export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 }) {
+export default function SpecialLunchModal({
+  onCancel, onAdd, currentCount = 0,
+  // Modo edición: la cajera corrige un almuerzo especial YA enviado.
+  //   editMode          → activa el flujo de edición (sin "+ Otro almuerzo").
+  //   initialDescription, initialNote → valores actuales del pedido.
+  //   initialPrice      → precio actual del pedido (fallback si el especial
+  //                       ya no está activo en el menú del día).
+  //   onSaveEdit(payload) → se llama al confirmar; reemplaza a onAdd.
+  editMode = false, initialDescription = '', initialNote = '', initialPrice = 0,
+  onSaveEdit = () => {},
+}) {
   const today = useBogotaDate()
   const [dailyMenu, setDailyMenu] = useState(null)
-  const [description, setDescription] = useState('')
+  const [description, setDescription] = useState(initialDescription || '')
   // Comentario PER-ALMUERZO (igual que en el corriente). Se resetea al
   // "+ Otro almuerzo" para que cada especial tenga su propio contexto.
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(initialNote || '')
   // Step: 'compose' (descripción) → 'destination' (mesa/llevar).
   const [step, setStep] = useState('compose')
   const [pendingAnother, setPendingAnother] = useState(false)
@@ -26,18 +36,27 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
 
   const special = dailyMenu?.special
   const isActive = !!special?.active
-  const priceMesa = isActive ? Number(special.priceMesa || 0) : 0
-  const priceLlevar = isActive ? Number(special.priceLlevar || special.priceMesa || 0) : 0
+  // Precios: si el especial sigue activo, los del menú del día. En modo
+  // edición, si la cocinera ya lo desactivó, caemos al precio del propio
+  // pedido para que la cajera igual pueda corregir descripción/nota.
+  const priceMesa = isActive
+    ? Number(special.priceMesa || 0)
+    : (editMode ? Number(initialPrice) || 0 : 0)
+  const priceLlevar = isActive
+    ? Number(special.priceLlevar || special.priceMesa || 0)
+    : (editMode ? Number(initialPrice) || 0 : 0)
 
-  // Pre-llenar descripción con la del menú del día (la cocinera puede haber
-  // puesto "bandeja paisa..."). La cajera puede editarla.
+  // Pre-llenar descripción con la del menú del día SOLO en modo normal.
+  // En edición ya arrancamos con la descripción del pedido existente.
   useEffect(() => {
-    if (special?.description && !description) {
+    if (!editMode && special?.description && !description) {
       setDescription(special.description)
     }
   }, [special?.description]) // eslint-disable-line
 
-  const canSubmit = isActive && priceMesa > 0
+  // En edición siempre se puede guardar (el pedido ya existe). En modo
+  // normal exige que el especial esté activo con precio.
+  const canSubmit = editMode || (isActive && priceMesa > 0)
 
   function buildPayload(destination) {
     const isLlevar = destination === 'llevar'
@@ -60,6 +79,10 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
   }
 
   function pickDestination(destination) {
+    if (editMode) {
+      onSaveEdit(buildPayload(destination))
+      return
+    }
     onAdd(buildPayload(destination), { another: pendingAnother })
     if (pendingAnother) {
       setDescription(special?.description || '')
@@ -251,34 +274,43 @@ export default function SpecialLunchModal({ onCancel, onAdd, currentCount = 0 })
               </div>
             </div>
 
-            {/* Footer */}
+            {/* Footer — en edición un solo botón (sin "+ Otro almuerzo"). */}
             <div style={{
               padding: '14px 20px',
               background: '#fff', borderTop: `1px solid ${T.neutral[100]}`,
               paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
               flexShrink: 0,
             }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 10 }}>
-                <button
-                  onClick={() => proceedToDestination(true)}
-                  style={{
-                    padding: '14px', borderRadius: 14,
-                    background: '#fff', color: T.warn,
-                    border: `1.5px solid ${T.warn}55`,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: 13.5, fontWeight: 800,
-                  }}
-                >
-                  + Otro almuerzo
-                </button>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: editMode ? '1fr' : '1fr 1.4fr',
+                gap: 10,
+              }}>
+                {!editMode && (
+                  <button
+                    onClick={() => proceedToDestination(true)}
+                    style={{
+                      padding: '14px', borderRadius: 14,
+                      background: '#fff', color: T.warn,
+                      border: `1.5px solid ${T.warn}55`,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      fontSize: 13.5, fontWeight: 800,
+                    }}
+                  >
+                    + Otro almuerzo
+                  </button>
+                )}
                 <button
                   onClick={() => proceedToDestination(false)}
+                  disabled={!canSubmit}
                   style={{
                     padding: '14px', borderRadius: 14,
-                    background: T.warn, color: '#fff',
-                    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    background: canSubmit ? T.warn : T.neutral[200],
+                    color: canSubmit ? '#fff' : T.neutral[500],
+                    border: 'none', cursor: canSubmit ? 'pointer' : 'not-allowed',
+                    fontFamily: 'inherit',
                     fontSize: 14.5, fontWeight: 800, letterSpacing: 0.3,
-                    boxShadow: `0 4px 14px ${T.warn}55`,
+                    boxShadow: canSubmit ? `0 4px 14px ${T.warn}55` : 'none',
                   }}
                 >
                   Continuar →

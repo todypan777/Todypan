@@ -7,6 +7,7 @@ import {
   getCorrienteState, resolveDailyMenu,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
+import { createCustomerOrder } from '../customerOrders'
 import PublicLunchPickerModal from '../components/PublicLunchPickerModal'
 
 // ──────────────────────────────────────────────────────────────────
@@ -90,10 +91,33 @@ export default function PublicMenu() {
     setCart(prev => prev.filter((_, idx) => idx !== i))
   }
 
-  function sendOrder() {
-    const msg = buildOrderMessage(cart)
+  // Estado del envío: 'idle' | 'sending' | 'sent'
+  const [sendState, setSendState] = useState('idle')
+
+  async function sendOrder() {
+    if (cart.length === 0 || sendState === 'sending') return
+    setSendState('sending')
+    // 1) Guardar el pedido en Firestore para que el admin pueda confirmarlo
+    //    con un solo tap desde el link del WhatsApp. Si falla, igual lo
+    //    mandamos por WhatsApp sin link — el admin lo arma a mano.
+    let orderId = null
+    try {
+      orderId = await createCustomerOrder({ cart, total })
+    } catch (err) {
+      console.warn('[PublicMenu] no se pudo guardar customerOrder:', err?.message || err)
+    }
+    // 2) Construir el mensaje con (o sin) el link de confirmación al final.
+    const confirmUrl = orderId
+      ? `${window.location.origin}/comanda/${orderId}`
+      : null
+    const msg = buildOrderMessage(cart, confirmUrl)
     const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`
     window.open(url, '_blank') || (window.location.href = url)
+    // 3) Pantalla de "enviado" — limpia el carrito y le confirma al cliente
+    //    que el pedido ya está en camino sin que tenga que adivinar.
+    setSendState('sent')
+    setReviewOpen(false)
+    setCart([])
   }
   function requestMenu() {
     const msg = 'Hola, buenos días. Quisiera saber a qué hora estaría disponible el menú de hoy para hacer mi pedido. Muchas gracias.'
@@ -136,20 +160,39 @@ export default function PublicMenu() {
           />
         )}
 
-        {!loading && !error && hasAnything && (
+        {!loading && !error && hasAnything && sendState === 'sent' && (
+          <SentSuccess
+            onAnother={() => setSendState('idle')}
+          />
+        )}
+
+        {!loading && !error && hasAnything && sendState !== 'sent' && (
           <>
             <div style={{
-              fontSize: 22, fontWeight: 800, color: T.neutral[900],
-              letterSpacing: -0.5, marginBottom: 4,
+              fontSize: 24, fontWeight: 900, color: T.neutral[900],
+              letterSpacing: -0.6, marginBottom: 6,
               animation: 'pmHeroIn 0.4s ease 0.05s backwards',
             }}>
-              ¿Qué te provoca hoy?
+              Pedí acá, te ahorrás escribir
             </div>
             <div style={{
-              fontSize: 13.5, color: T.neutral[500], marginBottom: 22, lineHeight: 1.5,
+              fontSize: 14, color: T.neutral[600], marginBottom: 14, lineHeight: 1.5,
               animation: 'pmHeroIn 0.4s ease 0.1s backwards',
             }}>
-              Escoge lo que llevas. Cuando termines te enviamos a WhatsApp con tu pedido listo.
+              Personalizá tu almuerzo y te mandamos a WhatsApp con
+              <b style={{ color: T.copper[700] }}> todo el pedido listo</b>.
+              No tenés que escribir nada.
+            </div>
+
+            {/* Mini-indicador de pasos — refuerza que el flujo se completa
+                acá y termina en WhatsApp, no al revés. */}
+            <div style={{
+              display: 'flex', gap: 8, marginBottom: 22,
+              animation: 'pmHeroIn 0.4s ease 0.15s backwards',
+            }}>
+              <StepChip n="1" label="Escogé" />
+              <StepChip n="2" label="Personalizá" />
+              <StepChip n="3" label="Enviar" />
             </div>
 
             {corriente.available && (
@@ -180,6 +223,7 @@ export default function PublicMenu() {
         <CartBar
           count={cart.length}
           total={total}
+          sending={sendState === 'sending'}
           onReview={() => setReviewOpen(true)}
           onSend={sendOrder}
         />
@@ -496,9 +540,89 @@ function SkeletonCards() {
   )
 }
 
+// ─── Mini-indicador de 3 pasos (escogé · personalizá · enviar) ───
+
+function StepChip({ n, label }) {
+  return (
+    <div style={{
+      flex: 1, display: 'flex', alignItems: 'center', gap: 8,
+      padding: '8px 10px', borderRadius: 999,
+      background: '#fff', border: `1px solid ${T.copper[100]}`,
+    }}>
+      <div style={{
+        width: 22, height: 22, borderRadius: 999, flexShrink: 0,
+        background: T.copper[500], color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 12, fontWeight: 800,
+      }}>
+        {n}
+      </div>
+      <div style={{
+        fontSize: 11.5, fontWeight: 700, color: T.copper[700],
+        letterSpacing: 0.2,
+      }}>
+        {label}
+      </div>
+    </div>
+  )
+}
+
+// ─── Pantalla "Pedido enviado" ───────────────────────────────────
+// Aparece tras un envío exitoso. Confirma al cliente que el pedido
+// llegó, refuerza que el admin lo confirma y le da la opción de
+// hacer otro pedido sin recargar la página.
+function SentSuccess({ onAnother }) {
+  return (
+    <div style={{
+      marginTop: 24, padding: '32px 24px', textAlign: 'center',
+      background: '#fff', borderRadius: 22,
+      border: `1px solid ${T.copper[100]}`,
+      boxShadow: '0 4px 18px rgba(184,122,86,0.10)',
+      animation: 'pmCardIn 0.5s ease backwards',
+    }}>
+      <div style={{
+        width: 72, height: 72, borderRadius: 999, margin: '0 auto 16px',
+        background: '#E8F4E8', display: 'flex',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+          <path d="M9 18 L15 24 L27 12" stroke={T.ok} strokeWidth="3.5"
+            strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+        </svg>
+      </div>
+      <div style={{
+        fontSize: 19, fontWeight: 900, color: T.neutral[900],
+        letterSpacing: -0.3, marginBottom: 8,
+      }}>
+        ¡Pedido enviado!
+      </div>
+      <div style={{
+        fontSize: 14, color: T.neutral[600], lineHeight: 1.55,
+        maxWidth: 320, margin: '0 auto 22px',
+      }}>
+        Tu pedido ya está en WhatsApp.<br/>
+        <b style={{ color: T.neutral[800] }}>El administrador lo confirma
+        y empieza a prepararlo</b>. Te avisamos por allí cuando esté listo.
+      </div>
+      <button
+        onClick={onAnother}
+        style={{
+          padding: '12px 22px', borderRadius: 14,
+          background: T.copper[500], color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 14, fontWeight: 800, letterSpacing: 0.3,
+          boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+        }}
+      >
+        Hacer otro pedido
+      </button>
+    </div>
+  )
+}
+
 // ─── Cart bar (floating) ─────────────────────────────────────────
 
-function CartBar({ count, total, onReview, onSend }) {
+function CartBar({ count, total, sending = false, onReview, onSend }) {
   return (
     <div style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
@@ -546,27 +670,42 @@ function CartBar({ count, total, onReview, onSend }) {
           </button>
 
           <button
-            onClick={onSend}
+            onClick={sending ? undefined : onSend}
+            disabled={sending}
             aria-label="Enviar por WhatsApp"
             style={{
               padding: '12px 18px', borderRadius: 12,
-              background: '#25D366', color: '#fff',
-              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              background: sending ? T.neutral[400] : '#25D366', color: '#fff',
+              border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
               fontSize: 14, fontWeight: 800, letterSpacing: 0.3,
-              boxShadow: '0 4px 14px rgba(37,211,102,0.35)',
+              boxShadow: sending ? 'none' : '0 4px 14px rgba(37,211,102,0.35)',
               display: 'flex', alignItems: 'center', gap: 8,
-              animation: 'pmPulseSend 2s ease-in-out infinite',
+              animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
               transition: 'transform 0.1s ease',
             }}
-            onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.97)')}
+            onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.97)')}
             onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
             onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff">
-              <path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.2-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2.1-.4 0-.5 0-.1-.6-1.5-.9-2.1-.2-.5-.5-.5-.6-.5h-.6c-.2 0-.5.1-.7.4-.3.3-1 .9-1 2.3 0 1.3 1 2.6 1.1 2.8.1.2 1.9 3 4.7 4.2.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 2-1.4.3-.7.3-1.2.2-1.4 0-.1-.2-.2-.5-.3z"/>
-              <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm0 22c-1.9 0-3.7-.5-5.3-1.5l-.4-.2-3.9 1 1-3.8-.2-.4c-1-1.6-1.6-3.5-1.6-5.4 0-5.5 4.5-10 10-10s10 4.5 10 10c0 5.5-4.5 10.3-10 10.3z" />
-            </svg>
-            Enviar
+            {sending ? (
+              <>
+                <span style={{
+                  width: 14, height: 14, borderRadius: 999,
+                  border: '2px solid rgba(255,255,255,0.4)',
+                  borderTopColor: '#fff',
+                  animation: 'pmSpin 0.7s linear infinite',
+                }}/>
+                Enviando...
+              </>
+            ) : (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff">
+                  <path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.2-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2.1-.4 0-.5 0-.1-.6-1.5-.9-2.1-.2-.5-.5-.5-.6-.5h-.6c-.2 0-.5.1-.7.4-.3.3-1 .9-1 2.3 0 1.3 1 2.6 1.1 2.8.1.2 1.9 3 4.7 4.2.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 2-1.4.3-.7.3-1.2.2-1.4 0-.1-.2-.2-.5-.3z"/>
+                  <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm0 22c-1.9 0-3.7-.5-5.3-1.5l-.4-.2-3.9 1 1-3.8-.2-.4c-1-1.6-1.6-3.5-1.6-5.4 0-5.5 4.5-10 10-10s10 4.5 10 10c0 5.5-4.5 10.3-10 10.3z" />
+                </svg>
+                Enviar
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -809,7 +948,7 @@ const CAT_LABEL = {
   juice: 'Jugo',
 }
 
-function buildOrderMessage(cart) {
+function buildOrderMessage(cart, confirmUrl = null) {
   const lines = []
   lines.push('Hola, quiero hacer un pedido para llevar:')
   lines.push('')
@@ -831,6 +970,15 @@ function buildOrderMessage(cart) {
   })
   const total = cart.reduce((s, it) => s + Number(it.price || 0), 0)
   lines.push(`TOTAL: ${fmtCOP(total)}`)
+  // Link de confirmación (solo si guardamos el pedido en Firestore). Al
+  // admin le llega como parte del mismo WhatsApp; un tap y el pedido entra
+  // a cocina como si lo hubiera tipeado en modo asistir.
+  if (confirmUrl) {
+    lines.push('')
+    lines.push('---')
+    lines.push('Para el administrador de TodyPan:')
+    lines.push(confirmUrl)
+  }
   return lines.join('\n')
 }
 
@@ -870,6 +1018,9 @@ function GlobalStyles() {
       @keyframes pmSlideUp {
         from { transform: translateY(12%); opacity: 0; }
         to   { transform: translateY(0); opacity: 1; }
+      }
+      @keyframes pmSpin {
+        to { transform: rotate(360deg); }
       }
     `}</style>
   )

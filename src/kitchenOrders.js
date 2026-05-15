@@ -127,6 +127,31 @@ export async function cancelKitchenOrder(id, { reason } = {}) {
   })
 }
 
+/**
+ * La cajera corrige un almuerzo YA enviado (por si se equivocó). Solo debe
+ * llamarse cuando el pedido sigue 'pending' — la UI lo verifica con el
+ * estado en vivo antes de abrir el editor.
+ *
+ * payload: { destination, selections?, description?, note?, price }
+ *   - destination: 'mesa' | 'llevar'
+ *   - selections: objeto de categorías (solo 'menu')
+ *   - description: texto libre (solo 'special')
+ *   - note: comentario per-almuerzo (se guarda en commandaNote por compat)
+ *   - price: precio recalculado según el destino
+ */
+export async function updateKitchenOrder(id, payload) {
+  const data = {
+    destination: payload.destination === 'llevar' ? 'llevar' : 'mesa',
+    price: Number(payload.price) || 0,
+    editedAt: serverTimestamp(),
+    editedAtClient: getClientTimestamp(),
+  }
+  if (payload.selections !== undefined) data.selections = payload.selections || null
+  if (payload.description !== undefined) data.description = payload.description?.trim() || null
+  if (payload.note !== undefined) data.commandaNote = payload.note?.trim() || null
+  await updateDoc(orderRef(id), data)
+}
+
 /** Marca toda una comanda como pagada antes de tiempo (solo para llevar). */
 export async function markCommandaPaid(commandaId, _ids) {
   // Recibe commandaId pero firestore necesita actualizar doc por doc;

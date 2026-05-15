@@ -34,6 +34,7 @@ import {
 import CashierApp from './screens/CashierApp'
 import CookApp from './screens/CookApp'
 import PublicMenu from './screens/PublicMenu'
+import OrderConfirm from './screens/OrderConfirm'
 
 const SIDEBAR_W = 230
 
@@ -49,25 +50,45 @@ function LoadingScreen({ label = 'Cargando TodyPan...' }) {
   )
 }
 
-// Rutas públicas (sin login, sin AuthProvider). Se interceptan ANTES del
-// AuthGate para que el cliente NO vea Login ni quede mezclado con la app
-// admin. Cualquier path que comience con uno de estos se considera público.
-const PUBLIC_PATHS = ['/menu']
+// Rutas públicas (sin login forzado). Se interceptan ANTES del AuthGate.
+//   /menu             → página del cliente, sin AuthProvider (totalmente público)
+//   /comanda/{id}     → pantalla de confirmación de pedido web. USA
+//                       AuthProvider para detectar si quien la abre es admin
+//                       (que ve "Confirmar") vs cliente (que ve resumen).
+const MENU_PATH = '/menu'
+const COMANDA_PREFIX = '/comanda/'
 
-function isPublicRoute() {
-  if (typeof window === 'undefined') return false
-  const p = window.location.pathname || '/'
-  return PUBLIC_PATHS.some(base => p === base || p.startsWith(base + '/'))
+function currentPath() {
+  if (typeof window === 'undefined') return '/'
+  return window.location.pathname || '/'
 }
 
 export default function App() {
-  if (isPublicRoute()) {
+  const path = currentPath()
+
+  // Página pública del menú — sin AuthProvider (no necesita saber del user).
+  if (path === MENU_PATH || path.startsWith(MENU_PATH + '/')) {
     return (
       <ErrorBoundary label="la página pública">
         <PublicMenu />
       </ErrorBoundary>
     )
   }
+
+  // Página de confirmación de pedido web — pública pero CON AuthProvider
+  // para poder leer si el visitante es admin (sin forzar login a los demás).
+  if (path.startsWith(COMANDA_PREFIX)) {
+    const orderId = path.slice(COMANDA_PREFIX.length).split('/')[0] || null
+    return (
+      <ErrorBoundary label="la confirmación de pedido">
+        <AuthProvider>
+          <OrderConfirm orderId={orderId} />
+        </AuthProvider>
+      </ErrorBoundary>
+    )
+  }
+
+  // App normal (admin / cajera / cocinera) — fuerza login vía AuthGate.
   return (
     <ErrorBoundary label="la app">
       <AuthProvider>

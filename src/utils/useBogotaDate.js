@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getBogotaDateStr } from '../db'
+import { getBogotaDateStr, getBogotaHour } from '../db'
 
 /**
  * Hook reactivo: devuelve la fecha actual en zona Bogotá (YYYY-MM-DD).
@@ -26,4 +26,25 @@ export function useBogotaDate() {
   }, [])
 
   return date
+}
+
+/**
+ * Hook reactivo: devuelve la hora actual en zona Bogotá (0-23).
+ * Útil para mostrar/ocultar elementos según ventanas horarias (ej. acceso
+ * rápido al almuerzo durante hora de comida). Polling cada minuto.
+ */
+export function useBogotaHour() {
+  const [hour, setHour] = useState(() => getBogotaHour())
+
+  useEffect(() => {
+    const tick = () => {
+      const now = getBogotaHour()
+      setHour(prev => (prev !== now ? now : prev))
+    }
+    tick()
+    const id = setInterval(tick, 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  return hour
 }

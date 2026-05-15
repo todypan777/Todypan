@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { getData, setProductPriceForBranch } from '../db'
-import { useBogotaDate } from '../utils/useBogotaDate'
+import { useBogotaDate, useBogotaHour } from '../utils/useBogotaDate'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
@@ -23,7 +23,7 @@ import {
   nextTableSuffix,
   formatTableLabel,
 } from '../openTabs'
-import { createKitchenOrder, newCommandaId } from '../kitchenOrders'
+import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder } from '../kitchenOrders'
 import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState } from '../menu'
 import LunchPickerModal from '../components/LunchPickerModal'
 import SpecialLunchModal from '../components/SpecialLunchModal'
@@ -84,6 +84,22 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
   const [openTabs, setOpenTabs] = useState([])
   useEffect(() => watchOpenTabsForSession(session.id, setOpenTabs), [session.id])
 
+  // Estado EN VIVO de los kitchenOrders de esta mesa. Necesario para saber
+  // qué almuerzos siguen 'pending' (editables) vs 'ready' (ya cocinados,
+  // no editables). El shim del carrito guarda un kitchenStatus estático que
+  // no refleja la realidad — por eso watcheamos directo.
+  const [tabOrders, setTabOrders] = useState([])
+  useEffect(() => {
+    if (!isTabMode || !tab?.id) { setTabOrders([]); return }
+    return watchOrdersForTab(tab.id, setTabOrders)
+  }, [isTabMode, tab?.id])
+  // Mapa id → order para lookups O(1) en el render del carrito.
+  const liveOrderById = useMemo(() => {
+    const m = {}
+    for (const o of tabOrders) m[o.id] = o
+    return m
+  }, [tabOrders])
+
   // Fecha REACTIVA — al cruzar medianoche, el watcher del dailyMenu salta al
   // doc del día nuevo (que estará vacío hasta que la cocinera lo configure).
   const today = useBogotaDate()
@@ -140,6 +156,18 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
     if (extras.length === 0) return baseCatalog
     return [...extras, ...baseCatalog]
   }, [catalog, dailyMenu, allMenuItems, corrienteConfig])
+
+  // ── Acceso rápido a almuerzos en hora pico ──────────────────────
+  // De 11am a 2:59pm (Bogotá), si la cocinera publicó menú/especial,
+  // mostramos botones grandes debajo del buscador para que la cajera
+  // no tenga que escribir "Almu" cuando hay voleo.
+  const bogotaHour = useBogotaHour()
+  const isLunchTime = bogotaHour >= 11 && bogotaHour < 15
+  const availableLunchProducts = useMemo(
+    () => enrichedCatalog.filter(p => p.isLunch === true),
+    [enrichedCatalog]
+  )
+  const showLunchQuickAccess = isLunchTime && availableLunchProducts.length > 0
 
   const filtered = useMemo(() => {
     const q = normalizeName(query)
@@ -453,6 +481,98 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       // para no romper datos viejos, pero semánticamente ahora es per-lunch.
       commandaNote: lunch.note || null,
     }
+  }
+
+  // ── Edición de almuerzo YA enviado a cocina ──
+  // La cajera toca un almuerzo del carrito que ya está en cocina. Si sigue
+  // 'pending' lo puede corregir; si la cocinera ya lo marcó 'ready', no.
+  function handleEditKitchenItem(item) {
+    const order = liveOrderById[item.kitchenOrderId]
+    if (!order) {
+      alert('Estoy cargando el estado del almuerzo. Intenta de nuevo en un segundo.')
+      return
+    }
+    if (order.status !== 'pending') {
+      if (order.status === 'ready') {
+        alert('Este almuerzo ya está LISTO en cocina — no se puede modificar. Si hay un error, quítalo con la ✕ y agrega uno nuevo.')
+      } else {
+        alert('Este almuerzo ya no se puede modificar.')
+      }
+      return
+    }
+
+    if (order.kind === 'special') {
+      setLunchModal({
+        kind: 'special',
+        product: { name: 'Almuerzo Especial' },
+        edit: {
+          orderId: order.id,
+          cartKey: item.key,
+          initialDescription: order.description || '',
+          initialNote: order.commandaNote || '',
+          initialPrice: Number(order.price) || 0,
+        },
+      })
+      return
+    }
+
+    // kind 'menu' — reconstruir el producto con los precios ACTUALES del
+    // corriente para que pueda re-cotizar si cambia mesa↔llevar. Si el
+    // corriente ya no está disponible, caemos al precio del propio pedido.
+    const corrienteState = getCorrienteState(dailyMenu, allMenuItems, corrienteConfig)
+    const fallbackPrice = Number(order.price) || 0
+    const product = {
+      id: order.productId || '__lunch_corriente__',
+      name: order.productName || 'Almuerzo Corriente',
+      priceMesa: corrienteState.priceMesa || fallbackPrice,
+      priceLlevar: corrienteState.priceLlevar || fallbackPrice,
+    }
+    setLunchModal({
+      kind: 'menu',
+      product,
+      edit: {
+        orderId: order.id,
+        cartKey: item.key,
+        initialSelections: order.selections || {},
+        initialNote: order.commandaNote || '',
+      },
+    })
+  }
+
+  // Guarda la corrección: actualiza el kitchenOrder en Firestore y refleja
+  // el cambio en el shim del carrito + persiste la openTab. UI optimista —
+  // el updateKitchenOrder es fire-and-forget (modo ahorro / offline).
+  function handleSaveKitchenEdit(payload) {
+    const edit = lunchModal?.edit
+    if (!edit) return
+
+    updateKitchenOrder(edit.orderId, {
+      destination: payload.destination,
+      selections: payload.kind === 'menu' ? payload.selections : undefined,
+      description: payload.kind === 'special' ? payload.description : undefined,
+      note: payload.note,
+      price: payload.price,
+    }).catch(err => console.warn('[NewSale] updateKitchenOrder deferred:', err?.message || err))
+
+    const destLabel = payload.destination === 'llevar' ? '📦 Para llevar' : '🍽️ Mesa'
+    const nextCart = cart.map(it => {
+      if (it.key !== edit.cartKey) return it
+      return {
+        ...it,
+        name: `${payload.productName} · ${destLabel}`,
+        unitPrice: Number(payload.price) || 0,
+        lunchDestination: payload.destination,
+        lunchSelections: payload.kind === 'menu' ? payload.selections : null,
+        lunchDescription: payload.kind === 'special' ? payload.description : null,
+        commandaNote: payload.note || null,
+      }
+    })
+    setCart(nextCart)
+    if (isTabMode && tab?.id) {
+      updateOpenTab(tab.id, { items: nextCart }).catch(err =>
+        console.warn('[NewSale] persistir edición del shim deferred:', err?.message || err))
+    }
+    setLunchModal(null)
   }
 
   // Envía la comanda: crea mesa si no existe, kitchenOrders, items shim al carrito.
@@ -830,6 +950,74 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
           </button>
         </div>
 
+        {/* Acceso rápido a almuerzos en hora de comida (11am – 2:59pm).
+            Solo aparece si la cocinera publicó menú o activó el especial.
+            Reusa exactamente los productos virtuales del enrichedCatalog
+            (__lunch_corriente__ / __lunch_special__) y los pasa por el
+            mismo handleSelectProduct — cero lógica nueva de negocio. */}
+        {showLunchQuickAccess && (
+          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{
+              fontSize: 10.5, fontWeight: 800, color: T.neutral[500],
+              letterSpacing: 0.5, textTransform: 'uppercase', paddingLeft: 4,
+            }}>
+              Almuerzo del día · Acceso rápido
+            </div>
+            {availableLunchProducts.map(p => {
+              const isSpecial = p.lunchKind === 'special'
+              const bg = isSpecial ? '#FFF7E6' : T.copper[50]
+              const border = isSpecial ? '#F4E0BC' : T.copper[200]
+              const accent = isSpecial ? T.warn : T.copper[700]
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => handleSelectProduct(p)}
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 14,
+                    background: bg, border: `1.5px solid ${border}`,
+                    cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    transition: 'transform 0.1s ease, background 0.15s',
+                  }}
+                  onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
+                  onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+                  onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                >
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                    background: '#fff', border: `1px solid ${border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 22,
+                  }}>
+                    {isSpecial ? '⭐' : '🍽️'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 15, fontWeight: 800, color: accent,
+                      letterSpacing: -0.2,
+                    }}>
+                      {p.name}
+                    </div>
+                    <div style={{
+                      fontSize: 11.5, color: T.neutral[500], marginTop: 2,
+                      letterSpacing: 0.2,
+                    }}>
+                      Mesa {fmtCOP(p.priceMesa)} · Llevar {fmtCOP(p.priceLlevar)}
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 11, fontWeight: 800, color: accent,
+                    letterSpacing: 0.3, textTransform: 'uppercase',
+                    flexShrink: 0,
+                  }}>
+                    Toca →
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
         {/* Resultados de búsqueda */}
         {query.trim().length > 0 && (
           <div style={{
@@ -973,9 +1161,17 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
                 key={it.key}
                 item={it}
                 isLast={i === cart.length - 1}
+                // Estado en vivo del kitchenOrder (si es un shim de cocina):
+                // 'pending' = editable, 'ready' = ya cocinado.
+                kitchenLiveStatus={
+                  it.source === 'kitchen' && it.kitchenOrderId
+                    ? (liveOrderById[it.kitchenOrderId]?.status || null)
+                    : null
+                }
                 onMinus={() => updateQty(it.key, -1)}
                 onPlus={() => updateQty(it.key, +1)}
                 onRemove={() => removeItem(it.key)}
+                onEditKitchen={() => handleEditKitchenItem(it)}
                 onEditAmount={() => setFreeAmountTarget({
                   product: { id: it.productId, source: it.source, name: it.name },
                   editingKey: it.key,
@@ -1112,13 +1308,24 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       )}
 
       {/* Modal de almuerzo (menú o especial).
+          - Modo normal: arma un almuerzo nuevo para la comanda.
+          - Modo edición (lunchModal.edit): corrige un almuerzo YA enviado.
           Si la cajera intenta cerrar pero ya tiene almuerzos en construcción,
           abrimos el modal de envío en lugar de descartar el progreso. */}
       {lunchModal?.kind === 'menu' && (
         <LunchPickerModal
           product={lunchModal.product}
           currentCount={lunchCommanda.length}
+          editMode={!!lunchModal.edit}
+          initialSelections={lunchModal.edit?.initialSelections || null}
+          initialNote={lunchModal.edit?.initialNote || ''}
+          onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
+            // En edición, cerrar es simplemente cerrar — sin flujo de comanda.
+            if (lunchModal.edit) {
+              setLunchModal(null)
+              return
+            }
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
               setSendCommandaModal({
@@ -1136,7 +1343,16 @@ export default function NewSale({ session, authUser, userDoc, tab, assistMode, o
       {lunchModal?.kind === 'special' && (
         <SpecialLunchModal
           currentCount={lunchCommanda.length}
+          editMode={!!lunchModal.edit}
+          initialDescription={lunchModal.edit?.initialDescription || ''}
+          initialNote={lunchModal.edit?.initialNote || ''}
+          initialPrice={lunchModal.edit?.initialPrice || 0}
+          onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
+            if (lunchModal.edit) {
+              setLunchModal(null)
+              return
+            }
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
               setSendCommandaModal({
@@ -1626,11 +1842,12 @@ function SearchInput({ value, onChange, placeholder }) {
   )
 }
 
-function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
+function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEditAmount, kitchenLiveStatus }) {
   const subtotal = item.qty * item.unitPrice
 
-  // Items shim de cocina (almuerzos enviados): sin qty, sin edit. Tap en remover
-  // cancela el kitchenOrder y lo quita del carrito.
+  // Items shim de cocina (almuerzos enviados). Tap en remover cancela el
+  // kitchenOrder. Tap en el cuerpo (si sigue 'pending') abre el editor
+  // para corregir lo que la cajera haya enviado mal.
   if (item.source === 'kitchen') {
     // Preferir el campo nuevo `lunchDestination` (denormalizado en lunchToCartItem)
     // sobre el legacy de leer del nombre. Compatible con tabs viejas.
@@ -1638,6 +1855,16 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
       ? item.lunchDestination === 'llevar'
       : item.name?.includes('Para llevar')
     const labelColor = isLlevar ? T.warn : T.copper[700]
+
+    // Estado en vivo del kitchenOrder. Solo 'pending' es editable.
+    const isPending = kitchenLiveStatus === 'pending'
+    const isReady = kitchenLiveStatus === 'ready'
+    const statusLabel = isPending
+      ? '✎ Toca para corregir'
+      : isReady
+        ? '✓ Listo en cocina'
+        : 'En cocina'
+    const statusColor = isReady ? T.ok : labelColor
 
     // Resumen de lo que se envió a cocina (visible POST-envío). Ahora la
     // cajera puede revisar sin tener que ir a buscar el kitchenOrder.
@@ -1658,7 +1885,18 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
         }}>
           {isLlevar ? '📦' : '🍽️'}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            flex: 1, minWidth: 0,
+            cursor: isPending ? 'pointer' : 'default',
+          }}
+          role={isPending ? 'button' : undefined}
+          tabIndex={isPending ? 0 : undefined}
+          onClick={isPending ? onEditKitchen : undefined}
+          onKeyDown={isPending ? (e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEditKitchen?.() }
+          }) : undefined}
+        >
           {/* Header con nombre + subtotal en la misma fila */}
           <div style={{
             display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
@@ -1736,10 +1974,10 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditAmount }) {
           )}
 
           <div style={{
-            fontSize: 10.5, fontWeight: 700, color: labelColor, marginTop: 6,
+            fontSize: 10.5, fontWeight: 700, color: statusColor, marginTop: 6,
             letterSpacing: 0.4, textTransform: 'uppercase',
           }}>
-            En cocina · No editable
+            {statusLabel}
           </div>
         </div>
         <button onClick={onRemove} title="Cancelar este almuerzo" style={{

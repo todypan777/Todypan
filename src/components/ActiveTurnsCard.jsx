@@ -40,6 +40,11 @@ export default function ActiveTurnsCard() {
   // Tab abierta DENTRO del modo asistir — cuando el admin clicka una burbuja
   // de mesa abierta, se carga aquí y se renderiza un NewSale tab edit encima.
   const [editingAssistTab, setEditingAssistTab] = useState(null)
+  // Contador que se incrementa tras cada venta hecha en el NewSale base del
+  // modo asistir. Se usa como `key` para forzar un remontaje limpio del
+  // NewSale (carrito vacío) SIN salir del modo asistir — así el admin sigue
+  // vendiendo de corrido cuando hay voleo, en vez de ser devuelto al inicio.
+  const [assistSaleNonce, setAssistSaleNonce] = useState(0)
   const [openingBranch, setOpeningBranch] = useState(null)
   const [closingSession, setClosingSession] = useState(null)
 
@@ -90,7 +95,12 @@ export default function ActiveTurnsCard() {
               isLast={i === branchRows.length - 1}
               onOpen={() => setOpeningBranch(row.branch)}
               onClose={() => setClosingSession(row.session)}
-              onAssist={() => setAssistingSession(row.session)}
+              onAssist={() => {
+                // Nonce limpio al entrar — el NewSale base arranca vacío.
+                setAssistSaleNonce(0)
+                setEditingAssistTab(null)
+                setAssistingSession(row.session)
+              }}
             />
           ))}
         </Card>
@@ -132,8 +142,12 @@ export default function ActiveTurnsCard() {
           position: 'fixed', inset: 0, zIndex: 80, background: T.neutral[50],
           animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
         }}>
-          {/* Capa 1 (base): NewSale para nueva venta a la cajera asistida */}
+          {/* Capa 1 (base): NewSale para nueva venta a la cajera asistida.
+              `key` con el nonce: tras cada venta lo incrementamos para que
+              React remonte un NewSale limpio (carrito vacío) sin sacar al
+              admin del modo asistir. */}
           <NewSale
+            key={`assist-base-${assistSaleNonce}`}
             session={assistingSession}
             authUser={authUser}
             userDoc={userDoc}
@@ -144,7 +158,9 @@ export default function ActiveTurnsCard() {
               setEditingAssistTab(null)
             }}
             onSaved={() => {
-              setAssistingSession(null)
+              // NO cerramos el modo asistir — solo reseteamos el NewSale base
+              // para la siguiente venta. El admin se queda asistiendo.
+              setAssistSaleNonce(n => n + 1)
               setEditingAssistTab(null)
             }}
           />

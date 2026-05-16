@@ -4,11 +4,12 @@ import { fmtCOP } from '../utils/format'
 import {
   CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig,
-  getCorrienteState, resolveDailyMenu,
+  getCorrienteState, resolveDailyMenu, getAddonPrices,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import { createCustomerOrder } from '../customerOrders'
 import PublicLunchWizard from '../components/PublicLunchWizard'
+import PublicAddonsModal from '../components/PublicAddonsModal'
 import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
 // ──────────────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ export default function PublicMenu() {
   // }]
   const [cart, setCart] = useState([])
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [addonsOpen, setAddonsOpen] = useState(false)
 
   // Watchers
   useEffect(() => {
@@ -69,7 +71,22 @@ export default function PublicMenu() {
     [dailyMenu, allItems]
   )
   const special = dailyMenu?.special?.active === true ? dailyMenu.special : null
-  const hasAnything = corriente.available || !!special
+  const addonPrices = useMemo(
+    () => getAddonPrices(corrienteConfig),
+    [corrienteConfig]
+  )
+  // ¿Hay alguna adición disponible? La sopa/huevo solo necesitan precio.
+  // La proteína extra requiere precio Y al menos 1 proteína publicada hoy.
+  const proteinOptions = useMemo(
+    () => resolvedMenu.protein || [],
+    [resolvedMenu]
+  )
+  const anyAddonAvailable = (
+    addonPrices.soup > 0 ||
+    addonPrices.egg > 0 ||
+    (addonPrices.protein > 0 && proteinOptions.length > 0)
+  )
+  const hasAnything = corriente.available || !!special || anyAddonAvailable
 
   const total = useMemo(
     () => cart.reduce((s, it) => s + Number(it.price || 0), 0),
@@ -89,6 +106,10 @@ export default function PublicMenu() {
       note: '',
       price: priceLlevar,
     }])
+  }
+  function addAddon(payload) {
+    setCart(prev => [...prev, payload])
+    setAddonsOpen(false)
   }
   function removeItem(i) {
     setCart(prev => prev.filter((_, idx) => idx !== i))
@@ -204,12 +225,24 @@ export default function PublicMenu() {
               />
             )}
 
+            {/* Tarjeta de "Adiciones" — solo si la cocinera puso precios.
+                Permite pedir sopa / huevo / proteína extra sin almuerzo
+                completo, o sumarlos al almuerzo. */}
+            {anyAddonAvailable && (
+              <AddonsCardCompact
+                prices={addonPrices}
+                hasProteinOptions={proteinOptions.length > 0}
+                onOpen={() => setAddonsOpen(true)}
+                animDelay={corriente.available ? 180 : 120}
+              />
+            )}
+
             {special && (
               <EspecialCard
                 description={special.description || 'Almuerzo Especial'}
                 price={Number(special.priceLlevar || special.priceMesa || 0)}
                 onAdd={addEspecial}
-                animDelay={corriente.available ? 200 : 120}
+                animDelay={corriente.available ? 240 : 120}
               />
             )}
 
@@ -234,6 +267,16 @@ export default function PublicMenu() {
           price={corriente.priceLlevar}
           onCancel={() => setPickerOpen(false)}
           onAdd={addCorriente}
+        />
+      )}
+
+      {/* Modal de adiciones (sopa / huevo / proteína extra) */}
+      {addonsOpen && (
+        <PublicAddonsModal
+          prices={addonPrices}
+          proteinOptions={proteinOptions}
+          onCancel={() => setAddonsOpen(false)}
+          onAdd={addAddon}
         />
       )}
 
@@ -362,6 +405,90 @@ function CorrienteCardCompact({ price, cartCount, onAdd, animDelay = 0 }) {
   )
 }
 
+// ─── Tarjeta de ADICIONES (sopa / huevo / proteína extra) ────────
+// Pequeña, debajo del corriente. Solo aparece si la cocinera puso
+// algún precio en Catálogo. Click → abre PublicAddonsModal.
+function AddonsCardCompact({ prices, hasProteinOptions, onOpen, animDelay = 0 }) {
+  const chips = []
+  if (prices.soup > 0)                          chips.push({ emoji: '🥣', label: 'Sopa', price: prices.soup })
+  if (prices.egg > 0)                           chips.push({ emoji: '🍳', label: 'Huevo', price: prices.egg })
+  if (prices.protein > 0 && hasProteinOptions)  chips.push({ emoji: '🍗', label: 'Proteína', price: prices.protein })
+
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 18,
+      border: `1.5px solid #F4E0BC`,
+      boxShadow: '0 4px 14px rgba(192,138,62,0.10)',
+      overflow: 'hidden', marginBottom: 18,
+      animation: `pmCardIn 0.5s cubic-bezier(0.2,0.9,0.3,1.05) ${animDelay}ms backwards`,
+    }}>
+      <div style={{
+        padding: '14px 18px 6px',
+        background: `linear-gradient(180deg, #FFF7E6 0%, #fff 100%)`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 18, lineHeight: 1 }}>➕</span>
+          <div style={{
+            fontSize: 11.5, fontWeight: 800, color: T.warn,
+            letterSpacing: 1, textTransform: 'uppercase',
+          }}>
+            ¿Deseas una adición?
+          </div>
+        </div>
+        <div style={{ fontSize: 13, color: T.neutral[600], lineHeight: 1.4 }}>
+          Pide una porción extra o solo eso, sin almuerzo completo.
+        </div>
+      </div>
+
+      {/* Chips de tipos disponibles + precios */}
+      <div style={{
+        padding: '8px 16px 12px',
+        display: 'flex', gap: 6, flexWrap: 'wrap',
+      }}>
+        {chips.map(chip => (
+          <div key={chip.label} style={{
+            padding: '6px 11px', borderRadius: 999,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            fontSize: 12.5, fontWeight: 700, color: T.neutral[800],
+          }}>
+            <span style={{ fontSize: 14 }}>{chip.emoji}</span>
+            {chip.label}
+            <span style={{
+              fontWeight: 800, color: T.warn,
+              fontVariantNumeric: 'tabular-nums', letterSpacing: -0.1,
+            }}>
+              {fmtCOP(chip.price)}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ padding: '0 14px 14px' }}>
+        <button
+          onClick={onOpen}
+          style={{
+            width: '100%', padding: '14px',
+            background: T.warn, color: '#fff',
+            border: 'none', borderRadius: 14, cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 14.5, fontWeight: 800,
+            letterSpacing: -0.1,
+            boxShadow: `0 4px 12px ${T.warn}44`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            transition: 'transform 0.1s ease',
+          }}
+          onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
+          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          <span style={{ fontSize: 18, lineHeight: 1 }}>+</span>
+          Agregar adición
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Carrito INLINE en la página (reemplaza CartBar + ReviewModal) ───
 function CartInline({ cart, total, onRemove }) {
   return (
@@ -415,6 +542,21 @@ function CartInline({ cart, total, onRemove }) {
 
 function CartItemRow({ index, item, onRemove }) {
   const isEspecial = item.kind === 'especial'
+  const isAddon = item.kind === 'addon'
+  const addonMeta = isAddon ? addonDisplayMeta(item) : null
+  const title = isAddon
+    ? addonMeta.title
+    : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
+  const accentBg = isAddon
+    ? '#FFF7E6'
+    : isEspecial ? '#FFF7E6' : T.copper[50]
+  const accentBorder = isAddon
+    ? '#F4E0BC'
+    : isEspecial ? '#F4E0BC' : T.copper[100]
+  const accentColor = isAddon
+    ? T.warn
+    : isEspecial ? T.warn : T.copper[700]
+
   return (
     <div style={{
       background: '#fff', borderRadius: 14,
@@ -425,13 +567,12 @@ function CartItemRow({ index, item, onRemove }) {
     }}>
       <div style={{
         width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-        background: isEspecial ? '#FFF7E6' : T.copper[50],
-        border: `1px solid ${isEspecial ? '#F4E0BC' : T.copper[100]}`,
+        background: accentBg, border: `1px solid ${accentBorder}`,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 12, fontWeight: 800,
-        color: isEspecial ? T.warn : T.copper[700],
+        fontSize: isAddon ? 16 : 12, fontWeight: 800,
+        color: accentColor,
       }}>
-        {index + 1}
+        {isAddon ? addonMeta.emoji : index + 1}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
@@ -442,7 +583,7 @@ function CartItemRow({ index, item, onRemove }) {
             fontSize: 13, fontWeight: 800, color: T.neutral[900],
             letterSpacing: -0.2,
           }}>
-            {isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'}
+            {title}
           </div>
           <div style={{
             fontSize: 13.5, fontWeight: 800, color: T.neutral[900],
@@ -451,6 +592,18 @@ function CartItemRow({ index, item, onRemove }) {
             {fmtCOP(item.price)}
           </div>
         </div>
+
+        {isAddon && (
+          <div style={{
+            fontSize: 11.5, color: T.neutral[600], lineHeight: 1.4,
+            fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+          }}>
+            {item.quantity > 1
+              ? `${item.quantity} × ${fmtCOP(item.unitPrice || 0)}`
+              : 'Una porción'}
+            {item.proteinName && ` · ${item.proteinName}`}
+          </div>
+        )}
 
         {isEspecial && item.description && (
           <div style={{
@@ -461,7 +614,7 @@ function CartItemRow({ index, item, onRemove }) {
           </div>
         )}
 
-        {!isEspecial && item.selections && (
+        {!isEspecial && !isAddon && item.selections && (
           <div style={{
             display: 'flex', flexDirection: 'column', gap: 2,
             marginTop: 2,
@@ -510,7 +663,7 @@ function CartItemRow({ index, item, onRemove }) {
       <button
         onClick={onRemove}
         title="Quitar"
-        aria-label={`Quitar almuerzo ${index + 1}`}
+        aria-label={`Quitar item ${index + 1}`}
         style={{
           width: 30, height: 30, borderRadius: 999, flexShrink: 0,
           background: 'transparent', color: T.bad,
@@ -525,6 +678,22 @@ function CartItemRow({ index, item, onRemove }) {
       </button>
     </div>
   )
+}
+
+// Devuelve emoji + título para mostrar un addon en el carrito y WhatsApp.
+function addonDisplayMeta(item) {
+  const qty = Number(item.quantity) || 1
+  const qtySuffix = qty > 1 ? ` x${qty}` : ''
+  switch (item.addonType) {
+    case 'soup':
+      return { emoji: '🥣', title: `Sopa adicional${qtySuffix}` }
+    case 'egg':
+      return { emoji: '🍳', title: `Huevo adicional${qtySuffix}` }
+    case 'protein':
+      return { emoji: '🍗', title: `Proteína adicional${qtySuffix}` }
+    default:
+      return { emoji: '➕', title: `Adicional${qtySuffix}` }
+  }
 }
 
 // ─── Botón grande "Enviar pedido" ────────────────────────────────
@@ -796,7 +965,12 @@ function buildOrderMessage(cart, confirmUrl = null) {
   const lines = []
   lines.push('Hola, quiero hacer un pedido para llevar:')
   lines.push('')
-  cart.forEach((item, idx) => {
+
+  // Separar almuerzos de adiciones para que el mensaje quede ordenado.
+  const lunches = cart.filter(it => it.kind !== 'addon')
+  const addons  = cart.filter(it => it.kind === 'addon')
+
+  lunches.forEach((item, idx) => {
     const isEspecial = item.kind === 'especial'
     const kindLabel = isEspecial ? 'Especial' : 'Corriente'
     lines.push(`ALMUERZO ${idx + 1} - ${kindLabel} - ${fmtCOP(item.price)}`)
@@ -813,6 +987,17 @@ function buildOrderMessage(cart, confirmUrl = null) {
     if (item.note) lines.push(`  Nota: ${item.note}`)
     lines.push('')
   })
+
+  if (addons.length > 0) {
+    lines.push('ADICIONES:')
+    addons.forEach(item => {
+      const meta = addonDisplayMeta(item)
+      const detail = item.proteinName ? ` (${item.proteinName})` : ''
+      lines.push(`  ${meta.title}${detail} - ${fmtCOP(item.price)}`)
+      if (item.note) lines.push(`    Nota: ${item.note}`)
+    })
+    lines.push('')
+  }
   const total = cart.reduce((s, it) => s + Number(it.price || 0), 0)
   lines.push(`TOTAL: ${fmtCOP(total)}`)
   // Link de confirmación (solo si guardamos el pedido en Firestore). Al

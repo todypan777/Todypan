@@ -77,6 +77,24 @@ export function buildKitchenNoteFromCustomerItem({ replacements, note }) {
 }
 
 /**
+ * Texto humano para un item de tipo 'addon' (sopa/huevo/proteína extra).
+ * Usado en cocina y resumen de carrito.
+ * ej: "Sopa adicional x2", "Proteína adicional x1 (Pollo Dorado)"
+ */
+export function formatAddonLine(addon) {
+  if (!addon || addon.kind !== 'addon') return null
+  const qty = Math.max(1, Number(addon.quantity) || 1)
+  const qtySuffix = qty > 1 ? ` x${qty}` : ''
+  const base = {
+    soup:    'Sopa adicional',
+    egg:     'Huevo adicional',
+    protein: 'Proteína adicional',
+  }[addon.addonType] || 'Adicional'
+  const proteinSuffix = addon.proteinName ? ` (${addon.proteinName})` : ''
+  return `${base}${qtySuffix}${proteinSuffix}`
+}
+
+/**
  * Opciones de reemplazo según la categoría omitida.
  * - soup: huevo + más de cualquier otra categoría + nada
  * - principio: huevo + más de cualquiera EXCEPTO principio + nada

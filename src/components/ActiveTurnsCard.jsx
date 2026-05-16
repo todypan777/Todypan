@@ -20,7 +20,7 @@ import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import { getCustomerOrder } from '../customerOrders'
-import { buildKitchenNoteFromCustomerItem } from '../utils/lunchFormat'
+import { buildKitchenNoteFromCustomerItem, formatAddonLine } from '../utils/lunchFormat'
 import {
   watchOpenTabsForSession,
   deleteOpenTab,
@@ -64,6 +64,53 @@ function customerOrderItemToLunchPayload(item) {
     price: Number(item.price) || 0,
     note,
   }
+}
+
+// Convierte el cart COMPLETO (con almuerzos + adiciones) al lunchCommanda.
+// Las adiciones no se mapean 1:1 — se anexan como nota al primer almuerzo
+// para que cocina las vea sin necesidad de cambiar el modelo de
+// kitchenOrders. Si NO hay almuerzos en el cart (cliente solo pidió
+// adiciones), creamos un "Almuerzo Especial" sintético que las contenga
+// con el precio total — así el admin puede atender el pedido sin pasos
+// manuales.
+function customerCartToLunchCommanda(cart) {
+  const items = cart || []
+  const lunches = items.filter(it => it.kind !== 'addon')
+  const addons  = items.filter(it => it.kind === 'addon')
+
+  const lunchPayloads = lunches.map(customerOrderItemToLunchPayload)
+
+  if (addons.length === 0) return lunchPayloads
+
+  const addonsText = addons.map(formatAddonLine).filter(Boolean).join(' · ')
+  const addonsLabel = `Adiciones: ${addonsText}`
+
+  if (lunchPayloads.length > 0) {
+    // Anexar al note del primer almuerzo.
+    const first = lunchPayloads[0]
+    const combinedNote = first.note
+      ? `${first.note} · ${addonsLabel}`
+      : addonsLabel
+    lunchPayloads[0] = { ...first, note: combinedNote }
+    return lunchPayloads
+  }
+
+  // Sin almuerzos → sintético como Especial con descripción = adiciones.
+  const totalAddonsPrice = addons.reduce((s, it) => s + (Number(it.price) || 0), 0)
+  const customerNotes = addons
+    .map(it => it.note?.toString().trim())
+    .filter(Boolean)
+    .join(' · ')
+  return [{
+    kind: 'special',
+    productId: null,
+    productName: 'Adiciones',
+    destination: 'llevar',
+    selections: null,
+    description: addonsText,
+    price: totalAddonsPrice,
+    note: customerNotes || null,
+  }]
 }
 
 /**
@@ -141,7 +188,7 @@ export default function ActiveTurnsCard() {
           pendingOrderIdRef.current = null
           return
         }
-        const lunchCommanda = (order.cart || []).map(customerOrderItemToLunchPayload)
+        const lunchCommanda = customerCartToLunchCommanda(order.cart || [])
         pendingOrderIdRef.current = null
         setAssistSaleNonce(0)
         setEditingAssistTab(null)

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthCtx'
 import { getData, initDB } from '../db'
 import { watchCustomerOrder } from '../customerOrders'
 import { watchOpenSessions } from '../cashSessions'
-import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
+import { formatSelection, REPLACEMENT_LABELS, formatAddonLine } from '../utils/lunchFormat'
 
 // ──────────────────────────────────────────────────────────────────
 // /comanda/:id — pantalla pública (no fuerza login) que muestra un
@@ -203,6 +203,10 @@ function OrderSummary({ order }) {
 
 function OrderItemRow({ item, index, isLast }) {
   const isEspecial = item.kind === 'especial'
+  const isAddon = item.kind === 'addon'
+  const title = isAddon
+    ? formatAddonLine(item) || 'Adicional'
+    : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
   return (
     <div style={{
       padding: '10px 0',
@@ -213,7 +217,7 @@ function OrderItemRow({ item, index, isLast }) {
         gap: 8, marginBottom: 6,
       }}>
         <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[900] }}>
-          {index + 1}. {isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'}
+          {index + 1}. {title}
         </div>
         <div style={{
           fontSize: 14, fontWeight: 800, color: T.neutral[900],
@@ -222,6 +226,17 @@ function OrderItemRow({ item, index, isLast }) {
           {fmtCOP(item.price)}
         </div>
       </div>
+
+      {isAddon && (item.quantity > 1 || item.unitPrice > 0) && (
+        <div style={{
+          fontSize: 11.5, color: T.neutral[600], lineHeight: 1.4,
+          fontWeight: 600, fontVariantNumeric: 'tabular-nums',
+        }}>
+          {item.quantity > 1
+            ? `${item.quantity} × ${fmtCOP(item.unitPrice || 0)}`
+            : `${fmtCOP(item.unitPrice || item.price)} c/u`}
+        </div>
+      )}
 
       {isEspecial && item.description && (
         <div style={{
@@ -232,7 +247,7 @@ function OrderItemRow({ item, index, isLast }) {
         </div>
       )}
 
-      {!isEspecial && item.selections && (
+      {!isEspecial && !isAddon && item.selections && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {CATEGORIES.map(cat => {
             const val = item.selections[cat.id]

@@ -5,7 +5,7 @@ import {
   CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
   watchMenuItems, createMenuItem, renameMenuItem,
   archiveMenuItem, unarchiveMenuItem,
-  watchCorrienteConfig, setDailyCorriente,
+  watchCorrienteConfig, setDailyCorriente, setAddonPrices,
 } from '../../menu'
 import {
   ModalOverlay, ModalCard, ModalTitle, ModalSub, ModalActions,
@@ -47,6 +47,12 @@ export default function CatalogView({ authUser, userDoc }) {
   return (
     <div style={{ padding: '16px 14px 80px' }}>
       <CorrientePricesCard
+        config={corrienteConfig}
+        authUser={authUser}
+        editorName={editorName}
+      />
+
+      <AddonPricesCard
         config={corrienteConfig}
         authUser={authUser}
         editorName={editorName}
@@ -261,6 +267,209 @@ function CorrientePricesCard({ config, authUser, editorName }) {
             </button>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Tarjeta de precios de ADICIONES (sopa, huevo, proteína extra).
+// Vive en el mismo doc corriente_config — persistente, no se reinicia.
+// Si un precio es 0, esa adición NO se ofrece al cliente.
+// ──────────────────────────────────────────────────────────────
+function AddonPricesCard({ config, authUser, editorName }) {
+  const soupPrice    = Number(config?.addonSoupPrice) || 0
+  const eggPrice     = Number(config?.addonEggPrice) || 0
+  const proteinPrice = Number(config?.addonProteinPrice) || 0
+  const anyConfigured = soupPrice > 0 || eggPrice > 0 || proteinPrice > 0
+
+  const [editing, setEditing] = useState(false)
+  const [draftSoup, setDraftSoup] = useState(String(soupPrice || ''))
+  const [draftEgg, setDraftEgg] = useState(String(eggPrice || ''))
+  const [draftProtein, setDraftProtein] = useState(String(proteinPrice || ''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!editing) {
+      setDraftSoup(String(soupPrice || ''))
+      setDraftEgg(String(eggPrice || ''))
+      setDraftProtein(String(proteinPrice || ''))
+    }
+  }, [editing, soupPrice, eggPrice, proteinPrice])
+
+  async function handleSave() {
+    setBusy(true); setError(null)
+    try {
+      await setAddonPrices({
+        addonSoupPrice:    Number(draftSoup) || 0,
+        addonEggPrice:     Number(draftEgg) || 0,
+        addonProteinPrice: Number(draftProtein) || 0,
+      }, { publishedBy: authUser?.uid, publishedByName: editorName })
+      setEditing(false)
+    } catch (err) {
+      console.error('[addon prices] save failed:', err)
+      setError('No se pudo guardar. Intenta de nuevo.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginBottom: 18, borderRadius: 18,
+      background: `linear-gradient(135deg, #FFF7E6 0%, #fff 100%)`,
+      border: `1.5px solid #F4E0BC`,
+      boxShadow: '0 4px 14px rgba(192,138,62,0.10)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '14px 18px 12px',
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ fontSize: 22, lineHeight: 1 }}>➕</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 15, fontWeight: 900, color: T.warn,
+            letterSpacing: -0.3,
+          }}>
+            Precios de Adiciones
+          </div>
+          <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 1, lineHeight: 1.4 }}>
+            Lo que el cliente puede pedir extra. Si dejas precio en 0, esa adición no se ofrece.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 16px' }}>
+        {editing ? (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 14,
+            border: `1px solid #F4E0BC`,
+          }}>
+            <FieldLabel>🥣 Sopa adicional ($)</FieldLabel>
+            <input
+              type="number" value={draftSoup}
+              onChange={e => setDraftSoup(e.target.value)}
+              placeholder="0 = no se ofrece"
+              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+            />
+            <FieldLabel>🍳 Huevo adicional ($)</FieldLabel>
+            <input
+              type="number" value={draftEgg}
+              onChange={e => setDraftEgg(e.target.value)}
+              placeholder="0 = no se ofrece"
+              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+            />
+            <FieldLabel>🍗 Proteína adicional ($)</FieldLabel>
+            <input
+              type="number" value={draftProtein}
+              onChange={e => setDraftProtein(e.target.value)}
+              placeholder="0 = no se ofrece"
+              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+            />
+            {error && <ErrorBox>{error}</ErrorBox>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setEditing(false); setError(null) }}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: 12,
+                  background: T.neutral[100], color: T.neutral[700],
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 700,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={busy}
+                style={{
+                  flex: 1.4, padding: '12px', borderRadius: 12,
+                  background: T.warn,
+                  color: '#fff', border: 'none',
+                  cursor: busy ? 'wait' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 800,
+                  boxShadow: `0 3px 10px ${T.warn}44`,
+                }}
+              >
+                {busy ? 'Guardando…' : 'Guardar precios'}
+              </button>
+            </div>
+          </div>
+        ) : anyConfigured ? (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 14,
+            border: `1px solid #F4E0BC`,
+          }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <AddonPriceRow emoji="🥣" label="Sopa adicional"     price={soupPrice} />
+              <AddonPriceRow emoji="🍳" label="Huevo adicional"    price={eggPrice} />
+              <AddonPriceRow emoji="🍗" label="Proteína adicional" price={proteinPrice} />
+            </div>
+            <button
+              onClick={() => setEditing(true)}
+              style={{
+                marginTop: 12, width: '100%', padding: '11px',
+                background: 'transparent', color: T.warn,
+                border: `1.5px solid #F4E0BC`,
+                borderRadius: 11, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              ✎ Cambiar precios
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setEditing(true)}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 12,
+              background: T.warn, color: '#fff',
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 14, fontWeight: 800,
+              boxShadow: `0 3px 10px ${T.warn}44`,
+            }}
+          >
+            + Configurar precios de adiciones
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AddonPriceRow({ emoji, label, price }) {
+  const inactive = price <= 0
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '10px 12px', borderRadius: 10,
+      background: inactive ? T.neutral[50] : '#FFF7E6',
+      border: `1px solid ${inactive ? T.neutral[200] : '#F4E0BC'}`,
+    }}>
+      <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{emoji}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700,
+          color: inactive ? T.neutral[500] : T.neutral[900],
+        }}>
+          {label}
+        </div>
+        {inactive && (
+          <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
+            No se ofrece al cliente
+          </div>
+        )}
+      </div>
+      <div style={{
+        fontSize: 15, fontWeight: 900,
+        color: inactive ? T.neutral[400] : T.warn,
+        fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
+        flexShrink: 0,
+      }}>
+        {inactive ? '—' : fmtCOP(price)}
       </div>
     </div>
   )

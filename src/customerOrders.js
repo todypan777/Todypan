@@ -22,16 +22,25 @@ import { getClientTimestamp } from './utils/network'
 //   Shape:
 //     status: 'pending' | 'confirmed' | 'cancelled'
 //     cart: [{
-//       kind: 'corriente' | 'especial',
+//       kind: 'corriente' | 'especial' | 'addon',
+//       // -- corriente --
 //       selections?: { soup, principio, protein, side, salad, juice },
 //       replacements?: { soup?, principio? },
 //         // valores: 'huevo' | 'extra_principio' | 'extra_side'
 //         //        | 'extra_arroz' | 'extra_salad' | 'extra_juice' | 'nada'
 //         // Solo soup y principio aceptan reemplazo (son las únicas que el
 //         // wizard del cliente permite omitir). El resto siempre se sirve.
-//       description?: string,    // solo especial
-//       note?: string,           // per-almuerzo (observaciones del cliente)
-//       price: number,
+//       // -- especial --
+//       description?: string,
+//       // -- addon (sopa/huevo/proteína extra) --
+//       addonType?: 'soup' | 'egg' | 'protein',
+//       proteinId?: string,      // solo si addonType='protein'
+//       proteinName?: string,    // solo si addonType='protein'
+//       quantity?: number,       // unidades pedidas (>=1)
+//       unitPrice?: number,      // precio por unidad
+//       // -- comunes --
+//       note?: string,           // observaciones del cliente
+//       price: number,           // total del item (unitPrice * quantity para addons)
 //     }]
 //     total: number
 //     createdAt, createdAtClient
@@ -46,13 +55,25 @@ const orderRef = (id) => doc(firestoreDb, 'customerOrders', id)
 export async function createCustomerOrder({ cart, total }) {
   // Sanitizamos lo que se guarda — solo los campos que necesitamos. Evita
   // que cualquier basura del cliente termine en Firestore.
+  const validAddonTypes = new Set(['soup', 'egg', 'protein'])
   const cleanCart = (cart || []).map(it => {
+    let kind = 'corriente'
+    if (it.kind === 'especial') kind = 'especial'
+    else if (it.kind === 'addon' && validAddonTypes.has(it.addonType)) kind = 'addon'
     const out = {
-      kind: it.kind === 'especial' ? 'especial' : 'corriente',
+      kind,
       price: Number(it.price) || 0,
     }
-    if (it.kind === 'especial') {
+    if (kind === 'especial') {
       out.description = it.description?.toString().trim() || null
+    } else if (kind === 'addon') {
+      out.addonType = it.addonType
+      out.quantity = Math.max(1, Math.floor(Number(it.quantity) || 1))
+      out.unitPrice = Number(it.unitPrice) || 0
+      if (it.addonType === 'protein') {
+        out.proteinId = it.proteinId || null
+        out.proteinName = it.proteinName?.toString().trim() || null
+      }
     } else if (it.selections) {
       out.selections = it.selections
       // replacements: solo soup/principio. Sanitizar a llaves conocidas.

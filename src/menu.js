@@ -213,6 +213,40 @@ export async function setDailyCorriente(_dateStr, config, { publishedBy, publish
 }
 
 /**
+ * Define los precios de las ADICIONES (sopa adicional, huevo, proteína
+ * extra). PERSISTENTES — viven en el mismo doc fijo `corriente_config`.
+ *
+ * config: { addonSoupPrice, addonEggPrice, addonProteinPrice }
+ *
+ * Los 3 tipos de adición son fijos: 'soup' | 'egg' | 'protein'.
+ * Si el precio es 0 o falsy, la adición NO se ofrece al cliente.
+ */
+export async function setAddonPrices(config, { publishedBy, publishedByName } = {}) {
+  await setDoc(corrienteConfigRef(), {
+    addonSoupPrice:    Number(config?.addonSoupPrice) || 0,
+    addonEggPrice:     Number(config?.addonEggPrice) || 0,
+    addonProteinPrice: Number(config?.addonProteinPrice) || 0,
+    updatedAt: serverTimestamp(),
+    updatedAtClient: getClientTimestamp(),
+    updatedBy: publishedBy || null,
+    updatedByName: publishedByName || null,
+  }, { merge: true })
+}
+
+/**
+ * Lee los 3 precios de adiciones del doc persistente. Devuelve null para
+ * los que no estén configurados (precio = 0 → no se ofrece al cliente).
+ */
+export function getAddonPrices(corrienteConfig) {
+  const cfg = corrienteConfig || {}
+  return {
+    soup:    Number(cfg.addonSoupPrice) || 0,
+    egg:     Number(cfg.addonEggPrice) || 0,
+    protein: Number(cfg.addonProteinPrice) || 0,
+  }
+}
+
+/**
  * Suscripción al doc persistente de configuración del corriente (precios).
  * callback recibe { priceMesa, priceLlevar } o null si no hay config aún.
  */

@@ -3,14 +3,19 @@ import { createPortal } from 'react-dom'
 import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
-import { CATEGORIES } from '../menu'
+import {
+  CATEGORIES,
+  watchMenuItems, watchDailyMenu, watchCorrienteConfig,
+} from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchKitchenQueue, markOrderReady, unmarkOrderReady,
 } from '../kitchenOrders'
 import ContactSupportButton from '../components/ContactSupportButton'
-import DailyMenuView from '../components/MenuEditor/DailyMenuView'
 import CatalogView from '../components/MenuEditor/CatalogView'
+import DailyMenuCard from '../components/MenuEditor/DailyMenuCard'
+import MenuWizard from '../components/MenuEditor/MenuWizard'
+import MenuEditView from '../components/MenuEditor/MenuEditView'
 import {
   ModalOverlay, ModalCard, ModalTitle, ModalSub,
   btnPrimary, btnSecondary,
@@ -32,6 +37,12 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
 
+  // Overlays del menú del día.
+  //   'wizard'  → MenuWizard (crear desde cero)
+  //   'edit'    → MenuEditView (editar publicado)
+  //   null      → ninguno
+  const [menuOverlay, setMenuOverlay] = useState(null)
+
   const today = useBogotaDate()
   // Fecha seleccionada para la pestaña "Hoy". Cocinera = siempre hoy.
   // Admin (assistMode) puede navegar a otros días con un selector.
@@ -45,6 +56,19 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
 
   const [queue, setQueue] = useState([])
   useEffect(() => watchKitchenQueue(setQueue), [])
+
+  // Datos del menú del día para la tarjeta arriba de Hoy.
+  // Solo se suscribe cuando se ve hoy real (no para fechas pasadas en
+  // assist mode — ahí la tarjeta no aparece).
+  const [allMenuItems, setAllMenuItems] = useState([])
+  const [dailyMenu, setDailyMenu] = useState(null)
+  const [corrienteConfig, setCorrienteConfig] = useState(null)
+  useEffect(() => watchMenuItems(setAllMenuItems), [])
+  useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
+  useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
+
+  const publisherName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+    || authUser?.email || 'Editor'
 
   const pendingCount = useMemo(
     () => queue.filter(o =>
@@ -91,11 +115,6 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
           badge={pendingCount}
         />
         <CookTab
-          active={tab === 'menu'}
-          onClick={() => setTab('menu')}
-          label="Menú del día"
-        />
-        <CookTab
           active={tab === 'catalog'}
           onClick={() => setTab('catalog')}
           label="Catálogo"
@@ -112,6 +131,20 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
                 onChange={setSelectedDate}
               />
             )}
+            {/* Tarjeta del menú del día. Solo cuando la fecha activa
+                coincide con hoy real (no en navegación a fechas pasadas). */}
+            {selectedDate === today && (
+              <DailyMenuCard
+                dailyMenu={dailyMenu}
+                allMenuItems={allMenuItems}
+                corrienteConfig={corrienteConfig}
+                today={today}
+                authUser={authUser}
+                publisherName={publisherName}
+                onCreate={() => setMenuOverlay('wizard')}
+                onEdit={() => setMenuOverlay('edit')}
+              />
+            )}
             <KitchenQueueView
               queue={queue}
               selectedDate={selectedDate}
@@ -119,13 +152,34 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
             />
           </>
         )}
-        {tab === 'menu' && (
-          <DailyMenuView authUser={authUser} userDoc={userDoc} />
-        )}
         {tab === 'catalog' && (
           <CatalogView authUser={authUser} userDoc={userDoc} />
         )}
       </div>
+
+      {menuOverlay === 'wizard' && (
+        <MenuWizard
+          today={today}
+          authUser={authUser}
+          publisherName={publisherName}
+          allMenuItems={allMenuItems}
+          onClose={() => setMenuOverlay(null)}
+          onDone={() => setMenuOverlay(null)}
+        />
+      )}
+
+      {menuOverlay === 'edit' && (
+        <MenuEditView
+          today={today}
+          authUser={authUser}
+          publisherName={publisherName}
+          allMenuItems={allMenuItems}
+          dailyMenu={dailyMenu}
+          corrienteConfig={corrienteConfig}
+          onClose={() => setMenuOverlay(null)}
+          onGoToCatalog={() => { setMenuOverlay(null); setTab('catalog') }}
+        />
+      )}
 
       {menuOpen && (
         <AvatarMenuOverlay

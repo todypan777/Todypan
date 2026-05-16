@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthCtx'
 import { getData, initDB } from '../db'
 import { watchCustomerOrder } from '../customerOrders'
 import { watchOpenSessions } from '../cashSessions'
+import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
 // ──────────────────────────────────────────────────────────────────
 // /comanda/:id — pantalla pública (no fuerza login) que muestra un
@@ -235,9 +236,10 @@ function OrderItemRow({ item, index, isLast }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {CATEGORIES.map(cat => {
             const val = item.selections[cat.id]
-            const text = formatSelection(cat, val)
+            const rep = item.replacements?.[cat.id] || null
+            const text = formatSelection(cat, val, rep)
             if (!text) return null
-            const isSin = !val && cat.alwaysServed
+            const isSin = !val && !REPLACEMENT_LABELS[rep]
             return (
               <div key={cat.id} style={{
                 display: 'flex', gap: 6, fontSize: 11.5, lineHeight: 1.4,
@@ -272,16 +274,6 @@ function OrderItemRow({ item, index, isLast }) {
       )}
     </div>
   )
-}
-
-function formatSelection(cat, val) {
-  if (!val) return cat.alwaysServed ? `SIN ${cat.label.toUpperCase()}` : null
-  if (Array.isArray(val)) {
-    if (val.length === 0) return null
-    if (val.length === 1) return val[0]?.name || null
-    return 'MIXTO · ' + val.map(v => v.name).join(' / ')
-  }
-  return val.name || null
 }
 
 // ─── Vista: pedido YA confirmado ─────────────────────────────────

@@ -8,7 +8,8 @@ import {
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import { createCustomerOrder } from '../customerOrders'
-import PublicLunchPickerModal from '../components/PublicLunchPickerModal'
+import PublicLunchWizard from '../components/PublicLunchWizard'
+import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
 // ──────────────────────────────────────────────────────────────────
 // Página pública /menu para clientes.
@@ -31,10 +32,12 @@ export default function PublicMenu() {
   const [error, setError] = useState(null)
 
   // Pedido del cliente: lista de almuerzos.
-  // shape: [{ kind: 'corriente' | 'especial', selections?, description?, note, price }]
+  // shape: [{
+  //   kind: 'corriente' | 'especial',
+  //   selections?, replacements?, description?, note, price
+  // }]
   const [cart, setCart] = useState([])
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [reviewOpen, setReviewOpen] = useState(false)
 
   // Watchers
   useEffect(() => {
@@ -116,7 +119,6 @@ export default function PublicMenu() {
     // 3) Pantalla de "enviado" — limpia el carrito y le confirma al cliente
     //    que el pedido ya está en camino sin que tenga que adivinar.
     setSendState('sent')
-    setReviewOpen(false)
     setCart([])
   }
   function requestMenu() {
@@ -136,8 +138,7 @@ export default function PublicMenu() {
       <div style={{
         flex: 1,
         maxWidth: 640, margin: '0 auto', width: '100%',
-        padding: '20px 18px',
-        paddingBottom: cart.length > 0 ? 140 : 24,
+        padding: '20px 18px 24px',
         boxSizing: 'border-box',
       }}>
         {loading && <SkeletonCards />}
@@ -176,29 +177,28 @@ export default function PublicMenu() {
               Pedí acá, te ahorrás escribir
             </div>
             <div style={{
-              fontSize: 14, color: T.neutral[600], marginBottom: 14, lineHeight: 1.5,
+              fontSize: 14, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5,
               animation: 'pmHeroIn 0.4s ease 0.1s backwards',
             }}>
-              Personalizá tu almuerzo y te mandamos a WhatsApp con
+              Te guiamos paso a paso y te mandamos a WhatsApp con
               <b style={{ color: T.copper[700] }}> todo el pedido listo</b>.
-              No tenés que escribir nada.
             </div>
 
-            {/* Mini-indicador de pasos — refuerza que el flujo se completa
-                acá y termina en WhatsApp, no al revés. */}
-            <div style={{
-              display: 'flex', gap: 8, marginBottom: 22,
-              animation: 'pmHeroIn 0.4s ease 0.15s backwards',
-            }}>
-              <StepChip n="1" label="Escogé" />
-              <StepChip n="2" label="Personalizá" />
-              <StepChip n="3" label="Enviar" />
-            </div>
+            {/* Lista de almuerzos ya agregados (inline, sin modal) */}
+            {cart.length > 0 && (
+              <CartInline
+                cart={cart}
+                total={total}
+                onRemove={removeItem}
+              />
+            )}
 
+            {/* Tarjeta corriente compacta — sin mostrar todo el menú,
+                solo precio y botón grande para abrir el wizard. */}
             {corriente.available && (
-              <CorrienteCard
+              <CorrienteCardCompact
                 price={corriente.priceLlevar}
-                resolvedMenu={resolvedMenu}
+                cartCount={cart.length}
                 onAdd={() => setPickerOpen(true)}
                 animDelay={120}
               />
@@ -213,40 +213,27 @@ export default function PublicMenu() {
               />
             )}
 
+            {/* Botón grande de envío (solo si hay almuerzos) */}
+            {cart.length > 0 && (
+              <SendBigButton
+                total={total}
+                sending={sendState === 'sending'}
+                onSend={sendOrder}
+              />
+            )}
+
             <Footer />
           </>
         )}
       </div>
 
-      {/* Barra flotante de pedido */}
-      {cart.length > 0 && (
-        <CartBar
-          count={cart.length}
-          total={total}
-          sending={sendState === 'sending'}
-          onReview={() => setReviewOpen(true)}
-          onSend={sendOrder}
-        />
-      )}
-
-      {/* Modal personalizador corriente */}
+      {/* Wizard del cliente para armar UN almuerzo paso a paso */}
       {pickerOpen && corriente.available && (
-        <PublicLunchPickerModal
+        <PublicLunchWizard
           resolvedMenu={resolvedMenu}
           price={corriente.priceLlevar}
           onCancel={() => setPickerOpen(false)}
           onAdd={addCorriente}
-        />
-      )}
-
-      {/* Modal de revisión del pedido */}
-      {reviewOpen && (
-        <ReviewModal
-          cart={cart}
-          total={total}
-          onRemove={removeItem}
-          onClose={() => setReviewOpen(false)}
-          onSend={() => { setReviewOpen(false); sendOrder() }}
         />
       )}
 
@@ -310,89 +297,276 @@ function formatNiceDate(dateStr) {
 
 // ─── Cards ───────────────────────────────────────────────────────
 
-function CorrienteCard({ price, resolvedMenu, onAdd, animDelay = 0 }) {
+// ─── Tarjeta CORRIENTE compacta — sin mostrar el menú ────────────
+// El menú detallado lo ve dentro del wizard (paso por paso). Aquí
+// solo el precio + CTA grande para empezar a armar.
+function CorrienteCardCompact({ price, cartCount, onAdd, animDelay = 0 }) {
+  const isFirst = cartCount === 0
   return (
     <div style={{
-      background: '#fff', borderRadius: 20,
-      border: `1px solid ${T.copper[100]}`,
-      boxShadow: '0 4px 18px rgba(184,122,86,0.08)',
-      overflow: 'hidden',
+      background: '#fff', borderRadius: 22,
+      border: `1.5px solid ${T.copper[200]}`,
+      boxShadow: '0 6px 22px rgba(184,122,86,0.12)',
+      overflow: 'hidden', marginBottom: 18,
       animation: `pmCardIn 0.5s cubic-bezier(0.2,0.9,0.3,1.05) ${animDelay}ms backwards`,
-      marginBottom: 18,
     }}>
       <div style={{
-        padding: '18px 20px 8px',
-        background: `linear-gradient(180deg, ${T.copper[50]} 0%, #fff 100%)`,
+        padding: '22px 22px 18px',
+        background: `linear-gradient(140deg, ${T.copper[50]} 0%, #fff 100%)`,
+        textAlign: 'center',
       }}>
+        <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 6 }}>🍽️</div>
         <div style={{
-          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8,
+          fontSize: 11.5, fontWeight: 800, color: T.copper[700],
+          letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4,
         }}>
-          <div style={{
-            fontSize: 11.5, fontWeight: 800, color: T.copper[700],
-            letterSpacing: 1.2, textTransform: 'uppercase',
-          }}>
-            Almuerzo Corriente
-          </div>
-          <div style={{
-            fontSize: 22, fontWeight: 900, color: T.neutral[900],
-            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5,
-          }}>
-            {fmtCOP(price)}
-          </div>
+          Almuerzo Corriente
         </div>
         <div style={{
-          fontSize: 12.5, color: T.neutral[500], marginTop: 2,
+          fontSize: 30, fontWeight: 900, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', letterSpacing: -0.8,
+          lineHeight: 1.1,
         }}>
-          Para llevar · personalízalo a tu gusto
+          {fmtCOP(price)}
+        </div>
+        <div style={{
+          fontSize: 13, color: T.neutral[600], marginTop: 6,
+          lineHeight: 1.45,
+        }}>
+          Te preguntamos paso a paso qué quieres
         </div>
       </div>
 
-      <div style={{ padding: '8px 20px 18px' }}>
-        {CATEGORIES.map(cat => {
-          const opts = resolvedMenu[cat.id] || []
-          if (opts.length === 0) return null
-          return (
-            <div key={cat.id} style={{
-              display: 'flex', alignItems: 'baseline', gap: 10,
-              padding: '8px 0',
-              borderBottom: `0.5px dashed ${T.neutral[100]}`,
-            }}>
-              <span style={{ fontSize: 14, flexShrink: 0 }}>{cat.emoji}</span>
-              <div style={{
-                fontSize: 11, fontWeight: 800, color: T.neutral[500],
-                letterSpacing: 0.5, textTransform: 'uppercase',
-                minWidth: 88, flexShrink: 0,
-              }}>
-                {cat.label}
-              </div>
-              <div style={{
-                flex: 1, fontSize: 13.5, color: T.neutral[800],
-                fontWeight: 600, lineHeight: 1.4,
-              }}>
-                {opts.map(o => o.name).join(' · ')}
-              </div>
-            </div>
-          )
-        })}
+      <div style={{ padding: '0 16px 16px' }}>
+        <button
+          onClick={onAdd}
+          style={{
+            width: '100%', padding: '18px',
+            background: T.copper[500], color: '#fff',
+            border: 'none', borderRadius: 16, cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 16, fontWeight: 800,
+            letterSpacing: -0.2,
+            boxShadow: `0 6px 18px ${T.copper[500]}55`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            transition: 'transform 0.1s ease',
+          }}
+          onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.98)')}
+          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+          {isFirst ? 'Agregar mi almuerzo' : 'Agregar otro almuerzo'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Carrito INLINE en la página (reemplaza CartBar + ReviewModal) ───
+function CartInline({ cart, total, onRemove }) {
+  return (
+    <div style={{
+      marginBottom: 18, borderRadius: 22,
+      background: '#fff',
+      border: `1.5px solid ${T.copper[200]}`,
+      boxShadow: '0 4px 18px rgba(184,122,86,0.10)',
+      overflow: 'hidden',
+      animation: 'pmCardIn 0.4s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      <div style={{
+        padding: '14px 18px',
+        background: T.copper[50],
+        borderBottom: `1px solid ${T.copper[100]}`,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <div style={{
+          width: 30, height: 30, borderRadius: 999, flexShrink: 0,
+          background: T.copper[500], color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 13, fontWeight: 900, fontVariantNumeric: 'tabular-nums',
+        }}>
+          {cart.length}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 900, color: T.copper[700], letterSpacing: -0.2 }}>
+            Tu pedido
+          </div>
+          <div style={{
+            fontSize: 11.5, color: T.neutral[600], marginTop: 1,
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {cart.length} {cart.length === 1 ? 'almuerzo' : 'almuerzos'} · {fmtCOP(total)}
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '10px 12px' }}>
+        {cart.map((it, i) => (
+          <CartItemRow
+            key={i}
+            index={i}
+            item={it}
+            onRemove={() => onRemove(i)}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CartItemRow({ index, item, onRemove }) {
+  const isEspecial = item.kind === 'especial'
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 14,
+      border: `1px solid ${T.neutral[100]}`,
+      padding: '12px 14px', marginBottom: 8,
+      display: 'flex', gap: 10, alignItems: 'flex-start',
+      animation: 'pmCardIn 0.3s ease backwards',
+    }}>
+      <div style={{
+        width: 32, height: 32, borderRadius: 10, flexShrink: 0,
+        background: isEspecial ? '#FFF7E6' : T.copper[50],
+        border: `1px solid ${isEspecial ? '#F4E0BC' : T.copper[100]}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 12, fontWeight: 800,
+        color: isEspecial ? T.warn : T.copper[700],
+      }}>
+        {index + 1}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+          gap: 8, marginBottom: 4,
+        }}>
+          <div style={{
+            fontSize: 13, fontWeight: 800, color: T.neutral[900],
+            letterSpacing: -0.2,
+          }}>
+            {isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'}
+          </div>
+          <div style={{
+            fontSize: 13.5, fontWeight: 800, color: T.neutral[900],
+            fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+          }}>
+            {fmtCOP(item.price)}
+          </div>
+        </div>
+
+        {isEspecial && item.description && (
+          <div style={{
+            fontSize: 12, color: T.neutral[700], lineHeight: 1.4,
+            fontWeight: 600,
+          }}>
+            {item.description}
+          </div>
+        )}
+
+        {!isEspecial && item.selections && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 2,
+            marginTop: 2,
+          }}>
+            {CATEGORIES.map(cat => {
+              const val = item.selections[cat.id]
+              const rep = item.replacements?.[cat.id] || null
+              const text = formatSelection(cat, val, rep)
+              if (!text) return null
+              const isSin = !val && !REPLACEMENT_LABELS[rep]
+              return (
+                <div key={cat.id} style={{
+                  display: 'flex', gap: 6, fontSize: 11, lineHeight: 1.35,
+                }}>
+                  <span style={{
+                    color: T.neutral[500], fontWeight: 700, letterSpacing: 0.2,
+                    minWidth: 78, flexShrink: 0,
+                  }}>
+                    {cat.label}
+                  </span>
+                  <span style={{
+                    flex: 1,
+                    color: isSin ? T.bad : T.neutral[800],
+                    fontWeight: isSin ? 800 : 600, wordBreak: 'break-word',
+                  }}>
+                    {text}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {item.note && (
+          <div style={{
+            marginTop: 6, padding: '6px 9px', borderRadius: 7,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            fontSize: 11.5, color: '#7A5C00', fontWeight: 600,
+            fontStyle: 'italic', lineHeight: 1.4, wordBreak: 'break-word',
+          }}>
+            📝 {item.note}
+          </div>
+        )}
       </div>
 
       <button
-        onClick={onAdd}
+        onClick={onRemove}
+        title="Quitar"
+        aria-label={`Quitar almuerzo ${index + 1}`}
         style={{
-          width: '100%', padding: '16px',
-          background: T.copper[500], color: '#fff',
-          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-          fontSize: 15, fontWeight: 800, letterSpacing: 0.3,
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15)',
-          transition: 'background 0.18s, transform 0.1s ease',
+          width: 30, height: 30, borderRadius: 999, flexShrink: 0,
+          background: 'transparent', color: T.bad,
+          border: `1px solid ${T.bad}55`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
       >
-        Personalizar y agregar →
+        <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+          <path d="M3 3 L9 9 M9 3 L3 9" stroke={T.bad} strokeWidth="1.8" strokeLinecap="round"/>
+        </svg>
       </button>
     </div>
+  )
+}
+
+// ─── Botón grande "Enviar pedido" ────────────────────────────────
+function SendBigButton({ total, sending, onSend }) {
+  return (
+    <button
+      onClick={sending ? undefined : onSend}
+      disabled={sending}
+      style={{
+        width: '100%', padding: '18px', marginTop: 4, marginBottom: 8,
+        borderRadius: 18,
+        background: sending ? T.neutral[400] : '#25D366', color: '#fff',
+        border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
+        fontSize: 16, fontWeight: 900, letterSpacing: -0.2,
+        boxShadow: sending ? 'none' : '0 6px 18px rgba(37,211,102,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+        animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
+        transition: 'transform 0.1s ease',
+      }}
+      onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.98)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+      onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      {sending ? (
+        <>
+          <span style={{
+            width: 16, height: 16, borderRadius: 999,
+            border: '2px solid rgba(255,255,255,0.4)',
+            borderTopColor: '#fff',
+            animation: 'pmSpin 0.7s linear infinite',
+          }}/>
+          Enviando…
+        </>
+      ) : (
+        <>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
+            <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm5.5 14.4c-.3.7-1.5 1.3-2 1.4-.5.1-1.1.1-1.8-.1-.4-.1-.9-.3-1.6-.6-2.8-1.2-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8 0-1.4.7-2 1-2.3.3-.3.6-.4.7-.4h.6c.1 0 .4 0 .6.5.3.6.9 2 .9 2.1 0 .1 0 .3 0 .5-.1.2-.2.3-.3.5-.1.2-.3.4-.4.5-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 2 1.1.9 2 1.3 2.3 1.4.3.1.4.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.3.7-.2.3.1 1.6.8 1.9.9.3.1.5.2.5.3.1.2.1.7-.2 1.4z"/>
+          </svg>
+          Enviar pedido por WhatsApp · {fmtCOP(total)}
+        </>
+      )}
+    </button>
   )
 }
 
@@ -540,33 +714,6 @@ function SkeletonCards() {
   )
 }
 
-// ─── Mini-indicador de 3 pasos (escogé · personalizá · enviar) ───
-
-function StepChip({ n, label }) {
-  return (
-    <div style={{
-      flex: 1, display: 'flex', alignItems: 'center', gap: 8,
-      padding: '8px 10px', borderRadius: 999,
-      background: '#fff', border: `1px solid ${T.copper[100]}`,
-    }}>
-      <div style={{
-        width: 22, height: 22, borderRadius: 999, flexShrink: 0,
-        background: T.copper[500], color: '#fff',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 12, fontWeight: 800,
-      }}>
-        {n}
-      </div>
-      <div style={{
-        fontSize: 11.5, fontWeight: 700, color: T.copper[700],
-        letterSpacing: 0.2,
-      }}>
-        {label}
-      </div>
-    </div>
-  )
-}
-
 // ─── Pantalla "Pedido enviado" ───────────────────────────────────
 // Aparece tras un envío exitoso. Confirma al cliente que el pedido
 // llegó, refuerza que el admin lo confirma y le da la opción de
@@ -620,309 +767,6 @@ function SentSuccess({ onAnother }) {
   )
 }
 
-// ─── Cart bar (floating) ─────────────────────────────────────────
-
-function CartBar({ count, total, sending = false, onReview, onSend }) {
-  return (
-    <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 30,
-      background: 'transparent', pointerEvents: 'none',
-      paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-      animation: 'pmCartIn 0.4s cubic-bezier(0.2,0.9,0.3,1.05)',
-    }}>
-      <div style={{
-        maxWidth: 640, margin: '0 auto', padding: '12px 14px 14px',
-        pointerEvents: 'auto',
-      }}>
-        <div style={{
-          background: '#fff', borderRadius: 18,
-          border: `1px solid ${T.copper[100]}`,
-          boxShadow: '0 10px 28px rgba(0,0,0,0.12)',
-          padding: 8, display: 'flex', alignItems: 'stretch', gap: 8,
-        }}>
-          <button
-            onClick={onReview}
-            style={{
-              flex: 1, padding: '12px 14px', borderRadius: 12,
-              background: T.copper[50], color: T.copper[700],
-              border: `1px solid ${T.copper[100]}`,
-              cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
-              display: 'flex', alignItems: 'center', gap: 12,
-              transition: 'background 0.15s',
-            }}
-          >
-            <div style={{
-              width: 32, height: 32, borderRadius: 999, flexShrink: 0,
-              background: T.copper[500], color: '#fff',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 14, fontWeight: 800, fontVariantNumeric: 'tabular-nums',
-            }}>
-              {count}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-                Tu pedido
-              </div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3 }}>
-                {fmtCOP(total)}
-              </div>
-            </div>
-          </button>
-
-          <button
-            onClick={sending ? undefined : onSend}
-            disabled={sending}
-            aria-label="Enviar por WhatsApp"
-            style={{
-              padding: '12px 18px', borderRadius: 12,
-              background: sending ? T.neutral[400] : '#25D366', color: '#fff',
-              border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
-              fontSize: 14, fontWeight: 800, letterSpacing: 0.3,
-              boxShadow: sending ? 'none' : '0 4px 14px rgba(37,211,102,0.35)',
-              display: 'flex', alignItems: 'center', gap: 8,
-              animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
-              transition: 'transform 0.1s ease',
-            }}
-            onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.97)')}
-            onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-          >
-            {sending ? (
-              <>
-                <span style={{
-                  width: 14, height: 14, borderRadius: 999,
-                  border: '2px solid rgba(255,255,255,0.4)',
-                  borderTopColor: '#fff',
-                  animation: 'pmSpin 0.7s linear infinite',
-                }}/>
-                Enviando...
-              </>
-            ) : (
-              <>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff">
-                  <path d="M17.5 14.4c-.3-.1-1.7-.8-1.9-.9-.3-.1-.5-.1-.7.2-.2.3-.7.9-.9 1.1-.2.2-.3.2-.6.1-.3-.1-1.2-.5-2.3-1.4-.9-.8-1.4-1.7-1.6-2-.2-.3 0-.5.1-.6.1-.1.3-.3.4-.5.1-.2.2-.3.3-.5.1-.2.1-.4 0-.5 0-.1-.6-1.5-.9-2.1-.2-.5-.5-.5-.6-.5h-.6c-.2 0-.5.1-.7.4-.3.3-1 .9-1 2.3 0 1.3 1 2.6 1.1 2.8.1.2 1.9 3 4.7 4.2.7.3 1.2.5 1.6.6.7.2 1.3.2 1.8.1.5-.1 1.7-.7 2-1.4.3-.7.3-1.2.2-1.4 0-.1-.2-.2-.5-.3z"/>
-                  <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm0 22c-1.9 0-3.7-.5-5.3-1.5l-.4-.2-3.9 1 1-3.8-.2-.4c-1-1.6-1.6-3.5-1.6-5.4 0-5.5 4.5-10 10-10s10 4.5 10 10c0 5.5-4.5 10.3-10 10.3z" />
-                </svg>
-                Enviar
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Review modal ────────────────────────────────────────────────
-
-function ReviewModal({ cart, total, onRemove, onClose, onSend }) {
-  return (
-    <div onClick={onClose} style={{
-      position: 'fixed', inset: 0, zIndex: 100,
-      background: 'rgba(0,0,0,0.55)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
-      animation: 'pmFadeBg 0.2s ease',
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 540, maxHeight: '88vh',
-        background: T.neutral[50], borderRadius: '24px 24px 0 0',
-        display: 'flex', flexDirection: 'column',
-        boxShadow: '0 -8px 32px rgba(0,0,0,0.25)',
-        animation: 'pmSlideUp 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
-      }}>
-        <div style={{
-          padding: '18px 22px', background: '#fff',
-          borderBottom: `1px solid ${T.neutral[100]}`,
-          borderRadius: '24px 24px 0 0',
-          display: 'flex', alignItems: 'center', gap: 12,
-        }}>
-          <button
-            onClick={onClose}
-            aria-label="Cerrar"
-            style={{
-              width: 38, height: 38, borderRadius: 999,
-              background: T.neutral[100], border: 'none',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M3 3 L11 11 M11 3 L3 11" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
-              Tu pedido
-            </div>
-            <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
-              {cart.length} {cart.length === 1 ? 'almuerzo' : 'almuerzos'} · {fmtCOP(total)}
-            </div>
-          </div>
-        </div>
-
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 18px' }}>
-          {cart.map((it, i) => (
-            <CartItemCard
-              key={i}
-              index={i}
-              item={it}
-              onRemove={() => onRemove(i)}
-            />
-          ))}
-        </div>
-
-        <div style={{
-          padding: '14px 18px',
-          background: '#fff', borderTop: `1px solid ${T.neutral[100]}`,
-          paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
-        }}>
-          <button
-            onClick={onSend}
-            disabled={cart.length === 0}
-            style={{
-              width: '100%', padding: '15px', borderRadius: 16,
-              background: cart.length === 0 ? T.neutral[200] : '#25D366',
-              color: cart.length === 0 ? T.neutral[500] : '#fff',
-              border: 'none', cursor: cart.length === 0 ? 'not-allowed' : 'pointer',
-              fontFamily: 'inherit', fontSize: 15.5, fontWeight: 800, letterSpacing: 0.3,
-              boxShadow: cart.length === 0 ? 'none' : '0 4px 14px rgba(37,211,102,0.35)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
-              <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm5.5 14.4c-.3.7-1.5 1.3-2 1.4-.5.1-1.1.1-1.8-.1-.4-.1-.9-.3-1.6-.6-2.8-1.2-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8 0-1.4.7-2 1-2.3.3-.3.6-.4.7-.4h.6c.1 0 .4 0 .6.5.3.6.9 2 .9 2.1 0 .1 0 .3 0 .5-.1.2-.2.3-.3.5-.1.2-.3.4-.4.5-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 2 1.1.9 2 1.3 2.3 1.4.3.1.4.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.3.7-.2.3.1 1.6.8 1.9.9.3.1.5.2.5.3.1.2.1.7-.2 1.4z"/>
-            </svg>
-            Enviar pedido por WhatsApp
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CartItemCard({ index, item, onRemove }) {
-  const isEspecial = item.kind === 'especial'
-  return (
-    <div style={{
-      background: '#fff', borderRadius: 14,
-      border: `1px solid ${T.neutral[100]}`,
-      padding: '12px 14px', marginBottom: 10,
-      display: 'flex', gap: 12, alignItems: 'flex-start',
-      animation: 'pmCardIn 0.35s ease backwards',
-    }}>
-      <div style={{
-        width: 38, height: 38, borderRadius: 12, flexShrink: 0,
-        background: isEspecial ? '#FFF7E6' : T.copper[50],
-        border: `1px solid ${isEspecial ? '#F4E0BC' : T.copper[100]}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 12, fontWeight: 800,
-        color: isEspecial ? T.warn : T.copper[700],
-      }}>
-        {index + 1}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
-          gap: 8, marginBottom: 6,
-        }}>
-          <div style={{
-            fontSize: 13.5, fontWeight: 800, color: T.neutral[900],
-            letterSpacing: -0.2,
-          }}>
-            {isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'}
-          </div>
-          <div style={{
-            fontSize: 14, fontWeight: 800, color: T.neutral[900],
-            fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-          }}>
-            {fmtCOP(item.price)}
-          </div>
-        </div>
-
-        {isEspecial && item.description && (
-          <div style={{
-            fontSize: 12.5, color: T.neutral[700], lineHeight: 1.4,
-            fontWeight: 600,
-          }}>
-            {item.description}
-          </div>
-        )}
-
-        {!isEspecial && item.selections && (
-          <div style={{
-            display: 'flex', flexDirection: 'column', gap: 3,
-            marginTop: 2,
-          }}>
-            {CATEGORIES.map(cat => {
-              const val = item.selections[cat.id]
-              const text = formatSelection(cat, val)
-              if (!text) return null
-              const isSin = !val && cat.alwaysServed
-              return (
-                <div key={cat.id} style={{
-                  display: 'flex', gap: 6, fontSize: 11.5, lineHeight: 1.35,
-                }}>
-                  <span style={{
-                    color: T.neutral[500], fontWeight: 700, letterSpacing: 0.2,
-                    minWidth: 84, flexShrink: 0,
-                  }}>
-                    {cat.label}
-                  </span>
-                  <span style={{
-                    flex: 1, color: isSin ? T.bad : T.neutral[800],
-                    fontWeight: isSin ? 800 : 600, wordBreak: 'break-word',
-                  }}>
-                    {text}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        {item.note && (
-          <div style={{
-            marginTop: 8, padding: '7px 10px', borderRadius: 8,
-            background: '#FFF7E6', border: `1px solid #F4E0BC`,
-            fontSize: 12, color: '#7A5C00', fontWeight: 600,
-            fontStyle: 'italic', lineHeight: 1.4, wordBreak: 'break-word',
-          }}>
-            {item.note}
-          </div>
-        )}
-      </div>
-
-      <button
-        onClick={onRemove}
-        title="Quitar"
-        style={{
-          width: 30, height: 30, borderRadius: 999, flexShrink: 0,
-          background: 'transparent', color: T.bad,
-          border: `1px solid ${T.bad}55`,
-          cursor: 'pointer', fontFamily: 'inherit',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M3 3 L9 9 M9 3 L3 9" stroke={T.bad} strokeWidth="1.8" strokeLinecap="round"/>
-        </svg>
-      </button>
-    </div>
-  )
-}
-
-function formatSelection(cat, val) {
-  if (!val) {
-    return cat.alwaysServed ? `SIN ${cat.label.toUpperCase()}` : null
-  }
-  if (Array.isArray(val)) {
-    if (val.length === 0) return null
-    if (val.length === 1) return val[0]?.name || null
-    return 'MIXTO · ' + val.map(v => v.name).join(' / ')
-  }
-  return val.name || null
-}
-
 // ─── Footer ──────────────────────────────────────────────────────
 
 function Footer() {
@@ -961,7 +805,8 @@ function buildOrderMessage(cart, confirmUrl = null) {
     } else if (item.selections) {
       for (const cat of CATEGORIES) {
         const val = item.selections[cat.id]
-        const text = formatSelection(cat, val)
+        const rep = item.replacements?.[cat.id] || null
+        const text = formatSelection(cat, val, rep)
         if (text) lines.push(`  ${CAT_LABEL[cat.id]}: ${text}`)
       }
     }

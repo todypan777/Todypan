@@ -20,6 +20,7 @@ import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import { getCustomerOrder } from '../customerOrders'
+import { buildKitchenNoteFromCustomerItem } from '../utils/lunchFormat'
 import {
   watchOpenTabsForSession,
   deleteOpenTab,
@@ -42,8 +43,17 @@ const WEB_ORDER_BRANCH_NAME = 'Panadería B'
 // Convierte un item del cart de customerOrder al shape que usa el state
 // `lunchCommanda` de NewSale (mismo que producen LunchPickerModal /
 // SpecialLunchModal al armar un almuerzo).
+// Los `replacements` (reemplazos del wizard cuando el cliente dice NO a
+// sopa/principio) se concatenan al `note` para que viajen a cocina sin
+// tocar el modelo de kitchenOrders.
 function customerOrderItemToLunchPayload(item) {
   const isEspecial = item.kind === 'especial'
+  const note = isEspecial
+    ? (item.note || null)
+    : buildKitchenNoteFromCustomerItem({
+        replacements: item.replacements,
+        note: item.note,
+      })
   return {
     kind: isEspecial ? 'special' : 'menu',
     productId: null,
@@ -52,7 +62,7 @@ function customerOrderItemToLunchPayload(item) {
     selections: isEspecial ? null : (item.selections || null),
     description: isEspecial ? (item.description || null) : null,
     price: Number(item.price) || 0,
-    note: item.note || null,
+    note,
   }
 }
 

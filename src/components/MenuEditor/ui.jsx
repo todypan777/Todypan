@@ -1,9 +1,9 @@
 import { T } from '../../tokens'
 
-// Primitivos de UI compartidos por DailyMenuView, CatalogView y los modales
-// del CookApp. Extraídos del CookApp original para que el admin pueda
-// reutilizar los mismos editores en su modo "Asistir cocinera" sin duplicar
-// código.
+// Primitivos de UI compartidos por CatalogView, MenuWizard, MenuEditView
+// y los modales del CookApp. Extraídos del CookApp original para que el
+// admin pueda reutilizar los mismos editores en su modo "Asistir cocinera"
+// sin duplicar código.
 
 export function ModalOverlay({ onClose, children }) {
   return (

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../../tokens'
+import { fmtCOP } from '../../utils/format'
 import {
   CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
   watchMenuItems, createMenuItem, renameMenuItem,
   archiveMenuItem, unarchiveMenuItem,
+  watchCorrienteConfig, setDailyCorriente,
 } from '../../menu'
 import {
   ModalOverlay, ModalCard, ModalTitle, ModalSub, ModalActions,
@@ -11,19 +13,27 @@ import {
 } from './ui'
 
 // ──────────────────────────────────────────────────────────────
-// Editor del catálogo permanente. Compartido entre cocinera y admin.
+// Editor del catálogo permanente + precios del corriente.
+// Compartido entre cocinera y admin.
+//
+// Estructura:
+//   - Tarjeta de Precios del Corriente (mesa + llevar)
+//   - Categorías con sus items (lista vertical refinada)
 //
 // Props:
-//   authUser  → para createdBy.
-//   userDoc   → para createdByName.
+//   authUser  → para createdBy / updatedBy
+//   userDoc   → para createdByName / updatedByName
 // ──────────────────────────────────────────────────────────────
 export default function CatalogView({ authUser, userDoc }) {
   const [allItems, setAllItems] = useState([])
+  const [corrienteConfig, setCorrienteConfig] = useState(null)
   const [creatingFor, setCreatingFor] = useState(null) // categoryId
   const [editing, setEditing] = useState(null) // item
-  const editorName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Editor'
+  const editorName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+    || authUser?.email || 'Editor'
 
   useEffect(() => watchMenuItems(setAllItems), [])
+  useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
 
   const itemsByCategory = useMemo(() => {
     const out = {}
@@ -36,13 +46,19 @@ export default function CatalogView({ authUser, userDoc }) {
 
   return (
     <div style={{ padding: '16px 14px 80px' }}>
+      <CorrientePricesCard
+        config={corrienteConfig}
+        authUser={authUser}
+        editorName={editorName}
+      />
+
       <div style={{
-        padding: '12px 14px', borderRadius: 12, marginBottom: 16,
-        background: T.neutral[100], border: `1px solid ${T.neutral[200]}`,
-        fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5,
+        padding: '12px 14px', borderRadius: 14, marginBottom: 18,
+        background: T.neutral[25], border: `1px solid ${T.neutral[200]}`,
+        fontSize: 12.5, color: T.neutral[600], lineHeight: 1.5,
       }}>
-        Aquí guardas todas las opciones que has cocinado alguna vez.
-        Lo que crees aquí podrás activarlo cualquier día desde "Menú del día".
+        📚 Aquí están <b>todas</b> las opciones que has cocinado alguna vez.
+        Lo que crees acá podrás activarlo cualquier día desde el menú del día.
       </div>
 
       {CATEGORIES.map(cat => (
@@ -76,34 +92,235 @@ export default function CatalogView({ authUser, userDoc }) {
   )
 }
 
+// ──────────────────────────────────────────────────────────────
+// Tarjeta de precios del corriente. Vive arriba del catálogo
+// porque cambiar precios es algo del "catálogo" (no del día).
+// ──────────────────────────────────────────────────────────────
+function CorrientePricesCard({ config, authUser, editorName }) {
+  const priceMesa = Number(config?.priceMesa) || 0
+  const priceLlevar = Number(config?.priceLlevar) || 0
+  const hasPrices = priceMesa > 0
+
+  const [editing, setEditing] = useState(false)
+  const [draftMesa, setDraftMesa] = useState(String(priceMesa || ''))
+  const [draftLlevar, setDraftLlevar] = useState(String(priceLlevar || ''))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!editing) {
+      setDraftMesa(String(priceMesa || ''))
+      setDraftLlevar(String(priceLlevar || ''))
+    }
+  }, [editing, priceMesa, priceLlevar])
+
+  async function handleSave() {
+    const pm = Number(draftMesa) || 0
+    const pl = Number(draftLlevar) || 0
+    if (pm <= 0) { setError('Pon al menos el precio de mesa.'); return }
+    setBusy(true); setError(null)
+    try {
+      await setDailyCorriente(null, {
+        priceMesa: pm,
+        priceLlevar: pl > 0 ? pl : pm,
+      }, { publishedBy: authUser?.uid, publishedByName: editorName })
+      setEditing(false)
+    } catch (err) {
+      console.error('[catalog prices] save failed:', err)
+      const code = err?.code || ''
+      if (code === 'permission-denied') {
+        setError('Permisos insuficientes. Avisa al admin.')
+      } else if (code === 'unavailable') {
+        setError('Sin conexión. Intenta cuando vuelva la red.')
+      } else {
+        setError('No se pudo guardar. Intenta de nuevo.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      marginBottom: 18, borderRadius: 18,
+      background: `linear-gradient(135deg, ${T.copper[50]} 0%, #fff 100%)`,
+      border: `1.5px solid ${T.copper[200]}`,
+      boxShadow: '0 4px 14px rgba(184,122,86,0.10)',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '14px 18px 12px',
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ fontSize: 22, lineHeight: 1 }}>💰</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 15, fontWeight: 900, color: T.copper[700],
+            letterSpacing: -0.3,
+          }}>
+            Precios del Almuerzo Corriente
+          </div>
+          <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 1, lineHeight: 1.4 }}>
+            Permanentes — no se reinician cada día. Cámbialos solo cuando suba el precio.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 16px' }}>
+        {editing ? (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 14,
+            border: `1px solid ${T.copper[100]}`,
+          }}>
+            <FieldLabel>Precio para mesa ($)</FieldLabel>
+            <input
+              type="number" value={draftMesa}
+              onChange={e => setDraftMesa(e.target.value)}
+              placeholder="Ej: 15000"
+              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+            />
+            <FieldLabel>Precio para llevar ($)</FieldLabel>
+            <input
+              type="number" value={draftLlevar}
+              onChange={e => setDraftLlevar(e.target.value)}
+              placeholder="Si vacío, se usa el de mesa"
+              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+            />
+            {error && <ErrorBox>{error}</ErrorBox>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => { setEditing(false); setError(null) }}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '12px', borderRadius: 12,
+                  background: T.neutral[100], color: T.neutral[700],
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 700,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={busy || !draftMesa}
+                style={{
+                  flex: 1.4, padding: '12px', borderRadius: 12,
+                  background: !draftMesa ? T.neutral[200] : T.copper[500],
+                  color: '#fff', border: 'none',
+                  cursor: !draftMesa ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 800,
+                  boxShadow: !draftMesa ? 'none' : `0 3px 10px ${T.copper[500]}44`,
+                }}
+              >
+                {busy ? 'Guardando…' : 'Guardar precios'}
+              </button>
+            </div>
+          </div>
+        ) : hasPrices ? (
+          <div style={{
+            background: '#fff', borderRadius: 14, padding: 14,
+            border: `1px solid ${T.copper[100]}`,
+          }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <PriceBlock label="Para mesa" value={priceMesa} />
+              <PriceBlock label="Para llevar" value={priceLlevar} />
+            </div>
+            <button
+              onClick={() => setEditing(true)}
+              style={{
+                marginTop: 12, width: '100%', padding: '11px',
+                background: 'transparent', color: T.copper[700],
+                border: `1.5px solid ${T.copper[200]}`,
+                borderRadius: 11, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              ✎ Cambiar precios
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div style={{
+              padding: '12px 14px', borderRadius: 12, marginBottom: 12,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 12.5, color: T.warn, lineHeight: 1.45,
+            }}>
+              ⚠ Aún no hay precios. Sin esto la cajera no podrá vender el almuerzo.
+            </div>
+            <button
+              onClick={() => setEditing(true)}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                background: T.copper[500], color: '#fff',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 14, fontWeight: 800,
+                boxShadow: `0 3px 10px ${T.copper[500]}55`,
+              }}
+            >
+              + Definir precios
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PriceBlock({ label, value }) {
+  return (
+    <div style={{
+      flex: 1, padding: '12px 14px', borderRadius: 12,
+      background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+      textAlign: 'center',
+    }}>
+      <div style={{
+        fontSize: 10.5, fontWeight: 800, color: T.copper[700],
+        letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 900, color: T.neutral[900],
+        fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5,
+      }}>
+        {fmtCOP(value)}
+      </div>
+    </div>
+  )
+}
+
 function CatalogCategory({ category, items, onCreate, onEdit }) {
   const active = items.filter(it => !it.archived)
   const archived = items.filter(it => it.archived)
 
   return (
-    <div style={{ marginBottom: 18 }}>
+    <div style={{ marginBottom: 22 }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        margin: '0 4px 8px',
+        margin: '0 4px 10px',
       }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-          <span style={{ fontSize: 16 }}>{category.emoji}</span>
-          <div style={{
-            fontSize: 14, fontWeight: 800, color: T.neutral[900],
-            letterSpacing: -0.2,
-          }}>
-            {category.label}
-          </div>
-          <div style={{ fontSize: 11.5, color: T.neutral[500], fontWeight: 600 }}>
-            {active.length} {active.length === 1 ? 'opción' : 'opciones'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 22, lineHeight: 1 }}>{category.emoji}</span>
+          <div>
+            <div style={{
+              fontSize: 15, fontWeight: 800, color: T.neutral[900],
+              letterSpacing: -0.2,
+            }}>
+              {category.label}
+            </div>
+            <div style={{ fontSize: 11, color: T.neutral[500], fontWeight: 600, marginTop: 1 }}>
+              {active.length} {active.length === 1 ? 'opción activa' : 'opciones activas'}
+              {archived.length > 0 && ` · ${archived.length} archivada${archived.length === 1 ? '' : 's'}`}
+            </div>
           </div>
         </div>
         <button onClick={onCreate} style={{
-          padding: '6px 12px', borderRadius: 999,
+          padding: '8px 14px', borderRadius: 999,
           background: T.copper[500], color: '#fff',
           border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-          fontSize: 12, fontWeight: 700,
+          fontSize: 12.5, fontWeight: 800,
           display: 'flex', alignItems: 'center', gap: 4,
+          boxShadow: `0 2px 6px ${T.copper[500]}55`,
         }}>
           + Nueva
         </button>
@@ -111,17 +328,18 @@ function CatalogCategory({ category, items, onCreate, onEdit }) {
 
       {active.length === 0 && archived.length === 0 ? (
         <div style={{
-          padding: '14px', textAlign: 'center', borderRadius: 12,
-          background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`,
-          color: T.neutral[500], fontSize: 12.5,
+          padding: '18px', textAlign: 'center', borderRadius: 14,
+          background: T.neutral[25], border: `1.5px dashed ${T.neutral[200]}`,
+          color: T.neutral[500], fontSize: 13, lineHeight: 1.5,
         }}>
-          Sin opciones todavía. Toca "+ Nueva" para crear la primera.
+          Sin opciones todavía. Toca <b>"+ Nueva"</b> para crear la primera.
         </div>
       ) : (
         <div style={{
-          background: '#fff', borderRadius: 12,
+          background: '#fff', borderRadius: 14,
           border: `1px solid ${T.neutral[100]}`,
           overflow: 'hidden',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
         }}>
           {active.map((item, i) => (
             <CatalogItemRow
@@ -149,30 +367,30 @@ function CatalogCategory({ category, items, onCreate, onEdit }) {
 function CatalogItemRow({ item, isLast, onEdit, archived }) {
   return (
     <div style={{
-      padding: '12px 14px',
+      padding: '14px 16px',
       borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
       display: 'flex', alignItems: 'center', gap: 10,
       opacity: archived ? 0.55 : 1,
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontSize: 14, fontWeight: 700, color: T.neutral[900],
+          fontSize: 15, fontWeight: 700, color: T.neutral[900],
           textDecoration: archived ? 'line-through' : 'none',
         }}>
           {item.name}
         </div>
         {archived && (
-          <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 1, letterSpacing: 0.3 }}>
-            Archivado
+          <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 2, letterSpacing: 0.3, textTransform: 'uppercase', fontWeight: 700 }}>
+            Archivada
           </div>
         )}
       </div>
       <button onClick={onEdit} style={{
-        padding: '6px 10px', borderRadius: 8,
+        padding: '8px 12px', borderRadius: 10,
         background: 'transparent', color: T.neutral[600],
         border: `1px solid ${T.neutral[200]}`,
         cursor: 'pointer', fontFamily: 'inherit',
-        fontSize: 11.5, fontWeight: 700,
+        fontSize: 12, fontWeight: 700,
       }}>
         ✎ Editar
       </button>

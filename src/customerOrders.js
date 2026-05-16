@@ -24,8 +24,13 @@ import { getClientTimestamp } from './utils/network'
 //     cart: [{
 //       kind: 'corriente' | 'especial',
 //       selections?: { soup, principio, protein, side, salad, juice },
+//       replacements?: { soup?, principio? },
+//         // valores: 'huevo' | 'extra_principio' | 'extra_side'
+//         //        | 'extra_arroz' | 'extra_salad' | 'extra_juice' | 'nada'
+//         // Solo soup y principio aceptan reemplazo (son las únicas que el
+//         // wizard del cliente permite omitir). El resto siempre se sirve.
 //       description?: string,    // solo especial
-//       note?: string,           // per-almuerzo
+//       note?: string,           // per-almuerzo (observaciones del cliente)
 //       price: number,
 //     }]
 //     total: number
@@ -50,6 +55,15 @@ export async function createCustomerOrder({ cart, total }) {
       out.description = it.description?.toString().trim() || null
     } else if (it.selections) {
       out.selections = it.selections
+      // replacements: solo soup/principio. Sanitizar a llaves conocidas.
+      const validReps = new Set([
+        'huevo', 'extra_principio', 'extra_side',
+        'extra_arroz', 'extra_salad', 'extra_juice', 'nada',
+      ])
+      const reps = {}
+      if (validReps.has(it.replacements?.soup)) reps.soup = it.replacements.soup
+      if (validReps.has(it.replacements?.principio)) reps.principio = it.replacements.principio
+      if (Object.keys(reps).length > 0) out.replacements = reps
     }
     if (it.note) out.note = it.note.toString().trim() || null
     return out

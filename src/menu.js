@@ -49,12 +49,12 @@ import { getClientTimestamp } from './utils/network'
 //   "SIN [X]" como alerta visual. Si está seleccionada, la cocina la oculta
 //   porque ya sabe que va por defecto. Aplica a side/salad/juice.
 export const CATEGORIES = [
-  { id: 'soup',      label: 'Sopa',         multi: true,  required: true,  maxSelections: 1, emoji: '🥣' },
+  { id: 'soup',      label: 'Sopa',         multi: false, required: true,  maxSelections: 1, emoji: '🥣' },
   { id: 'principio', label: 'Principio',    multi: true,  required: false, maxSelections: 2, emoji: '🫘' },
   { id: 'protein',   label: 'Proteína',     multi: true,  required: true,  maxSelections: 1, emoji: '🍗' },
   { id: 'side',      label: 'Acompañante',  multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🍚' },
-  { id: 'salad',     label: 'Ensalada',     multi: true,  required: false, maxSelections: 1, alwaysServed: true, emoji: '🥗' },
-  { id: 'juice',     label: 'Jugo',         multi: true,  required: false, maxSelections: 1, alwaysServed: true, emoji: '🥤' },
+  { id: 'salad',     label: 'Ensalada',     multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🥗' },
+  { id: 'juice',     label: 'Jugo',         multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🥤' },
 ]
 
 export const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]))

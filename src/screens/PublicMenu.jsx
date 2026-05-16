@@ -39,7 +39,9 @@ export default function PublicMenu() {
   // }]
   const [cart, setCart] = useState([])
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [addonsOpen, setAddonsOpen] = useState(false)
+  // addonsOpen: null = cerrado, 'menu' = abierto en pantalla de elegir tipo,
+  // 'soup'|'egg'|'protein' = abierto y saltó directo al selector de cantidad.
+  const [addonsOpen, setAddonsOpen] = useState(null)
 
   // Watchers
   useEffect(() => {
@@ -109,7 +111,7 @@ export default function PublicMenu() {
   }
   function addAddon(payload) {
     setCart(prev => [...prev, payload])
-    setAddonsOpen(false)
+    setAddonsOpen(null)
   }
   function removeItem(i) {
     setCart(prev => prev.filter((_, idx) => idx !== i))
@@ -232,7 +234,7 @@ export default function PublicMenu() {
               <AddonsCardCompact
                 prices={addonPrices}
                 hasProteinOptions={proteinOptions.length > 0}
-                onOpen={() => setAddonsOpen(true)}
+                onOpen={(type) => setAddonsOpen(type || 'menu')}
                 animDelay={corriente.available ? 180 : 120}
               />
             )}
@@ -275,7 +277,8 @@ export default function PublicMenu() {
         <PublicAddonsModal
           prices={addonPrices}
           proteinOptions={proteinOptions}
-          onCancel={() => setAddonsOpen(false)}
+          initialType={addonsOpen === 'menu' ? null : addonsOpen}
+          onCancel={() => setAddonsOpen(null)}
           onAdd={addAddon}
         />
       )}
@@ -410,9 +413,9 @@ function CorrienteCardCompact({ price, cartCount, onAdd, animDelay = 0 }) {
 // algún precio en Catálogo. Click → abre PublicAddonsModal.
 function AddonsCardCompact({ prices, hasProteinOptions, onOpen, animDelay = 0 }) {
   const chips = []
-  if (prices.soup > 0)                          chips.push({ emoji: '🥣', label: 'Sopa', price: prices.soup })
-  if (prices.egg > 0)                           chips.push({ emoji: '🍳', label: 'Huevo', price: prices.egg })
-  if (prices.protein > 0 && hasProteinOptions)  chips.push({ emoji: '🍗', label: 'Proteína', price: prices.protein })
+  if (prices.soup > 0)                          chips.push({ type: 'soup',    emoji: '🥣', label: 'Sopa', price: prices.soup })
+  if (prices.egg > 0)                           chips.push({ type: 'egg',     emoji: '🍳', label: 'Huevo', price: prices.egg })
+  if (prices.protein > 0 && hasProteinOptions)  chips.push({ type: 'protein', emoji: '🍗', label: 'Proteína', price: prices.protein })
 
   return (
     <div style={{
@@ -440,18 +443,33 @@ function AddonsCardCompact({ prices, hasProteinOptions, onOpen, animDelay = 0 })
         </div>
       </div>
 
-      {/* Chips de tipos disponibles + precios */}
+      {/* Chips de tipos disponibles + precios. Cada chip es un atajo
+          directo al selector de cantidad de ese tipo de adición. */}
       <div style={{
         padding: '8px 16px 12px',
         display: 'flex', gap: 6, flexWrap: 'wrap',
       }}>
         {chips.map(chip => (
-          <div key={chip.label} style={{
-            padding: '6px 11px', borderRadius: 999,
-            background: '#FFF7E6', border: `1px solid #F4E0BC`,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 12.5, fontWeight: 700, color: T.neutral[800],
-          }}>
+          <button
+            key={chip.label}
+            onClick={() => onOpen(chip.type)}
+            aria-label={`Agregar ${chip.label.toLowerCase()} adicional`}
+            style={{
+              padding: '8px 13px', borderRadius: 999,
+              background: '#FFF7E6', border: `1.5px solid #F4E0BC`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 12.5, fontWeight: 700, color: T.neutral[800],
+              transition: 'transform 0.1s ease, background 0.18s',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#FFEFCD')}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = '#FFF7E6'
+              e.currentTarget.style.transform = 'scale(1)'
+            }}
+            onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.96)')}
+            onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          >
             <span style={{ fontSize: 14 }}>{chip.emoji}</span>
             {chip.label}
             <span style={{
@@ -460,13 +478,13 @@ function AddonsCardCompact({ prices, hasProteinOptions, onOpen, animDelay = 0 })
             }}>
               {fmtCOP(chip.price)}
             </span>
-          </div>
+          </button>
         ))}
       </div>
 
       <div style={{ padding: '0 14px 14px' }}>
         <button
-          onClick={onOpen}
+          onClick={() => onOpen(null)}
           style={{
             width: '100%', padding: '14px',
             background: T.warn, color: '#fff',

@@ -17,10 +17,17 @@ import { fmtCOP } from '../utils/format'
 //   prices: { soup, egg, protein }  → precios unitarios
 //   proteinOptions: [{id, name}]    → solo se usa si la cocinera publicó
 //                                     proteínas del día (cliente elige cuál)
+//   initialType: 'soup'|'egg'|'protein'|null → si viene definido, el
+//                modal arranca directo en el selector de cantidad para
+//                ese tipo (atajo desde los chips del card de la landing).
 //   onCancel
 //   onAdd(addonItem)
 // ──────────────────────────────────────────────────────────────────
-export default function PublicAddonsModal({ prices, proteinOptions, onCancel, onAdd }) {
+export default function PublicAddonsModal({
+  prices, proteinOptions,
+  initialType = null,
+  onCancel, onAdd,
+}) {
   // Bloquear scroll del body mientras está abierto
   useEffect(() => {
     const prev = document.body.style.overflow
@@ -36,7 +43,13 @@ export default function PublicAddonsModal({ prices, proteinOptions, onCancel, on
   // Estado del picker activo (qué tarjeta está expandida con su selector
   // de cantidad). null = ninguna activa, modo "elige tipo".
   // shape: { type: 'soup'|'egg'|'protein', qty, proteinIdx? }
-  const [active, setActive] = useState(null)
+  // Si viene `initialType`, abrimos directo en ese tipo (atajo desde
+  // los chips del card del menú).
+  const [active, setActive] = useState(() => {
+    if (initialType === 'protein') return { type: 'protein', qty: 1, proteinIdx: 0 }
+    if (initialType === 'soup' || initialType === 'egg') return { type: initialType, qty: 1 }
+    return null
+  })
 
   function startAddon(type) {
     if (type === 'protein') {

@@ -83,22 +83,22 @@ export default function PublicAddonsModal({ prices, proteinOptions, onCancel, on
     <div onClick={onCancel} style={{
       position: 'fixed', inset: 0, zIndex: 100,
       background: 'rgba(0,0,0,0.55)',
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 16,
       animation: 'pmFadeBg 0.2s ease',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 540, maxHeight: '92vh',
-        background: T.neutral[50], borderRadius: '24px 24px 0 0',
+        width: '100%', maxWidth: 540, maxHeight: '90vh',
+        background: T.neutral[50], borderRadius: 24,
         display: 'flex', flexDirection: 'column',
-        boxShadow: '0 -8px 32px rgba(0,0,0,0.25)',
-        animation: 'pmSlideUp 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
-        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        boxShadow: '0 16px 48px rgba(0,0,0,0.32)',
+        animation: 'pmPop 0.28s cubic-bezier(0.2,0.9,0.3,1.05)',
+        overflow: 'hidden',
       }}>
         {/* Header */}
         <div style={{
           padding: '18px 20px',
           background: '#fff', borderBottom: `1px solid ${T.neutral[100]}`,
-          borderRadius: '24px 24px 0 0',
           display: 'flex', alignItems: 'center', gap: 12,
         }}>
           <button
@@ -211,9 +211,9 @@ export default function PublicAddonsModal({ prices, proteinOptions, onCancel, on
             from { background: rgba(0,0,0,0); }
             to   { background: rgba(0,0,0,0.55); }
           }
-          @keyframes pmSlideUp {
-            from { transform: translateY(12%); opacity: 0; }
-            to   { transform: translateY(0); opacity: 1; }
+          @keyframes pmPop {
+            from { transform: scale(0.92); opacity: 0; }
+            to   { transform: scale(1); opacity: 1; }
           }
         `}</style>
       </div>

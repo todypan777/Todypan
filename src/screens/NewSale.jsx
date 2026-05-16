@@ -25,7 +25,7 @@ import {
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder } from '../kitchenOrders'
 import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState } from '../menu'
-import LunchPickerModal from '../components/LunchPickerModal'
+import CashierLunchWizard from '../components/CashierLunchWizard'
 import SpecialLunchModal from '../components/SpecialLunchModal'
 
 /**
@@ -241,7 +241,7 @@ export default function NewSale({
       setQuery('')
       return
     }
-    // Almuerzo con menú del día: abre el LunchPickerModal con las 6 categorías.
+    // Almuerzo con menú del día: abre el CashierLunchWizard paso a paso.
     if (product.isLunch) {
       setLunchModal({ product, kind: 'menu' })
       setQuery('')
@@ -559,6 +559,7 @@ export default function NewSale({
         cartKey: item.key,
         initialSelections: order.selections || {},
         initialNote: order.commandaNote || '',
+        initialDestination: order.destination || null,
       },
     })
   }
@@ -1353,12 +1354,13 @@ export default function NewSale({
           Si la cajera intenta cerrar pero ya tiene almuerzos en construcción,
           abrimos el modal de envío en lugar de descartar el progreso. */}
       {lunchModal?.kind === 'menu' && (
-        <LunchPickerModal
+        <CashierLunchWizard
           product={lunchModal.product}
           currentCount={lunchCommanda.length}
           editMode={!!lunchModal.edit}
           initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}
+          initialDestination={lunchModal.edit?.initialDestination || null}
           onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
             // En edición, cerrar es simplemente cerrar — sin flujo de comanda.

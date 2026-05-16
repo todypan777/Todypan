@@ -41,7 +41,7 @@ import OpenTabsBubbles from './OpenTabsBubbles'
 const WEB_ORDER_BRANCH_NAME = 'Panadería B'
 
 // Convierte un item del cart de customerOrder al shape que usa el state
-// `lunchCommanda` de NewSale (mismo que producen LunchPickerModal /
+// `lunchCommanda` de NewSale (mismo que producen CashierLunchWizard /
 // SpecialLunchModal al armar un almuerzo).
 // Los `replacements` (reemplazos del wizard cuando el cliente dice NO a
 // sopa/principio) se concatenan al `note` para que viajen a cocina sin

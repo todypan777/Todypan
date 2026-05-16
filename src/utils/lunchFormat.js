@@ -103,7 +103,7 @@ export const REPLACEMENT_OPTIONS = {
   soup: [
     { key: 'huevo',           label: 'Huevo',              emoji: '🍳' },
     { key: 'extra_principio', label: 'Más principio',      emoji: '🫘' },
-    { key: 'extra_side',      label: 'Más acompañante',    emoji: '🍚' },
+    { key: 'extra_side',      label: 'Más acompañante',    emoji: '🥔' },
     { key: 'extra_salad',     label: 'Más ensalada',       emoji: '🥗' },
     { key: 'extra_arroz',     label: 'Más arroz',          emoji: '🍚' },
     { key: 'extra_juice',     label: 'Más jugo',           emoji: '🥤' },
@@ -111,7 +111,7 @@ export const REPLACEMENT_OPTIONS = {
   ],
   principio: [
     { key: 'huevo',           label: 'Huevo',              emoji: '🍳' },
-    { key: 'extra_side',      label: 'Más acompañante',    emoji: '🍚' },
+    { key: 'extra_side',      label: 'Más acompañante',    emoji: '🥔' },
     { key: 'extra_salad',     label: 'Más ensalada',       emoji: '🥗' },
     { key: 'extra_arroz',     label: 'Más arroz',          emoji: '🍚' },
     { key: 'extra_juice',     label: 'Más jugo',           emoji: '🥤' },

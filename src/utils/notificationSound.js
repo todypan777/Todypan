@@ -12,6 +12,7 @@
 // directo del usuario.
 
 let ctx = null
+let masterChain = null   // { input, compressor, master } — todo lo que vamos a tocar pasa por aquí
 let unlocked = false
 let unlockBound = false
 
@@ -27,6 +28,35 @@ function getCtx() {
     ctx = null
   }
   return ctx
+}
+
+/**
+ * Cadena master: todos los osciladores se conectan al `input`. Aplica un
+ * DynamicsCompressor para "subir el piso" del sonido (perceptual loudness
+ * mucho mayor sin clipear) y luego un gain master casi al máximo.
+ *
+ * Esto multiplica el volumen percibido vs conectar directo al destination
+ * — Web Audio sin compresión suena suave incluso con gain alto porque el
+ * peak es corto.
+ */
+function getMasterChain(c) {
+  if (masterChain && masterChain.ctx === c) return masterChain
+  const input = c.createGain()
+  input.gain.value = 1.0
+
+  const compressor = c.createDynamicsCompressor()
+  compressor.threshold.setValueAtTime(-24, c.currentTime)
+  compressor.knee.setValueAtTime(20, c.currentTime)
+  compressor.ratio.setValueAtTime(12, c.currentTime)
+  compressor.attack.setValueAtTime(0.003, c.currentTime)
+  compressor.release.setValueAtTime(0.18, c.currentTime)
+
+  const master = c.createGain()
+  master.gain.value = 1.0  // Tras compresión, queda fuerte sin clip.
+
+  input.connect(compressor).connect(master).connect(c.destination)
+  masterChain = { ctx: c, input, compressor, master }
+  return masterChain
 }
 
 /**
@@ -73,10 +103,13 @@ export function setupAudioUnlock() {
 }
 
 /**
- * Reproduce un "ding-dong" agradable y notorio (~0.7s en total).
- * Si el contexto aún no está desbloqueado, intenta resumirlo de
- * todos modos — en Android Chrome / Firefox normalmente funciona
- * mientras la PWA esté en foreground.
+ * Reproduce un patrón triple de campana ALTO y notorio (~1.2s en total).
+ * Pasa por un compresor master para aprovechar todo el headroom del
+ * dispositivo (suena fuerte sin distorsionar).
+ *
+ * Si el contexto aún no está desbloqueado, intenta resumirlo de todos
+ * modos — en Android Chrome / Firefox normalmente funciona mientras la
+ * PWA esté en foreground.
  */
 export function playKitchenCallSound() {
   const c = getCtx()
@@ -85,9 +118,12 @@ export function playKitchenCallSound() {
     if (c.state === 'suspended') {
       c.resume().catch(() => {})
     }
-    // Dos notas: La5 (880 Hz) → Mi5 (659.25 Hz). Tipo campana de tienda.
+    // Patrón triple: La5 → Mi5 → La5. Tipo timbre de tienda. La triple
+    // repetición es lo que hace que se "sienta" fuerte aunque cada nota
+    // dure poco. La gente percibe la duración como volumen.
     playBellNote(c, 880, 0)
-    playBellNote(c, 659.25, 0.18)
+    playBellNote(c, 659.25, 0.22)
+    playBellNote(c, 880, 0.44)
   } catch (err) {
     // Silenciar — el sonido es opcional, nunca debe romper la app.
     console.warn('[notificationSound] no se pudo reproducir:', err?.message || err)
@@ -95,37 +131,52 @@ export function playKitchenCallSound() {
 }
 
 function playBellNote(c, freq, delaySec) {
+  const chain = getMasterChain(c)
   const startAt = c.currentTime + delaySec
-  const duration = 0.6
+  const duration = 0.9
 
-  // Oscilador principal (sine, cuerpo de la campana).
+  // Oscilador principal (sine, cuerpo cálido de la campana).
   const osc = c.createOscillator()
   osc.type = 'sine'
   osc.frequency.setValueAtTime(freq, startAt)
 
-  // Oscilador armónico para darle "metálico" sin sonar áspero.
+  // Segundo armónico (sine x2) — le da brillo "metálico".
   const osc2 = c.createOscillator()
   osc2.type = 'sine'
   osc2.frequency.setValueAtTime(freq * 2, startAt)
 
+  // Tercer armónico (triangle x3) — agrega presencia para que se note
+  // incluso en altavoces malos de celular.
+  const osc3 = c.createOscillator()
+  osc3.type = 'triangle'
+  osc3.frequency.setValueAtTime(freq * 3, startAt)
+
   const gain = c.createGain()
   const gain2 = c.createGain()
+  const gain3 = c.createGain()
 
-  // Envelope ADSR rápido tipo campana: ataque casi instantáneo,
-  // decaimiento exponencial.
+  // Envelopes ADSR tipo campana. Subimos los peaks bien arriba — el
+  // compresor master se encarga de evitar clipping.
   gain.gain.setValueAtTime(0, startAt)
-  gain.gain.linearRampToValueAtTime(0.35, startAt + 0.01)
+  gain.gain.linearRampToValueAtTime(0.95, startAt + 0.008)
   gain.gain.exponentialRampToValueAtTime(0.001, startAt + duration)
 
   gain2.gain.setValueAtTime(0, startAt)
-  gain2.gain.linearRampToValueAtTime(0.08, startAt + 0.01)
-  gain2.gain.exponentialRampToValueAtTime(0.001, startAt + duration * 0.6)
+  gain2.gain.linearRampToValueAtTime(0.45, startAt + 0.008)
+  gain2.gain.exponentialRampToValueAtTime(0.001, startAt + duration * 0.7)
 
-  osc.connect(gain).connect(c.destination)
-  osc2.connect(gain2).connect(c.destination)
+  gain3.gain.setValueAtTime(0, startAt)
+  gain3.gain.linearRampToValueAtTime(0.18, startAt + 0.008)
+  gain3.gain.exponentialRampToValueAtTime(0.001, startAt + duration * 0.4)
+
+  osc.connect(gain).connect(chain.input)
+  osc2.connect(gain2).connect(chain.input)
+  osc3.connect(gain3).connect(chain.input)
 
   osc.start(startAt)
   osc2.start(startAt)
+  osc3.start(startAt)
   osc.stop(startAt + duration + 0.05)
   osc2.stop(startAt + duration + 0.05)
+  osc3.stop(startAt + duration + 0.05)
 }

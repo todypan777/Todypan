@@ -78,6 +78,21 @@ export async function acknowledgeKitchenCall(callId, { byUid, byName } = {}) {
 }
 
 /**
+ * La cocinera cancela su propia llamada antes de que la cajera atienda
+ * (ej. ya la vio venir físicamente). El overlay desaparece del lado de
+ * la cajera y la cocinera vuelve a poder llamar.
+ */
+export async function cancelKitchenCall(callId, { byUid, byName } = {}) {
+  await updateDoc(callRef(callId), {
+    status: 'cancelled',
+    cancelledAt: serverTimestamp(),
+    cancelledAtClient: getClientTimestamp(),
+    cancelledBy: byUid || null,
+    cancelledByName: byName || null,
+  })
+}
+
+/**
  * Suscripción a las llamadas pendientes dirigidas a una cajera específica.
  * Usada por la cajera para saber si debe mostrar el overlay bloqueante.
  *

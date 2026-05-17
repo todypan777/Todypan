@@ -12,7 +12,7 @@ import {
   watchKitchenQueue, markOrderReady, unmarkOrderReady,
 } from '../kitchenOrders'
 import { watchOpenSessions } from '../cashSessions'
-import { createKitchenCall, watchMyPendingCalls } from '../kitchenCalls'
+import { createKitchenCall, cancelKitchenCall, watchMyPendingCalls } from '../kitchenCalls'
 import { getData } from '../db'
 import ContactSupportButton from '../components/ContactSupportButton'
 import CatalogView from '../components/MenuEditor/CatalogView'
@@ -1449,6 +1449,7 @@ function CallCashierFAB({ authUser, userDoc }) {
   const [myPendingCalls, setMyPendingCalls] = useState([])
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
   useEffect(() => watchMyPendingCalls(authUser.uid, setMyPendingCalls), [authUser.uid])
@@ -1471,7 +1472,12 @@ function CallCashierFAB({ authUser, userDoc }) {
   }
 
   async function handleCall() {
-    if (busy || isPending) return
+    if (busy) return
+    if (isPending) {
+      // Tap mientras hay una llamada en vuelo → ofrecer cancelar.
+      setConfirmCancel(true)
+      return
+    }
     if (!targetBranch) {
       showToast('No se encontró la Panadería B en la configuración.', 'warn')
       return
@@ -1504,11 +1510,28 @@ function CallCashierFAB({ authUser, userDoc }) {
     setBusy(false)
   }
 
+  async function handleCancel() {
+    const call = myPendingCalls[0]
+    if (!call || busy) return
+    setBusy(true)
+    try {
+      const cookName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+        || authUser?.email || 'Cocina'
+      await cancelKitchenCall(call.id, { byUid: authUser.uid, byName: cookName })
+      setConfirmCancel(false)
+      showToast('Llamada cancelada.', 'ok')
+    } catch (err) {
+      console.error('[kitchenCalls] cancelKitchenCall error:', err)
+      showToast('No se pudo cancelar. Intenta de nuevo.', 'bad')
+    }
+    setBusy(false)
+  }
+
   const label = isPending
     ? `Esperando a ${myPendingCalls[0]?.targetCashierName || 'la cajera'}...`
     : 'Llamar cajera'
   const sub = isPending
-    ? 'Volverá a habilitarse cuando confirme'
+    ? 'Toca aquí para cancelar la llamada'
     : KITCHEN_CALL_BRANCH_NAME
 
   const bg = isPending ? '#FFF4DD' : T.copper[500]
@@ -1523,8 +1546,8 @@ function CallCashierFAB({ authUser, userDoc }) {
     <>
       <button
         onClick={handleCall}
-        disabled={busy || isPending}
-        aria-label={isPending ? 'Esperando confirmación de la cajera' : 'Llamar a la cajera de Panadería B'}
+        disabled={busy}
+        aria-label={isPending ? 'Cancelar llamada en curso' : 'Llamar a la cajera de Panadería B'}
         style={{
           position: 'fixed',
           right: 'max(16px, env(safe-area-inset-right, 0px))',
@@ -1535,7 +1558,7 @@ function CallCashierFAB({ authUser, userDoc }) {
           background: bg,
           color: fg,
           border: `1.5px solid ${borderColor}`,
-          cursor: isPending ? 'not-allowed' : (busy ? 'wait' : 'pointer'),
+          cursor: busy ? 'wait' : 'pointer',
           fontFamily: 'inherit',
           boxShadow: shadow,
           display: 'flex',
@@ -1546,7 +1569,7 @@ function CallCashierFAB({ authUser, userDoc }) {
           transition: 'transform 0.12s, background 0.2s, color 0.2s',
           animation: isPending ? 'fabPulse 1.4s ease-in-out infinite' : 'none',
         }}
-        onMouseDown={e => { if (!isPending) e.currentTarget.style.transform = 'scale(0.96)' }}
+        onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.96)' }}
         onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
         onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
       >
@@ -1622,6 +1645,73 @@ function CallCashierFAB({ authUser, userDoc }) {
           animation: 'fabToastIn 0.2s ease-out',
         }}>
           {toast.message}
+        </div>
+      )}
+
+      {confirmCancel && (
+        <div
+          onClick={() => !busy && setConfirmCancel(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 18,
+            animation: 'fabToastIn 0.15s ease-out',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: 360,
+              background: '#fff', borderRadius: 20,
+              padding: '22px 22px 18px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.35)',
+            }}
+          >
+            <div style={{
+              fontSize: 18, fontWeight: 900, color: T.neutral[900],
+              letterSpacing: -0.3, marginBottom: 6,
+            }}>
+              ¿Cancelar la llamada?
+            </div>
+            <div style={{
+              fontSize: 13.5, color: T.neutral[600], lineHeight: 1.5,
+              marginBottom: 18,
+            }}>
+              El pop-up desaparecerá del celular de
+              {' '}<b>{myPendingCalls[0]?.targetCashierName || 'la cajera'}</b>{' '}
+              y podrás volver a llamar.
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button
+                onClick={() => setConfirmCancel(false)}
+                disabled={busy}
+                style={{
+                  flex: 1, padding: '14px', borderRadius: 14,
+                  background: T.neutral[100], color: T.neutral[700],
+                  border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 800,
+                }}
+              >
+                No, esperar
+              </button>
+              <button
+                onClick={handleCancel}
+                disabled={busy}
+                style={{
+                  flex: 1.2, padding: '14px', borderRadius: 14,
+                  background: T.bad, color: '#fff',
+                  border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 900,
+                  letterSpacing: 0.3,
+                  boxShadow: `0 6px 16px ${T.bad}55`,
+                  opacity: busy ? 0.7 : 1,
+                }}
+              >
+                {busy ? 'Cancelando...' : 'Sí, cancelar'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

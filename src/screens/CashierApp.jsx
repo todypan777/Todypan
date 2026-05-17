@@ -11,6 +11,7 @@ import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
+import { setupAudioUnlock, playKitchenCallSound } from '../utils/notificationSound'
 import ErrorBoundary from '../components/ErrorBoundary'
 import ContactSupportButton from '../components/ContactSupportButton'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
@@ -36,6 +37,10 @@ export default function CashierApp({ authUser, userDoc }) {
   const [mySession, setMySession] = useState(undefined) // undefined=loading
 
   useEffect(() => watchMyOpenSession(authUser.uid, setMySession), [authUser.uid])
+
+  // Desbloquea el audio al primer tap. Necesario para que el sonido de
+  // llamada de cocina suene en iOS (Safari bloquea audio sin gesto previo).
+  useEffect(() => { setupAudioUnlock() }, [])
 
   if (mySession === undefined) {
     return <LoadingScreen label="Verificando turno..." />
@@ -982,10 +987,12 @@ function KitchenCallOverlay({ call, authUser, userDoc }) {
   const [busy, setBusy] = useState(false)
   const [confirmed, setConfirmed] = useState(false)
 
-  // Vibración inmediata + ráfaga de recordatorios mientras siga sin atender.
+  // Vibración + sonido inmediato y ráfaga de recordatorios mientras
+  // la cajera no atienda. Ambos van juntos para máxima atención.
   useEffect(() => {
     function pulse() {
       try { navigator.vibrate?.([300, 120, 300, 120, 500]) } catch {}
+      try { playKitchenCallSound() } catch {}
     }
     pulse()
     const id = setInterval(pulse, 4500)

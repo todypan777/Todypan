@@ -136,28 +136,75 @@ export default function PublicLunchWizard({ resolvedMenu, price, onCancel, onAdd
         <div style={{
           maxWidth: 540, margin: '0 auto', padding: '20px 18px 24px',
         }}>
-          {step === 'soup' && (
-            <SingleOptionStep
-              emoji="🥣"
-              title="La sopa de hoy"
-              item={(resolvedMenu.soup || [])[0] || null}
-              onYes={() => {
-                const opt = (resolvedMenu.soup || [])[0]
-                if (opt) {
+          {step === 'soup' && (() => {
+            // Si la cocinera publicó varias sopas, el cliente debe poder
+            // ELEGIR cuál quiere — antes hardcodeábamos [0] y solo se veía
+            // una. Con 1 sopa o 0, mantenemos el flujo simple Sí/No.
+            const soupOpts = resolvedMenu.soup || []
+            if (soupOpts.length >= 2) {
+              return (
+                <PickStep
+                  emoji="🥣"
+                  title="La sopa de hoy"
+                  subtitle={`Hoy hay ${soupOpts.length} opciones — elige una.`}
+                  options={soupOpts}
+                  selected={selections.soup}
+                  onPick={(opt) => {
+                    clearReplacement('soup')
+                    setCategory('soup', { id: opt.id, name: opt.name })
+                  }}
+                  ctaBelow={(
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <ContinueButton
+                        enabled={!!selections.soup}
+                        onClick={() => setStep('principio')}
+                        label="Continuar"
+                      />
+                      <button
+                        onClick={() => {
+                          setCategory('soup', null)
+                          clearReplacement('soup')
+                          setStep('soup-replace')
+                        }}
+                        style={{
+                          width: '100%', padding: '14px', borderRadius: 14,
+                          background: 'transparent', color: T.neutral[600],
+                          border: `1.5px solid ${T.neutral[200]}`,
+                          cursor: 'pointer', fontFamily: 'inherit',
+                          fontSize: 14, fontWeight: 700, letterSpacing: -0.1,
+                        }}
+                      >
+                        No quiero sopa
+                      </button>
+                    </div>
+                  )}
+                />
+              )
+            }
+            // 1 sopa (o 0): UX rápida Sí/No.
+            return (
+              <SingleOptionStep
+                emoji="🥣"
+                title="La sopa de hoy"
+                item={soupOpts[0] || null}
+                onYes={() => {
+                  const opt = soupOpts[0]
+                  if (opt) {
+                    clearReplacement('soup')
+                    setCategory('soup', { id: opt.id, name: opt.name })
+                  }
+                  setStep('principio')
+                }}
+                onNo={() => {
                   clearReplacement('soup')
-                  setCategory('soup', { id: opt.id, name: opt.name })
-                }
-                setStep('principio')
-              }}
-              onNo={() => {
-                clearReplacement('soup')
-                setCategory('soup', null)
-                setStep('soup-replace')
-              }}
-              emptyText="Hoy no hay sopa publicada."
-              onEmpty={() => setStep('principio')}
-            />
-          )}
+                  setCategory('soup', null)
+                  setStep('soup-replace')
+                }}
+                emptyText="Hoy no hay sopa publicada."
+                onEmpty={() => setStep('principio')}
+              />
+            )
+          })()}
           {step === 'soup-replace' && (
             <ReplaceStep
               emoji="🥣"

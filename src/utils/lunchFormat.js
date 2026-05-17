@@ -95,6 +95,71 @@ export function formatAddonLine(addon) {
 }
 
 /**
+ * Convierte un cart con mezcla de almuerzos (corriente/especial) y adiciones
+ * a la lista de "lunch payloads" que entiende el modelo de kitchenOrders.
+ *
+ * Las ADICIONES no se mapean 1:1 a kitchenOrders — se concatenan como
+ * texto al `note` del primer almuerzo. Si el cart contiene SOLO adiciones
+ * (cliente que pidió únicamente una sopa, por ejemplo), generamos un
+ * "Almuerzo Especial" sintético con descripción = lista de adiciones y
+ * precio = suma. Así no tocamos el modelo de kitchen ni rompemos nada.
+ *
+ * Cada item de entrada puede tener:
+ *   { kind, selections, replacements, description, note, price, ...addonFields }
+ *
+ * Cada item de salida (lunchPayload) tiene:
+ *   { kind: 'menu' | 'special', productId, productName, destination,
+ *     selections, description, price, note }
+ *
+ * @param items   array de items (almuerzos + adiciones)
+ * @param mapLunch (item) → lunchPayload — función para mapear un almuerzo
+ *                normal. La provee el caller porque cada lado (cliente vs
+ *                cajera) construye el payload con campos diferentes
+ *                (destination, productId del catálogo, etc).
+ */
+export function buildLunchCommanda(items, mapLunch) {
+  const list = items || []
+  const lunches = list.filter(it => it.kind !== 'addon')
+  const addons  = list.filter(it => it.kind === 'addon')
+
+  const lunchPayloads = lunches.map(mapLunch)
+
+  if (addons.length === 0) return lunchPayloads
+
+  const addonsText = addons.map(formatAddonLine).filter(Boolean).join(' · ')
+  const addonsLabel = `Adiciones: ${addonsText}`
+
+  if (lunchPayloads.length > 0) {
+    const first = lunchPayloads[0]
+    const combinedNote = first.note
+      ? `${first.note} · ${addonsLabel}`
+      : addonsLabel
+    lunchPayloads[0] = { ...first, note: combinedNote }
+    return lunchPayloads
+  }
+
+  // Sin almuerzos → sintético como Especial.
+  const totalAddonsPrice = addons.reduce((s, it) => s + (Number(it.price) || 0), 0)
+  const customerNotes = addons
+    .map(it => it.note?.toString().trim())
+    .filter(Boolean)
+    .join(' · ')
+  // Destino: heredamos del primer addon si lo tiene (cuando viene de la
+  // cajera con destination explícito), o 'llevar' por default (cliente).
+  const destination = addons[0]?.destination || 'llevar'
+  return [{
+    kind: 'special',
+    productId: null,
+    productName: 'Adiciones',
+    destination,
+    selections: null,
+    description: addonsText,
+    price: totalAddonsPrice,
+    note: customerNotes || null,
+  }]
+}
+
+/**
  * Opciones de reemplazo según la categoría omitida.
  * - soup: huevo + más de cualquier otra categoría + nada
  * - principio: huevo + más de cualquiera EXCEPTO principio + nada

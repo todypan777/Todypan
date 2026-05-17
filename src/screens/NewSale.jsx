@@ -24,9 +24,12 @@ import {
   formatTableLabel,
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder } from '../kitchenOrders'
-import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState } from '../menu'
+import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getAddonPrices } from '../menu'
 import CashierLunchWizard from '../components/CashierLunchWizard'
 import SpecialLunchModal from '../components/SpecialLunchModal'
+import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
+import PublicAddonsModal from '../components/PublicAddonsModal'
+import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -77,6 +80,12 @@ export default function NewSale({
   // Modal de almuerzo abierto (cuando la cajera escoge un producto isLunch)
   // shape: { product, kind: 'menu' | 'special' }
   const [lunchModal, setLunchModal] = useState(null)
+  // Chooser que aparece al tocar "Almuerzo" o al pedir + Otro en cualquier
+  // flujo. Boolean: true = abierto, false = cerrado.
+  const [lunchChooserOpen, setLunchChooserOpen] = useState(false)
+  // Modal de adición (sopa/huevo/proteína extra). null o 'menu' | 'soup'
+  // | 'egg' | 'protein' (entrada directa al selector de cantidad).
+  const [addonsModalState, setAddonsModalState] = useState(null)
   // Comanda en construcción: lista de almuerzos seleccionados antes de enviar.
   // Cada item lleva SU PROPIA `note` — ya no hay nota global. Si la cajera
   // agrega varios almuerzos, cada uno carga su comentario independiente.
@@ -147,39 +156,61 @@ export default function NewSale({
   //   - "Almuerzo Especial" si la cocinera lo activó hoy
   // Ambos definidos por la cocinera en el menú del día. NO vienen del admin.
   //
-  // Defensiva: si por error histórico hay productos del admin con isLunch=true
-  // (de pruebas anteriores), se filtran del catálogo regular para que solo
-  // aparezcan los virtuales.
+  // Estado del corriente, del especial y de los addons — usado tanto en
+  // el catálogo virtual como en el modal chooser.
+  const corrienteState = useMemo(
+    () => getCorrienteState(dailyMenu, allMenuItems, corrienteConfig),
+    [dailyMenu, allMenuItems, corrienteConfig]
+  )
+  const specialFromDay = dailyMenu?.special?.active && Number(dailyMenu?.special?.priceMesa) > 0
+    ? dailyMenu.special
+    : null
+  const addonPrices = useMemo(
+    () => getAddonPrices(corrienteConfig),
+    [corrienteConfig]
+  )
+  const proteinOptionsForDay = useMemo(() => {
+    const ids = dailyMenu?.itemsByCategory?.protein || []
+    return ids
+      .map(id => allMenuItems.find(m => m.id === id))
+      .filter(m => m && !m.archived)
+      .map(m => ({ id: m.id, name: m.name }))
+  }, [dailyMenu, allMenuItems])
+  const anyAddonAvailable = (
+    addonPrices.soup > 0 ||
+    addonPrices.egg > 0 ||
+    (addonPrices.protein > 0 && proteinOptionsForDay.length > 0)
+  )
+
+  // Catálogo virtual: UN solo producto "Almuerzo" que al tocar abre el
+  // chooser de tipo (corriente / especial / adición). Esto unifica el
+  // flujo y permite que el cliente solo pida UNA sopa sin almuerzo
+  // completo. Defensiva: filtra productos del admin con isLunch=true por
+  // error histórico.
   const enrichedCatalog = useMemo(() => {
     const baseCatalog = catalog.filter(p => p.isLunch !== true)
-    const extras = []
-    const corriente = getCorrienteState(dailyMenu, allMenuItems, corrienteConfig)
-    if (corriente.available) {
-      extras.push({
-        id: '__lunch_corriente__',
-        source: 'corriente',
-        name: 'Almuerzo Corriente',
+    const anyLunchOptionAvailable = corrienteState.available || !!specialFromDay || anyAddonAvailable
+    if (!anyLunchOptionAvailable) return baseCatalog
+    // Precios "info" solo para mostrar en el cuadrito del catálogo.
+    const priceForInfo = Number(corrienteState.priceMesa)
+      || Number(specialFromDay?.priceMesa)
+      || 0
+    const priceLlevarForInfo = Number(corrienteState.priceLlevar)
+      || Number(specialFromDay?.priceLlevar)
+      || priceForInfo
+    return [
+      {
+        id: '__lunch_chooser__',
+        source: 'lunch',
+        name: 'Almuerzo',
         isLunch: true,
-        lunchKind: 'menu',
-        priceMesa: Number(corriente.priceMesa) || 0,
-        priceLlevar: Number(corriente.priceLlevar) || Number(corriente.priceMesa) || 0,
-      })
-    }
-    const sp = dailyMenu?.special
-    if (sp?.active && Number(sp.priceMesa) > 0) {
-      extras.push({
-        id: '__lunch_special__',
-        source: 'special',
-        name: 'Almuerzo Especial',
-        isLunch: true,
-        lunchKind: 'special',
-        priceMesa: Number(sp.priceMesa) || 0,
-        priceLlevar: Number(sp.priceLlevar) || Number(sp.priceMesa) || 0,
-      })
-    }
-    if (extras.length === 0) return baseCatalog
-    return [...extras, ...baseCatalog]
-  }, [catalog, dailyMenu, allMenuItems, corrienteConfig])
+        lunchKind: 'chooser',
+        priceMesa: priceForInfo,
+        priceLlevar: priceLlevarForInfo,
+      },
+      ...baseCatalog,
+    ]
+  }, [catalog, corrienteState, specialFromDay, anyAddonAvailable])
 
   // ── Acceso rápido a almuerzos en hora pico ──────────────────────
   // De 11am a 2:59pm (Bogotá), si la cocinera publicó menú/especial,
@@ -234,16 +265,10 @@ export default function NewSale({
   }
 
   function handleSelectProduct(product) {
-    // Almuerzo Especial (item virtual inyectado cuando la cocinera lo activa).
-    // Sin categorías, solo descripción + destino.
-    if (product.isLunch && product.lunchKind === 'special') {
-      setLunchModal({ product, kind: 'special' })
-      setQuery('')
-      return
-    }
-    // Almuerzo con menú del día: abre el CashierLunchWizard paso a paso.
+    // Producto unificado "Almuerzo": abre el chooser con 3 opciones
+    // (corriente / especial / adición) para que la cajera elija.
     if (product.isLunch) {
-      setLunchModal({ product, kind: 'menu' })
+      setLunchChooserOpen(true)
       setQuery('')
       return
     }
@@ -441,6 +466,56 @@ export default function NewSale({
     })
   }
 
+  // Adición agregada desde PublicAddonsModal. Entra al lunchCommanda como
+  // item con kind 'addon'. handleSendCommanda lo procesará al enviar:
+  // concatenándolo al note del primer almuerzo si hay; o creando un
+  // "especial sintético" si solo hay adiciones.
+  function handleAddAddonToCommanda(payload) {
+    setLunchCommanda(prev => [...prev, payload])
+    setAddonsModalState(null)
+    setSendCommandaModal({
+      tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+      customerName: '',
+      error: null,
+      busy: false,
+    })
+  }
+
+  // Abre el chooser de tipo desde donde sea (POS principal, SendCommandaModal,
+  // o CashierLunchWizard next-action). Cierra todos los demás modales para
+  // evitar superposición.
+  function openLunchChooser() {
+    setSendCommandaModal(null)
+    setLunchModal(null)
+    setAddonsModalState(null)
+    setLunchChooserOpen(true)
+  }
+  function handleChooseCorriente() {
+    setLunchChooserOpen(false)
+    setLunchModal({
+      kind: 'menu',
+      product: {
+        id: '__lunch_corriente__',
+        name: 'Almuerzo Corriente',
+        priceMesa: corrienteState.priceMesa,
+        priceLlevar: corrienteState.priceLlevar,
+      },
+    })
+  }
+  function handleChooseSpecial() {
+    if (!specialFromDay) return
+    setLunchChooserOpen(false)
+    setLunchModal({
+      kind: 'special',
+      product: { name: 'Almuerzo Especial' },
+    })
+  }
+  function handleChooseAddon() {
+    setLunchChooserOpen(false)
+    setLunchModal(null)
+    setAddonsModalState('menu')
+  }
+
   // Eliminar un almuerzo de la comanda en construcción (antes de enviarla a
   // cocina). Permite a la cajera corregir un error sin perder los demás.
   function handleRemoveLunchFromCommanda(index) {
@@ -454,31 +529,12 @@ export default function NewSale({
     })
   }
 
-  // Reabrir el flujo de almuerzo para agregar otro a la misma comanda.
-  // Cierra el modal de envío y reabre el LunchPicker con el último producto
-  // usado (si fue corriente; si fue especial, reabre el especial).
-  // Importante: el "Almuerzo Corriente" es un producto VIRTUAL que vive en
-  // `enrichedCatalog`, no en `catalog`. Hay que buscarlo allá.
+  // Reabrir el flujo de pedido para agregar otro item a la misma comanda.
+  // Antes reabría el último tipo. Ahora abre el chooser unificado para que
+  // la cajera pueda mezclar corriente / especial / adición libremente.
   function handleAddAnotherLunch() {
     if (lunchCommanda.length === 0) return
-    const last = lunchCommanda[lunchCommanda.length - 1]
-    if (last.kind === 'special') {
-      // SpecialLunchModal no necesita `product` (lo lee del menú del día).
-      // Pero el render exige `lunchModal.product` para 'menu'; para 'special'
-      // mantenemos el shape histórico { product, kind } por consistencia.
-      setSendCommandaModal(null)
-      setLunchModal({ kind: 'special', product: { name: 'Almuerzo Especial' } })
-      return
-    }
-    // Para 'menu' necesitamos el producto virtual o real (priceMesa/priceLlevar).
-    const product = enrichedCatalog.find(p => p.id === last.productId)
-    if (product) {
-      setSendCommandaModal(null)
-      setLunchModal({ kind: 'menu', product })
-    }
-    // Si no se encuentra (caso raro: la cocinera quitó el corriente mientras
-    // la cajera tenía la comanda abierta), no hacemos nada — dejamos el modal
-    // de envío abierto para que la cajera pueda enviar lo que ya tiene.
+    openLunchChooser()
   }
 
   // Convierte cada almuerzo de la comanda en un item shim para el carrito de la mesa.
@@ -680,11 +736,23 @@ export default function NewSale({
         targetCustomerName = tab.customerName || null
       }
 
-      // Paso 2: crear los kitchenOrders apuntando al tabId real.
+      // Paso 2: pre-procesar las adiciones antes de crear los kitchenOrders.
+      // buildLunchCommanda mergea las adiciones al primer almuerzo (como nota)
+      // o crea un "Almuerzo Especial" sintético si solo hay adiciones.
+      // El destination del sintético se ajusta al tab real (mesa o llevar).
+      const processedCommanda = buildLunchCommanda(lunchCommanda, lunch => lunch)
+        .map(item => {
+          if (item.productName === 'Adiciones') {
+            return { ...item, destination: targetTabKind === 'llevar' ? 'llevar' : 'mesa' }
+          }
+          return item
+        })
+
+      // Paso 3: crear los kitchenOrders apuntando al tabId real.
       // tableNumber puede ser null cuando la tab es 'llevar' — la cocinera
       // verá el customerName en lugar del número.
       const orderIds = []
-      for (const lunch of lunchCommanda) {
+      for (const lunch of processedCommanda) {
         const orderId = await createKitchenOrder({
           tabId: targetTabId,
           tableNumber: targetTableNumber,
@@ -710,8 +778,8 @@ export default function NewSale({
         orderIds.push(orderId)
       }
 
-      // Paso 3: agregar los items shim a la openTab (final).
-      const lunchItems = lunchCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
+      // Paso 4: agregar los items shim a la openTab (final).
+      const lunchItems = processedCommanda.map((lunch, i) => lunchToCartItem(lunch, orderIds[i]))
       const finalCart = [...cart, ...lunchItems]
       setCart(finalCart)
       await updateOpenTab(targetTabId, { items: finalCart })
@@ -1361,6 +1429,8 @@ export default function NewSale({
           initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}
           initialDestination={lunchModal.edit?.initialDestination || null}
+          specialAvailable={!!specialFromDay}
+          addonAvailable={anyAddonAvailable}
           onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
             // En edición, cerrar es simplemente cerrar — sin flujo de comanda.
@@ -1368,18 +1438,30 @@ export default function NewSale({
               setLunchModal(null)
               return
             }
+            // Cerramos siempre el modal — los handlers del next-action ya
+            // habrán llamado onAdd antes. Si no hay almuerzos quedó vacío.
+            setLunchModal(null)
+            // Solo abrimos el modal de envío si la cajera CANCELA con almuerzos
+            // ya agregados (caso accidental). El flujo normal del next-action
+            // dispara onSendCommanda/onAddAnotherX que ya manejan esto aparte.
             if (lunchCommanda.length > 0) {
-              setLunchModal(null)
               setSendCommandaModal({
                 tableNumber: tableNumber || nextFreeTableNumber(openTabs),
                 customerName: '',
                 error: null, busy: false,
               })
-            } else {
-              setLunchModal(null)
             }
           }}
           onAdd={handleAddLunchToCommanda}
+          onAddAnotherSpecial={handleChooseSpecial}
+          onAddAnotherAddon={handleChooseAddon}
+          onSendCommanda={() => {
+            setSendCommandaModal({
+              tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+              customerName: '',
+              error: null, busy: false,
+            })
+          }}
         />
       )}
       {lunchModal?.kind === 'special' && (
@@ -1407,6 +1489,55 @@ export default function NewSale({
             }
           }}
           onAdd={handleAddLunchToCommanda}
+        />
+      )}
+
+      {/* Chooser de tipo: aparece al tocar "Almuerzo" del catálogo o
+          al pedir "+ Otro" desde SendCommandaModal. Filtra opciones
+          según disponibilidad del día. */}
+      {lunchChooserOpen && (
+        <LunchTypeChooserModal
+          corrienteAvailable={corrienteState.available}
+          corrientePrice={corrienteState.priceMesa}
+          specialActive={!!specialFromDay}
+          specialDescription={specialFromDay?.description || ''}
+          specialPrice={Number(specialFromDay?.priceMesa) || 0}
+          addonAvailable={anyAddonAvailable}
+          onCancel={() => {
+            setLunchChooserOpen(false)
+            // Si la cajera cancela pero ya tiene almuerzos, vuelve al send
+            // modal para que pueda enviar lo que ya armó.
+            if (lunchCommanda.length > 0) {
+              setSendCommandaModal({
+                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+                customerName: '',
+                error: null, busy: false,
+              })
+            }
+          }}
+          onPickCorriente={handleChooseCorriente}
+          onPickSpecial={handleChooseSpecial}
+          onPickAddon={handleChooseAddon}
+        />
+      )}
+
+      {/* Modal de adición (sopa/huevo/proteína extra) reusado del cliente. */}
+      {addonsModalState && (
+        <PublicAddonsModal
+          prices={addonPrices}
+          proteinOptions={proteinOptionsForDay}
+          initialType={addonsModalState === 'menu' ? null : addonsModalState}
+          onCancel={() => {
+            setAddonsModalState(null)
+            if (lunchCommanda.length > 0) {
+              setSendCommandaModal({
+                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
+                customerName: '',
+                error: null, busy: false,
+              })
+            }
+          }}
+          onAdd={handleAddAddonToCommanda}
         />
       )}
 
@@ -1545,7 +1676,7 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
           Enviar comanda a cocina
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, marginBottom: 14, lineHeight: 1.5 }}>
-          {lunchCommanda.length} {lunchCommanda.length === 1 ? 'almuerzo' : 'almuerzos'} listos para enviar. Tócalos para revisar o quitar.
+          {lunchCommanda.length} {lunchCommanda.length === 1 ? 'item' : 'items'} listos para enviar. Quítalos con la ✕ si te equivocaste.
         </div>
 
         {/* Resumen de lo que se envía — con ✕ por item para corregir antes de enviar */}
@@ -1554,14 +1685,20 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
           background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
           marginBottom: 10,
         }}>
-          {lunchCommanda.map((l, i) => (
+          {lunchCommanda.map((l, i) => {
+            const isAddon = l.kind === 'addon'
+            const label = isAddon
+              ? (formatAddonLine(l) || 'Adicional')
+              : `${l.productName} · ${l.destination === 'llevar' ? '📦' : '🍽️'}`
+            return (
             <div key={i} style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               fontSize: 12.5, color: T.neutral[700], padding: '6px 0', gap: 8,
               borderBottom: i < lunchCommanda.length - 1 ? `0.5px dashed ${T.neutral[200]}` : 'none',
             }}>
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {l.productName} · {l.destination === 'llevar' ? '📦' : '🍽️'}
+                {isAddon && <span style={{ marginRight: 4 }}>➕</span>}
+                {label}
               </span>
               <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                 ${(l.price || 0).toLocaleString('es-CO')}
@@ -1592,7 +1729,8 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
                 </button>
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* Botón para volver al modal del almuerzo y agregar otro a la misma comanda */}
@@ -1610,7 +1748,7 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
               marginBottom: 14,
             }}
           >
-            + Agregar otro almuerzo
+            + Agregar otro almuerzo o adición
           </button>
         )}
 

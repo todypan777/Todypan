@@ -45,9 +45,19 @@ export default function CashierLunchWizard({
   initialSelections = null,
   initialNote = '',
   initialDestination = null,
+  // Disponibilidad de los otros tipos para los botones del next-action.
+  // Si no se pasa, los botones de especial/adición no se muestran.
+  specialAvailable = false,
+  addonAvailable = false,
   onCancel,
   onAdd,
   onSaveEdit = () => {},
+  // Acciones post-destino (cuando la cajera ya agregó este almuerzo).
+  // El wizard llama onAdd y luego una de estas para que NewSale abra el
+  // siguiente modal o el de envío.
+  onAddAnotherSpecial = () => {},
+  onAddAnotherAddon = () => {},
+  onSendCommanda = () => {},
 }) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
@@ -96,13 +106,11 @@ export default function CashierLunchWizard({
   }, [resolvedMenu.side, resolvedMenu.salad, resolvedMenu.juice, editMode])
 
   // ─── Steps ───────────────────────────────────────────────────────
-  // En edición arrancamos directo en 'summary' con todo pre-cargado.
-  // En normal arrancamos en 'soup'.
-  const [step, setStep] = useState(editMode ? 'summary' : 'soup')
-
-  // Decisión "+ Otro" o "Enviar" → se elige en summary, se aplica al
-  // llamar onAdd después de elegir destino.
-  const [pendingAnother, setPendingAnother] = useState(false)
+  // En edición arrancamos directo en 'destination' (con todo pre-cargado
+  // y el destino actual destacado). En modo normal arrancamos en 'soup'.
+  //   soup → soup-replace? → principio → principio-replace? → protein
+  //   → sides-combo → note → destination → next-action
+  const [step, setStep] = useState(editMode ? 'destination' : 'soup')
 
   function setCategory(catId, val) {
     setSelections(prev => ({ ...prev, [catId]: val }))
@@ -146,33 +154,41 @@ export default function CashierLunchWizard({
     }
   }
 
+  // Recordamos el destino elegido para mostrar en el next-action y
+  // permitir cambiar si la cajera se equivoca.
+  const [chosenDestination, setChosenDestination] = useState(null)
+
   function pickDestination(destination) {
     if (editMode) {
       onSaveEdit(buildPayload(destination))
       return
     }
-    onAdd(buildPayload(destination), { another: pendingAnother })
-    if (pendingAnother) {
-      // Reset para el siguiente almuerzo. Volver al primer step.
-      setSelections({})
-      setReplacements({})
-      setNote('')
-      preselectedRef.current = false
-      setStep('soup')
-      setPendingAnother(false)
-    }
+    // Guardamos el destino, agregamos al carrito CON another=true (para que
+    // el modal NO se cierre — vamos al next-action), y pasamos al next-action.
+    setChosenDestination(destination)
+    onAdd(buildPayload(destination), { another: true })
+    setStep('next-action')
+  }
+
+  function resetForAnotherCorriente() {
+    setSelections({})
+    setReplacements({})
+    setNote('')
+    setChosenDestination(null)
+    preselectedRef.current = false
+    setStep('soup')
   }
 
   // ─── Navegación ──────────────────────────────────────────────────
-  const TOTAL_STEPS = 7 // sopa, principio, proteína, sides, nota, resumen, destino
+  const TOTAL_STEPS = 7 // sopa, principio, proteína, sides, nota, destino, next-action
   const stepIndex = useMemo(() => {
     if (step.startsWith('soup')) return 0
     if (step.startsWith('principio')) return 1
     if (step === 'protein') return 2
     if (step === 'sides-combo') return 3
     if (step === 'note') return 4
-    if (step === 'summary') return 5
-    if (step === 'destination') return 6
+    if (step === 'destination') return 5
+    if (step === 'next-action') return 6
     return 0
   }, [step])
 
@@ -185,8 +201,10 @@ export default function CashierLunchWizard({
       case 'protein':           setStep(selections.principio ? 'principio' : 'principio-replace'); break
       case 'sides-combo':       setStep('protein'); break
       case 'note':              setStep('sides-combo'); break
-      case 'summary':           editMode ? onCancel() : setStep('note'); break
-      case 'destination':       setStep('summary'); break
+      case 'destination':       editMode ? onCancel() : setStep('note'); break
+      // En next-action ya agregamos el almuerzo al carrito; "atrás" no
+      // tiene sentido — la cajera debe decidir qué hacer.
+      case 'next-action':       break
     }
   }
 
@@ -354,31 +372,29 @@ export default function CashierLunchWizard({
               />
             )}
 
-            {step === 'summary' && (
-              <SummaryStep
-                selections={selections}
-                replacements={replacements}
-                note={note}
-                product={product}
-                editMode={editMode}
-                onEdit={() => setStep('soup')}
-                onAddAnother={() => {
-                  setPendingAnother(true)
-                  setStep('destination')
-                }}
-                onContinueToDestination={() => {
-                  setPendingAnother(false)
-                  setStep('destination')
-                }}
-              />
-            )}
-
             {step === 'destination' && (
               <DestinationStep
                 product={product}
                 editMode={editMode}
                 initialDestination={initialDestination}
                 onPick={pickDestination}
+              />
+            )}
+
+            {step === 'next-action' && (
+              <NextActionStep
+                addedDestination={chosenDestination}
+                currentCount={currentCount + 1}
+                specialAvailable={specialAvailable}
+                addonAvailable={addonAvailable}
+                onAnotherCorriente={resetForAnotherCorriente}
+                // Estos handlers son responsables de cerrar el wizard ellos
+                // mismos y abrir el siguiente modal. El wizard no llama
+                // onCancel — onCancel tiene lógica propia de "el usuario
+                // canceló" que no aplica acá.
+                onAnotherSpecial={onAddAnotherSpecial}
+                onAnotherAddon={onAddAnotherAddon}
+                onSend={onSendCommanda}
               />
             )}
           </div>
@@ -1000,153 +1016,132 @@ function NoteStep({ note, onChange, onContinue }) {
   )
 }
 
-// ─── Step: Resumen + decisión + Otro / Continuar ────────────────
-function SummaryStep({
-  selections, replacements, note, product, editMode,
-  onEdit, onAddAnother, onContinueToDestination,
+// ─── Step: Próxima acción después de Mesa/Llevar ────────────────
+// El almuerzo ya quedó en la comanda. Damos 4 opciones claras:
+//   1. + Otro almuerzo corriente (resetea wizard)
+//   2. + Almuerzo especial (cierra wizard, NewSale abre SpecialLunchModal)
+//   3. + Adición (cierra wizard, NewSale abre PublicAddonsModal)
+//   4. ✓ Enviar comanda (cierra wizard, NewSale abre SendCommandaModal)
+function NextActionStep({
+  addedDestination, currentCount,
+  specialAvailable, addonAvailable,
+  onAnotherCorriente, onAnotherSpecial, onAnotherAddon, onSend,
 }) {
-  const priceMesa = Number(product?.priceMesa || 0)
-  const priceLlevar = Number(product?.priceLlevar || product?.priceMesa || 0)
+  const destLabel = addedDestination === 'llevar' ? '📦 Para llevar' : '🍽️ Para mesa'
   return (
     <div>
-      <StepHero
-        emoji={editMode ? '✎' : '✨'}
-        title={editMode ? 'Revisa los cambios' : 'Revisa el almuerzo'}
-        subtitle={editMode ? 'Toca un paso atrás para corregir.' : 'Falta elegir Mesa o Llevar.'}
-      />
-
-      <div style={{
-        marginTop: 16, borderRadius: 18, background: '#fff',
-        border: `1.5px solid ${T.copper[200]}`,
-        overflow: 'hidden',
-      }}>
+      <div style={{ textAlign: 'center', padding: '8px 0 4px' }}>
         <div style={{
-          padding: '12px 16px',
-          background: T.copper[50],
-          borderBottom: `1px solid ${T.copper[100]}`,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          width: 64, height: 64, borderRadius: 999, margin: '0 auto 8px',
+          background: T.ok + '22', color: T.ok,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 32, fontWeight: 900,
         }}>
-          <div style={{
-            fontSize: 11.5, fontWeight: 800, color: T.copper[700],
-            letterSpacing: 0.5, textTransform: 'uppercase',
-          }}>
-            {product?.name || 'Almuerzo Corriente'}
-          </div>
-          <div style={{
-            fontSize: 13, fontWeight: 700, color: T.neutral[700],
-            fontVariantNumeric: 'tabular-nums',
-          }}>
-            Mesa {fmtCOP(priceMesa)} · Llevar {fmtCOP(priceLlevar)}
-          </div>
+          ✓
         </div>
-        <div style={{ padding: '6px 16px 12px' }}>
-          {CATEGORIES.map(cat => {
-            const val = selections[cat.id]
-            const rep = replacements[cat.id]
-            const repLabel = REPLACEMENT_LABELS[rep]
-            const isSin = !val && (cat.alwaysServed || rep === 'nada')
-            const hasReplacement = !val && repLabel
-            const shouldShow = val || isSin || hasReplacement
-            if (!shouldShow) return null
-            return (
-              <div key={cat.id} style={{
-                padding: '8px 0', display: 'flex', gap: 12, alignItems: 'flex-start',
-                borderBottom: `0.5px solid ${T.neutral[100]}`,
-              }}>
-                <span style={{ fontSize: 16, flexShrink: 0, lineHeight: 1.3 }}>{cat.emoji}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 10.5, fontWeight: 800, color: T.neutral[500],
-                    letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 2,
-                  }}>
-                    {cat.label}
-                  </div>
-                  <div style={{
-                    fontSize: 13.5, fontWeight: 700, lineHeight: 1.4,
-                    color: isSin ? T.bad : T.neutral[900],
-                  }}>
-                    {val ? (
-                      Array.isArray(val)
-                        ? `MIXTO · ${val.map(v => v.name).join(' / ')}`
-                        : val.name
-                    ) : hasReplacement ? (
-                      <>
-                        <span style={{ color: T.bad, fontWeight: 800 }}>Sin {cat.label.toLowerCase()}</span>
-                        {' '}
-                        <span style={{ color: T.copper[700] }}>
-                          → + {repLabel}
-                        </span>
-                      </>
-                    ) : (
-                      `SIN ${cat.label.toUpperCase()}`
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-          {note.trim() && (
-            <div style={{
-              marginTop: 10, padding: '10px 12px', borderRadius: 10,
-              background: '#FFF7E6', border: `1px solid #F4E0BC`,
-              fontSize: 12.5, color: '#7A5C00', fontWeight: 600,
-              fontStyle: 'italic', lineHeight: 1.4,
-            }}>
-              📝 {note.trim()}
-            </div>
-          )}
+        <div style={{
+          fontSize: 20, fontWeight: 900, color: T.neutral[900],
+          letterSpacing: -0.4, lineHeight: 1.2, marginBottom: 6,
+        }}>
+          Almuerzo agregado
+        </div>
+        <div style={{
+          fontSize: 13, color: T.neutral[600], lineHeight: 1.5,
+        }}>
+          {destLabel} · ya hay <b>{currentCount}</b> en la comanda
         </div>
       </div>
 
-      {!editMode && (
-        <button
-          onClick={onEdit}
-          style={{
-            marginTop: 14, width: '100%', padding: '10px',
-            background: 'transparent', color: T.neutral[600],
-            border: `1.5px solid ${T.neutral[200]}`, borderRadius: 12,
-            cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 12.5, fontWeight: 700,
-          }}
-        >
-          ← Editar desde el principio
-        </button>
-      )}
-
       <div style={{
-        marginTop: 16,
-        display: 'grid',
-        gridTemplateColumns: editMode ? '1fr' : '1fr 1.4fr',
-        gap: 10,
+        marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10,
       }}>
-        {!editMode && (
-          <button
-            onClick={onAddAnother}
-            style={{
-              padding: '14px', borderRadius: 14,
-              background: '#fff', color: T.copper[700],
-              border: `1.5px solid ${T.copper[400]}`,
-              cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 13.5, fontWeight: 800,
-            }}
-          >
-            + Otro almuerzo
-          </button>
+        <NextActionButton
+          emoji="🍽️"
+          title="+ Otro almuerzo corriente"
+          subtitle="Otro almuerzo del menú del día"
+          variant="primary"
+          onClick={onAnotherCorriente}
+        />
+        {specialAvailable && (
+          <NextActionButton
+            emoji="⭐"
+            title="+ Almuerzo especial"
+            subtitle="El especial publicado para hoy"
+            variant="warn"
+            onClick={onAnotherSpecial}
+          />
         )}
-        <button
-          onClick={onContinueToDestination}
-          style={{
-            padding: '14px', borderRadius: 14,
-            background: T.copper[500], color: '#fff',
-            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 14.5, fontWeight: 800, letterSpacing: 0.3,
-            boxShadow: `0 4px 14px ${T.copper[500]}55`,
-          }}
-        >
-          Continuar →
-        </button>
+        {addonAvailable && (
+          <NextActionButton
+            emoji="➕"
+            title="+ Adición"
+            subtitle="Sopa, huevo o proteína extra"
+            variant="warn"
+            onClick={onAnotherAddon}
+          />
+        )}
+        <NextActionButton
+          emoji="📤"
+          title="✓ Enviar comanda"
+          subtitle="Cerrar y mandar todo a cocina"
+          variant="ok"
+          onClick={onSend}
+        />
       </div>
     </div>
+  )
+}
+
+function NextActionButton({ emoji, title, subtitle, variant, onClick }) {
+  const palette = {
+    primary: { bg: '#fff', border: T.copper[300], color: T.copper[700], iconBg: T.copper[50] },
+    warn:    { bg: '#fff', border: '#F4E0BC',    color: '#7A5C00',     iconBg: '#FFF7E6' },
+    ok:      { bg: T.ok,   border: T.ok,         color: '#fff',        iconBg: 'rgba(255,255,255,0.2)' },
+  }[variant] || { bg: '#fff', border: T.neutral[200], color: T.neutral[700], iconBg: T.neutral[100] }
+
+  const isFilled = variant === 'ok'
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: '100%', padding: '14px 16px', borderRadius: 14,
+        background: palette.bg,
+        border: `${isFilled ? 0 : 1.5}px solid ${palette.border}`,
+        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+        display: 'flex', alignItems: 'center', gap: 14,
+        boxShadow: isFilled
+          ? `0 4px 14px ${T.ok}55`
+          : '0 2px 6px rgba(0,0,0,0.04)',
+        transition: 'transform 0.1s ease',
+      }}
+      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
+      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+      onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+    >
+      <div style={{
+        width: 42, height: 42, borderRadius: 12, flexShrink: 0,
+        background: palette.iconBg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 22, lineHeight: 1,
+      }}>
+        {emoji}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 14.5, fontWeight: 800, color: palette.color,
+          letterSpacing: -0.2, lineHeight: 1.2,
+        }}>
+          {title}
+        </div>
+        <div style={{
+          fontSize: 12, color: palette.color,
+          opacity: isFilled ? 0.9 : 0.65,
+          marginTop: 2, lineHeight: 1.35,
+        }}>
+          {subtitle}
+        </div>
+      </div>
+    </button>
   )
 }
 

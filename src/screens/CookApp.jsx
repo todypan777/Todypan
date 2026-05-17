@@ -11,6 +11,9 @@ import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchKitchenQueue, markOrderReady, unmarkOrderReady,
 } from '../kitchenOrders'
+import { watchOpenSessions } from '../cashSessions'
+import { createKitchenCall, watchMyPendingCalls } from '../kitchenCalls'
+import { getData } from '../db'
 import ContactSupportButton from '../components/ContactSupportButton'
 import CatalogView from '../components/MenuEditor/CatalogView'
 import DailyMenuCard from '../components/MenuEditor/DailyMenuCard'
@@ -178,6 +181,15 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
           corrienteConfig={corrienteConfig}
           onClose={() => setMenuOverlay(null)}
           onGoToCatalog={() => { setMenuOverlay(null); setTab('catalog') }}
+        />
+      )}
+
+      {/* Botón flotante para llamar a la cajera de Panadería B.
+          Solo visible para la cocinera real (no en assistMode). */}
+      {!isAssist && (
+        <CallCashierFAB
+          authUser={authUser}
+          userDoc={userDoc}
         />
       )}
 
@@ -1419,4 +1431,214 @@ function SignOutModal({ onCancel, onConfirm }) {
       </ModalCard>
     </ModalOverlay>
   )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Botón flotante "Llamar cajera" (Panadería B)
+//
+// Estados:
+//   - Idle:    pill cobre con campana — la cocinera puede llamar
+//   - Pending: pill ámbar con punto pulsante — esperando que la cajera
+//              tape "Voy en camino"; el botón queda bloqueado
+//   - Sin cajera: toast suave "No hay cajera activa en Panadería B"
+// ──────────────────────────────────────────────────────────────
+const KITCHEN_CALL_BRANCH_NAME = 'Panadería B'
+
+function CallCashierFAB({ authUser, userDoc }) {
+  const [openSessions, setOpenSessions] = useState([])
+  const [myPendingCalls, setMyPendingCalls] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [toast, setToast] = useState(null)
+
+  useEffect(() => watchOpenSessions(setOpenSessions), [])
+  useEffect(() => watchMyPendingCalls(authUser.uid, setMyPendingCalls), [authUser.uid])
+
+  const branches = getData().branches || []
+  const targetBranch = useMemo(
+    () => branches.find(b => b.name === KITCHEN_CALL_BRANCH_NAME) || null,
+    [branches]
+  )
+  const targetSession = useMemo(() => {
+    if (!targetBranch) return null
+    return openSessions.find(s => s.branchId === targetBranch.id && s.status === 'open') || null
+  }, [openSessions, targetBranch])
+
+  const isPending = myPendingCalls.length > 0
+
+  function showToast(message, kind = 'info') {
+    setToast({ message, kind })
+    setTimeout(() => setToast(null), 3200)
+  }
+
+  async function handleCall() {
+    if (busy || isPending) return
+    if (!targetBranch) {
+      showToast('No se encontró la Panadería B en la configuración.', 'warn')
+      return
+    }
+    if (!targetSession) {
+      showToast(`No hay cajera activa en ${KITCHEN_CALL_BRANCH_NAME} ahora mismo.`, 'warn')
+      return
+    }
+    setBusy(true)
+    try {
+      try { navigator.vibrate?.(40) } catch {}
+      const cookName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+        || authUser?.email || 'Cocina'
+      await createKitchenCall({
+        createdBy: authUser.uid,
+        createdByName: cookName,
+        targetBranchId: targetBranch.id,
+        targetBranchName: targetBranch.name,
+        targetSessionId: targetSession.id,
+        targetCashierUid: targetSession.cashierUid,
+        targetCashierName: targetSession.cashierName,
+      })
+      showToast(`Llamada enviada a ${targetSession.cashierName || 'la cajera'}.`, 'ok')
+    } catch (err) {
+      console.error('[kitchenCalls] createKitchenCall error:', err)
+      showToast('No se pudo enviar la llamada. Intenta de nuevo.', 'bad')
+      setBusy(false)
+      return
+    }
+    setBusy(false)
+  }
+
+  const label = isPending
+    ? `Esperando a ${myPendingCalls[0]?.targetCashierName || 'la cajera'}...`
+    : 'Llamar cajera'
+  const sub = isPending
+    ? 'Volverá a habilitarse cuando confirme'
+    : KITCHEN_CALL_BRANCH_NAME
+
+  const bg = isPending ? '#FFF4DD' : T.copper[500]
+  const fg = isPending ? '#8A5E12' : '#fff'
+  const subColor = isPending ? '#9A7200' : 'rgba(255,255,255,0.85)'
+  const borderColor = isPending ? '#F0D699' : 'transparent'
+  const shadow = isPending
+    ? '0 6px 18px rgba(184,140,40,0.25)'
+    : '0 8px 22px rgba(184,122,86,0.5)'
+
+  return createPortal((
+    <>
+      <button
+        onClick={handleCall}
+        disabled={busy || isPending}
+        aria-label={isPending ? 'Esperando confirmación de la cajera' : 'Llamar a la cajera de Panadería B'}
+        style={{
+          position: 'fixed',
+          right: 'max(16px, env(safe-area-inset-right, 0px))',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 18px)',
+          zIndex: 90,
+          padding: '14px 18px',
+          borderRadius: 999,
+          background: bg,
+          color: fg,
+          border: `1.5px solid ${borderColor}`,
+          cursor: isPending ? 'not-allowed' : (busy ? 'wait' : 'pointer'),
+          fontFamily: 'inherit',
+          boxShadow: shadow,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          minHeight: 56,
+          maxWidth: 'calc(100vw - 32px)',
+          transition: 'transform 0.12s, background 0.2s, color 0.2s',
+          animation: isPending ? 'fabPulse 1.4s ease-in-out infinite' : 'none',
+        }}
+        onMouseDown={e => { if (!isPending) e.currentTarget.style.transform = 'scale(0.96)' }}
+        onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
+        onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
+      >
+        <div style={{
+          width: 36, height: 36, borderRadius: 999, flexShrink: 0,
+          background: isPending ? '#fff' : 'rgba(255,255,255,0.18)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          position: 'relative',
+        }}>
+          {isPending ? (
+            <span style={{
+              width: 12, height: 12, borderRadius: 999, background: '#C08A3E',
+              animation: 'fabDot 1s ease-in-out infinite',
+              display: 'block',
+            }}/>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 3 C8.7 3 6 5.7 6 9 V13 L4 16 H20 L18 13 V9 C18 5.7 15.3 3 12 3 Z"
+                stroke={fg} strokeWidth="1.8" fill="none" strokeLinejoin="round"
+              />
+              <path
+                d="M10 19 C10 20.1 10.9 21 12 21 C13.1 21 14 20.1 14 19"
+                stroke={fg} strokeWidth="1.8" fill="none" strokeLinecap="round"
+              />
+            </svg>
+          )}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', minWidth: 0 }}>
+          <span style={{
+            fontSize: 14, fontWeight: 900, letterSpacing: -0.2,
+            lineHeight: 1.15,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            maxWidth: 220,
+          }}>
+            {label}
+          </span>
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: subColor,
+            letterSpacing: 0.2, marginTop: 2,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            maxWidth: 220,
+          }}>
+            {sub}
+          </span>
+        </div>
+      </button>
+
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          right: 'max(16px, env(safe-area-inset-right, 0px))',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 88px)',
+          zIndex: 91,
+          maxWidth: 'calc(100vw - 32px)',
+          padding: '12px 16px', borderRadius: 14,
+          background: toast.kind === 'bad' ? '#FBE9E5'
+            : toast.kind === 'warn' ? '#FFF4DD'
+            : toast.kind === 'ok' ? '#E8F4E8'
+            : '#fff',
+          border: `1.5px solid ${
+            toast.kind === 'bad' ? '#F0C8BE'
+            : toast.kind === 'warn' ? '#F0D699'
+            : toast.kind === 'ok' ? `${T.ok}55`
+            : T.neutral[200]
+          }`,
+          color: toast.kind === 'bad' ? T.bad
+            : toast.kind === 'warn' ? '#8A5E12'
+            : toast.kind === 'ok' ? T.ok
+            : T.neutral[800],
+          fontSize: 13, fontWeight: 700, lineHeight: 1.4,
+          boxShadow: '0 8px 20px rgba(0,0,0,0.12)',
+          animation: 'fabToastIn 0.2s ease-out',
+        }}>
+          {toast.message}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes fabPulse {
+          0%, 100% { box-shadow: 0 6px 18px rgba(184,140,40,0.25); }
+          50%      { box-shadow: 0 6px 22px rgba(184,140,40,0.55); }
+        }
+        @keyframes fabDot {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%      { opacity: 0.4; transform: scale(0.7); }
+        }
+        @keyframes fabToastIn {
+          from { opacity: 0; transform: translateY(8px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </>
+  ), document.body)
 }

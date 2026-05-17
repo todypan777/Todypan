@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { T } from '../tokens'
 import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
@@ -9,6 +10,7 @@ import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
+import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
 import ErrorBoundary from '../components/ErrorBoundary'
 import ContactSupportButton from '../components/ContactSupportButton'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
@@ -587,6 +589,15 @@ function ActiveSession({ session, userDoc, authUser }) {
     return unsub
   }, [authUser.uid])
 
+  // Llamadas pendientes de cocina dirigidas a esta cajera.
+  // Si hay alguna, se monta el overlay bloqueante encima de toda la UI.
+  const [pendingCalls, setPendingCalls] = useState([])
+  useEffect(() => {
+    const unsub = watchPendingCallsForCashier(authUser.uid, setPendingCalls)
+    return unsub
+  }, [authUser.uid])
+  const activeCall = pendingCalls[0] || null
+
   // Mostrar últimas 15 ventas (D21: sin totales agregados)
   const recentSales = sessionSales.slice(0, 15)
   const pendingDeductions = myDeductions.filter(d => d.status === 'pending')
@@ -948,8 +959,218 @@ function ActiveSession({ session, userDoc, authUser }) {
           onSaved={() => setExpenseOpen(false)}
         />
       )}
+
+      {/* Overlay bloqueante: la cocinera está llamando a esta cajera.
+          No se puede cerrar de otra forma, solo tocando "Voy en camino". */}
+      {activeCall && (
+        <KitchenCallOverlay
+          call={activeCall}
+          authUser={authUser}
+          userDoc={userDoc}
+        />
+      )}
     </div>
   )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Overlay bloqueante cuando la cocinera llama a la cajera.
+// La cajera no puede interactuar con la app hasta confirmar.
+// Vibra al aparecer y reintenta la vibración cada pocos segundos.
+// ──────────────────────────────────────────────────────────────
+function KitchenCallOverlay({ call, authUser, userDoc }) {
+  const [busy, setBusy] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+
+  // Vibración inmediata + ráfaga de recordatorios mientras siga sin atender.
+  useEffect(() => {
+    function pulse() {
+      try { navigator.vibrate?.([300, 120, 300, 120, 500]) } catch {}
+    }
+    pulse()
+    const id = setInterval(pulse, 4500)
+    return () => clearInterval(id)
+  }, [call.id])
+
+  async function handleConfirm() {
+    if (busy) return
+    setBusy(true)
+    try {
+      try { navigator.vibrate?.(0) } catch {}
+      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+        || authUser?.email || 'Cajera'
+      await acknowledgeKitchenCall(call.id, {
+        byUid: authUser.uid,
+        byName: cashierName,
+      })
+      setConfirmed(true)
+      // El overlay desaparecerá solo cuando el watcher reciba el update.
+      // Mientras tanto mostramos el flash de "Listo, vas en camino".
+    } catch (err) {
+      console.error('[kitchenCalls] acknowledge error:', err)
+      setBusy(false)
+      setConfirmed(false)
+    }
+  }
+
+  const fromName = call.createdByName || 'Cocina'
+
+  return createPortal((
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(20, 16, 12, 0.78)',
+      backdropFilter: 'blur(4px)',
+      WebkitBackdropFilter: 'blur(4px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: 18,
+      animation: 'kcOverlayIn 0.22s ease-out',
+    }}>
+      <div style={{
+        width: '100%', maxWidth: 420,
+        background: '#fff', borderRadius: 26,
+        boxShadow: '0 24px 64px rgba(0,0,0,0.45)',
+        overflow: 'hidden',
+        animation: 'kcCardIn 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
+        position: 'relative',
+      }}>
+        <div style={{
+          padding: '28px 24px 22px',
+          background: 'linear-gradient(135deg, #FFE4D2 0%, #F0BFA0 100%)',
+          textAlign: 'center',
+          borderBottom: `1.5px solid ${T.copper[200]}`,
+          position: 'relative',
+          overflow: 'hidden',
+        }}>
+          {/* Halo pulsante detrás del icono */}
+          <div style={{
+            position: 'absolute',
+            top: '50%', left: '50%',
+            width: 180, height: 180,
+            borderRadius: 999,
+            background: 'rgba(255,255,255,0.5)',
+            transform: 'translate(-50%, -55%)',
+            animation: 'kcHalo 1.6s ease-out infinite',
+            pointerEvents: 'none',
+          }}/>
+          <div style={{
+            position: 'relative',
+            width: 96, height: 96, borderRadius: 999,
+            background: '#fff',
+            margin: '0 auto 14px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            boxShadow: `0 10px 28px ${T.copper[500]}55`,
+            animation: 'kcBell 0.9s ease-in-out infinite',
+          }}>
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 3 C8.7 3 6 5.7 6 9 V13 L4 16 H20 L18 13 V9 C18 5.7 15.3 3 12 3 Z"
+                stroke={T.copper[700]} strokeWidth="1.9" fill="none" strokeLinejoin="round"
+              />
+              <path
+                d="M10 19 C10 20.1 10.9 21 12 21 C13.1 21 14 20.1 14 19"
+                stroke={T.copper[700]} strokeWidth="1.9" fill="none" strokeLinecap="round"
+              />
+            </svg>
+          </div>
+          <div style={{
+            position: 'relative',
+            fontSize: 12, fontWeight: 900,
+            color: T.copper[700], letterSpacing: 1.2,
+            textTransform: 'uppercase',
+          }}>
+            Te llaman de cocina
+          </div>
+          <div style={{
+            position: 'relative',
+            fontSize: 26, fontWeight: 900,
+            color: T.neutral[900], letterSpacing: -0.5,
+            lineHeight: 1.15, marginTop: 6,
+          }}>
+            Por favor sube a cocina
+          </div>
+          <div style={{
+            position: 'relative',
+            fontSize: 13, color: T.copper[700], opacity: 0.85,
+            marginTop: 8, fontWeight: 700,
+          }}>
+            {fromName} te necesita
+          </div>
+        </div>
+
+        <div style={{ padding: '22px 22px 18px', textAlign: 'center' }}>
+          <div style={{
+            fontSize: 13.5, color: T.neutral[600], lineHeight: 1.55,
+            marginBottom: 18,
+          }}>
+            La app está bloqueada hasta que confirmes. Toca el botón cuando vayas
+            a subir para que la cocinera sepa que la viste.
+          </div>
+
+          <button
+            onClick={handleConfirm}
+            disabled={busy || confirmed}
+            style={{
+              width: '100%', padding: '18px',
+              borderRadius: 16,
+              background: confirmed ? T.ok : T.copper[500],
+              color: '#fff',
+              border: 'none',
+              cursor: busy ? 'wait' : 'pointer',
+              fontFamily: 'inherit',
+              fontSize: 17, fontWeight: 900, letterSpacing: 0.3,
+              boxShadow: confirmed
+                ? `0 8px 20px ${T.ok}66`
+                : `0 8px 22px ${T.copper[500]}66`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 10,
+              transition: 'background 0.2s, box-shadow 0.2s',
+            }}
+          >
+            {confirmed ? (
+              <>
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <path d="M5 11 L9 15 L17 7" stroke="#fff" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Listo, ya vas en camino
+              </>
+            ) : busy ? (
+              'Enviando...'
+            ) : (
+              <>
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <path d="M5 11 L9 15 L17 7" stroke="#fff" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                Voy en camino
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes kcOverlayIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
+        @keyframes kcCardIn {
+          from { opacity: 0; transform: scale(0.92) translateY(14px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
+        }
+        @keyframes kcBell {
+          0%, 100% { transform: rotate(0deg); }
+          15%      { transform: rotate(-12deg); }
+          30%      { transform: rotate(10deg); }
+          45%      { transform: rotate(-8deg); }
+          60%      { transform: rotate(6deg); }
+          75%      { transform: rotate(-3deg); }
+        }
+        @keyframes kcHalo {
+          0%   { transform: translate(-50%, -55%) scale(0.6); opacity: 0.7; }
+          100% { transform: translate(-50%, -55%) scale(1.4); opacity: 0; }
+        }
+      `}</style>
+    </div>
+  ), document.body)
 }
 
 // ──────────────────────────────────────────────────────────────

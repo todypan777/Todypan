@@ -163,7 +163,12 @@ export default function PublicMenu() {
       <div style={{
         flex: 1,
         maxWidth: 640, margin: '0 auto', width: '100%',
-        padding: '20px 18px 24px',
+        // Padding-bottom extra cuando el botón flotante está visible para
+        // que el último item no quede tapado. ~110px = altura del botón +
+        // margen de respiro.
+        padding: cart.length > 0 && sendState !== 'sent' && hasAnything
+          ? '20px 18px 130px'
+          : '20px 18px 24px',
         boxSizing: 'border-box',
       }}>
         {loading && <SkeletonCards />}
@@ -250,19 +255,21 @@ export default function PublicMenu() {
               />
             )}
 
-            {/* Botón grande de envío (solo si hay almuerzos) */}
-            {cart.length > 0 && (
-              <SendBigButton
-                total={total}
-                sending={sendState === 'sending'}
-                onSend={sendOrder}
-              />
-            )}
-
             <Footer />
           </>
         )}
       </div>
+
+      {/* Botón flotante de envío al fondo. Solo se muestra mientras hay
+          items en el carrito Y aún no se envió. El padding-bottom del
+          contenedor de arriba ya considera su altura (~96px). */}
+      {cart.length > 0 && sendState !== 'sent' && hasAnything && (
+        <SendBigButton
+          total={total}
+          sending={sendState === 'sending'}
+          onSend={sendOrder}
+        />
+      )}
 
       {/* Wizard del cliente para armar UN almuerzo paso a paso */}
       {pickerOpen && corriente.available && (
@@ -763,46 +770,67 @@ function addonDisplayMeta(item) {
   }
 }
 
-// ─── Botón grande "Enviar pedido" ────────────────────────────────
+// ─── Botón flotante "Enviar pedido" ─────────────────────────────
+// Fijo al fondo del viewport con un wrapper que tiene gradient para
+// que el contenido detrás no choque visualmente. El padding-bottom del
+// contenedor del contenido en PublicMenu deja espacio para que no tape.
 function SendBigButton({ total, sending, onSend }) {
   return (
-    <button
-      onClick={sending ? undefined : onSend}
-      disabled={sending}
-      style={{
-        width: '100%', padding: '18px', marginTop: 4, marginBottom: 8,
-        borderRadius: 18,
-        background: sending ? T.neutral[400] : '#25D366', color: '#fff',
-        border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
-        fontSize: 16, fontWeight: 900, letterSpacing: -0.2,
-        boxShadow: sending ? 'none' : '0 6px 18px rgba(37,211,102,0.4)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-        animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
-        transition: 'transform 0.1s ease',
-      }}
-      onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.98)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-      onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-    >
-      {sending ? (
-        <>
-          <span style={{
-            width: 16, height: 16, borderRadius: 999,
-            border: '2px solid rgba(255,255,255,0.4)',
-            borderTopColor: '#fff',
-            animation: 'pmSpin 0.7s linear infinite',
-          }}/>
-          Enviando…
-        </>
-      ) : (
-        <>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
-            <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm5.5 14.4c-.3.7-1.5 1.3-2 1.4-.5.1-1.1.1-1.8-.1-.4-.1-.9-.3-1.6-.6-2.8-1.2-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8 0-1.4.7-2 1-2.3.3-.3.6-.4.7-.4h.6c.1 0 .4 0 .6.5.3.6.9 2 .9 2.1 0 .1 0 .3 0 .5-.1.2-.2.3-.3.5-.1.2-.3.4-.4.5-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 2 1.1.9 2 1.3 2.3 1.4.3.1.4.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.3.7-.2.3.1 1.6.8 1.9.9.3.1.5.2.5.3.1.2.1.7-.2 1.4z"/>
-          </svg>
-          Enviar pedido por WhatsApp · {fmtCOP(total)}
-        </>
-      )}
-    </button>
+    <div style={{
+      position: 'fixed', left: 0, right: 0, bottom: 0,
+      zIndex: 50,
+      // Gradient que difumina del fondo al fondo translúcido para que se
+      // vea claro pero no haga corte duro con lo de atrás.
+      background: 'linear-gradient(to top, rgba(250,247,242,0.96) 0%, rgba(250,247,242,0.8) 60%, rgba(250,247,242,0) 100%)',
+      paddingTop: 18,
+      paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 14px)',
+      pointerEvents: 'none',
+      animation: 'pmCartIn 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      <div style={{
+        maxWidth: 640, margin: '0 auto',
+        padding: '0 18px',
+        pointerEvents: 'auto',
+      }}>
+        <button
+          onClick={sending ? undefined : onSend}
+          disabled={sending}
+          style={{
+            width: '100%', padding: '18px',
+            borderRadius: 18,
+            background: sending ? T.neutral[400] : '#25D366', color: '#fff',
+            border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 16, fontWeight: 900, letterSpacing: -0.2,
+            boxShadow: sending ? 'none' : '0 8px 24px rgba(37,211,102,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
+            transition: 'transform 0.1s ease',
+          }}
+          onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.98)')}
+          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          {sending ? (
+            <>
+              <span style={{
+                width: 16, height: 16, borderRadius: 999,
+                border: '2px solid rgba(255,255,255,0.4)',
+                borderTopColor: '#fff',
+                animation: 'pmSpin 0.7s linear infinite',
+              }}/>
+              Enviando…
+            </>
+          ) : (
+            <>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
+                <path d="M12 0C5.4 0 0 5.4 0 12c0 2.1.6 4.2 1.6 6L0 24l6.2-1.6c1.7 1 3.7 1.4 5.8 1.4 6.6 0 12-5.4 12-12S18.6 0 12 0zm5.5 14.4c-.3.7-1.5 1.3-2 1.4-.5.1-1.1.1-1.8-.1-.4-.1-.9-.3-1.6-.6-2.8-1.2-4.6-4-4.7-4.2-.1-.2-1.1-1.5-1.1-2.8 0-1.4.7-2 1-2.3.3-.3.6-.4.7-.4h.6c.1 0 .4 0 .6.5.3.6.9 2 .9 2.1 0 .1 0 .3 0 .5-.1.2-.2.3-.3.5-.1.2-.3.4-.4.5-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 2 1.1.9 2 1.3 2.3 1.4.3.1.4.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.3.7-.2.3.1 1.6.8 1.9.9.3.1.5.2.5.3.1.2.1.7-.2 1.4z"/>
+              </svg>
+              Enviar pedido por WhatsApp · {fmtCOP(total)}
+            </>
+          )}
+        </button>
+      </div>
+    </div>
   )
 }
 

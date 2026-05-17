@@ -130,6 +130,49 @@ export function playKitchenCallSound() {
   }
 }
 
+/**
+ * Sonido para "almuerzo listo": notificación corta, ascendente y agradable
+ * (~0.5s). Es deliberadamente DISTINTO al de llamada urgente para que la
+ * cajera no las confunda — esta es informativa, no requiere correr.
+ *
+ * Patrón Mi6 → Sol6 → Si6 (tercer mayor ascendente). Sale por la misma
+ * cadena master con compresor, así que también se oye fuerte sin ser
+ * agresiva.
+ */
+export function playOrderReadySound() {
+  const c = getCtx()
+  if (!c) return
+  try {
+    if (c.state === 'suspended') {
+      c.resume().catch(() => {})
+    }
+    playSoftBlip(c, 1318.51, 0)    // Mi6
+    playSoftBlip(c, 1567.98, 0.08) // Sol6
+    playSoftBlip(c, 1975.53, 0.18) // Si6
+  } catch (err) {
+    console.warn('[notificationSound] orderReady no se pudo reproducir:', err?.message || err)
+  }
+}
+
+function playSoftBlip(c, freq, delaySec) {
+  const chain = getMasterChain(c)
+  const startAt = c.currentTime + delaySec
+  const duration = 0.32
+
+  const osc = c.createOscillator()
+  osc.type = 'sine'
+  osc.frequency.setValueAtTime(freq, startAt)
+
+  const gain = c.createGain()
+  gain.gain.setValueAtTime(0, startAt)
+  gain.gain.linearRampToValueAtTime(0.55, startAt + 0.012)
+  gain.gain.exponentialRampToValueAtTime(0.001, startAt + duration)
+
+  osc.connect(gain).connect(chain.input)
+  osc.start(startAt)
+  osc.stop(startAt + duration + 0.04)
+}
+
 function playBellNote(c, freq, delaySec) {
   const chain = getMasterChain(c)
   const startAt = c.currentTime + delaySec

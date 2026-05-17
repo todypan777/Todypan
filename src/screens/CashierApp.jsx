@@ -11,7 +11,8 @@ import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
-import { setupAudioUnlock, playKitchenCallSound } from '../utils/notificationSound'
+import { watchLiveOrdersForSession } from '../kitchenOrders'
+import { setupAudioUnlock, playKitchenCallSound, playOrderReadySound } from '../utils/notificationSound'
 import ErrorBoundary from '../components/ErrorBoundary'
 import ContactSupportButton from '../components/ContactSupportButton'
 import { compressImage, uploadToImageBB } from '../utils/imagebb'
@@ -602,6 +603,29 @@ function ActiveSession({ session, userDoc, authUser }) {
     return unsub
   }, [authUser.uid])
   const activeCall = pendingCalls[0] || null
+
+  // Notificación SONORA (sin nada visual) cuando cocina marca un almuerzo
+  // de esta sesión como 'ready'. Detectamos transiciones pending→ready
+  // contra un baseline tomado en el primer snapshot — así no suena al
+  // cargar la app si ya había orders listos de antes.
+  const readyBaselineRef = useRef(null) // null = aún sin baseline
+  useEffect(() => {
+    readyBaselineRef.current = null // reset al cambiar de sesión
+    return watchLiveOrdersForSession(session.id, (orders) => {
+      const readyNow = new Set(
+        orders.filter(o => o.status === 'ready').map(o => o.id)
+      )
+      if (readyBaselineRef.current === null) {
+        readyBaselineRef.current = readyNow
+        return
+      }
+      const newlyReady = [...readyNow].some(id => !readyBaselineRef.current.has(id))
+      if (newlyReady) {
+        try { playOrderReadySound() } catch {}
+      }
+      readyBaselineRef.current = readyNow
+    })
+  }, [session.id])
 
   // Mostrar últimas 15 ventas (D21: sin totales agregados)
   const recentSales = sessionSales.slice(0, 15)

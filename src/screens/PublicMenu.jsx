@@ -880,12 +880,14 @@ function SendBigButton({ total, sending, onSend }) {
             fontSize: 16, fontWeight: 900, letterSpacing: -0.2,
             boxShadow: sending ? 'none' : '0 8px 24px rgba(37,211,102,0.45)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-            animation: sending ? 'none' : 'pmPulseSend 2s ease-in-out infinite',
-            transition: 'transform 0.1s ease',
+            // Doble animación: halo expansivo (pmPulseSend) + latido sutil
+            // del botón (pmHeartbeat) para atraer la atención sin marear.
+            // Los tiempos están desfasados (2s vs 2.4s) para que el patrón
+            // no se sienta repetitivo mecánico.
+            animation: sending
+              ? 'none'
+              : 'pmPulseSend 1.8s ease-out infinite, pmHeartbeat 2.4s ease-in-out infinite',
           }}
-          onMouseDown={e => !sending && (e.currentTarget.style.transform = 'scale(0.98)')}
-          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
         >
           {sending ? (
             <>
@@ -1162,8 +1164,29 @@ function GlobalStyles() {
         50%      { transform: scale(1.04); }
       }
       @keyframes pmPulseSend {
-        0%, 100% { box-shadow: 0 4px 14px rgba(37,211,102,0.35); }
-        50%      { box-shadow: 0 4px 22px rgba(37,211,102,0.65); }
+        /* Doble box-shadow: una sombra base + un halo expansivo (ripple)
+           que sale del botón para llamar la atención del cliente. */
+        0% {
+          box-shadow: 0 8px 24px rgba(37,211,102,0.45),
+                      0 0 0 0 rgba(37,211,102,0.6);
+        }
+        70% {
+          box-shadow: 0 8px 24px rgba(37,211,102,0.45),
+                      0 0 0 18px rgba(37,211,102,0);
+        }
+        100% {
+          box-shadow: 0 8px 24px rgba(37,211,102,0.45),
+                      0 0 0 0 rgba(37,211,102,0);
+        }
+      }
+      @keyframes pmHeartbeat {
+        /* Latido sutil del botón completo. Combina con pmPulseSend para
+           reforzar la atención sin marear. */
+        0%, 100% { transform: scale(1); }
+        12%      { transform: scale(1.025); }
+        24%      { transform: scale(1); }
+        36%      { transform: scale(1.025); }
+        48%      { transform: scale(1); }
       }
       @keyframes pmFadeBg {
         from { background: rgba(0,0,0,0); }

@@ -197,13 +197,14 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
       )}
 
       {/* Botón flotante para llamar a la cajera de Panadería B.
-          Solo visible para la cocinera real (no en assistMode). */}
-      {!isAssist && (
-        <CallCashierFAB
-          authUser={authUser}
-          userDoc={userDoc}
-        />
-      )}
+          Visible tanto para la cocinera real como para el admin en
+          assistMode — al admin le sirve cuando está cubriendo cocina y
+          también necesita pedir apoyo. La llamada queda registrada con el
+          authUser real (admin o cocinera), no se enmascara. */}
+      <CallCashierFAB
+        authUser={authUser}
+        userDoc={userDoc}
+      />
 
       {menuOpen && (
         <AvatarMenuOverlay
@@ -1719,6 +1720,11 @@ function CallCashierFAB({ authUser, userDoc }) {
       try { navigator.vibrate?.(40) } catch {}
       const cookName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
         || authUser?.email || 'Cocina'
+      const callerRole = userDoc?.role || 'unknown'
+      console.log(
+        `%c[kitchenCalls] 🔔 intentando llamar como role=${callerRole} (${cookName}) …`,
+        'color:#B87A56;font-weight:bold',
+      )
       await createKitchenCall({
         createdBy: authUser.uid,
         createdByName: cookName,
@@ -1728,10 +1734,37 @@ function CallCashierFAB({ authUser, userDoc }) {
         targetCashierUid: targetSession.cashierUid,
         targetCashierName: targetSession.cashierName,
       })
+      console.log(
+        `%c[kitchenCalls] ✅ llamada CREADA OK desde role=${callerRole} — Firestore Rules permiten`,
+        'background:#1E8E3E;color:#fff;font-weight:bold;padding:4px 8px;border-radius:4px',
+      )
       showToast(`Llamada enviada a ${targetSession.cashierName || 'la cajera'}.`, 'ok')
     } catch (err) {
-      console.error('[kitchenCalls] createKitchenCall error:', err)
-      showToast('No se pudo enviar la llamada. Intenta de nuevo.', 'bad')
+      const code = err?.code || ''
+      const callerRole = userDoc?.role || 'unknown'
+      const isPermDenied = code === 'permission-denied'
+      // Log MUY visible para diagnosticar el caso admin-en-assistMode.
+      // Si sale el banner rojo de permission-denied al cubrir cocina como
+      // admin, hay que ajustar la regla de Firestore en kitchenCalls para
+      // permitir role 'admin' además de 'cook'.
+      console.error(
+        `%c[kitchenCalls] ❌ FALLÓ createKitchenCall — role=${callerRole}, code=${code || '(sin code)'}`,
+        'background:#D93025;color:#fff;font-weight:bold;padding:4px 8px;border-radius:4px',
+        err,
+      )
+      if (isPermDenied) {
+        console.error(
+          '%c[kitchenCalls] 🛑 PERMISSION DENIED — Firestore Rules NO permiten que este rol cree kitchenCalls. ' +
+          'Si esto pasó como admin en modo asistir, hay que ajustar la regla.',
+          'background:#FBE9E5;color:#A50E0E;font-weight:bold;padding:4px 8px;border-radius:4px',
+        )
+      }
+      showToast(
+        isPermDenied
+          ? 'Permiso denegado por Firestore. Revisa la consola.'
+          : 'No se pudo enviar la llamada. Intenta de nuevo.',
+        'bad',
+      )
       setBusy(false)
       return
     }

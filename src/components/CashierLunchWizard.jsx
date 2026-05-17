@@ -16,11 +16,12 @@ import {
 // (sí/no implícito por categoría única + reemplazos cuando dice no)
 // y añade lo específico de la cajera:
 //
-//   • Paso final: Mesa/Llevar (con precios diferentes)
+//   • Paso final: Mesa/Llevar (con precios diferentes). Al picar destino
+//     se cierra el wizard y NewSale abre SendCommandaModal (donde la
+//     cajera ve la lista de items, agrega más, define mesa # y envía).
 //   • Modo edición: arranca en 'destination' con todo pre-cargado y
 //     solo guarda el cambio (sin "+ Otro almuerzo")
 //   • Badge "X en comanda" en el header cuando ya hay almuerzos
-//   • Botones "+ Otro" o "Continuar →" después del resumen
 //   • Chips de nota ampliados (típicos del corriente colombiano)
 //
 // Reemplaza al LunchPickerModal viejo. Misma interfaz pública:
@@ -45,19 +46,9 @@ export default function CashierLunchWizard({
   initialSelections = null,
   initialNote = '',
   initialDestination = null,
-  // Disponibilidad de los otros tipos para los botones del next-action.
-  // Si no se pasa, los botones de especial/adición no se muestran.
-  specialAvailable = false,
-  addonAvailable = false,
   onCancel,
   onAdd,
   onSaveEdit = () => {},
-  // Acciones post-destino (cuando la cajera ya agregó este almuerzo).
-  // El wizard llama onAdd y luego una de estas para que NewSale abra el
-  // siguiente modal o el de envío.
-  onAddAnotherSpecial = () => {},
-  onAddAnotherAddon = () => {},
-  onSendCommanda = () => {},
 }) {
   const today = useBogotaDate()
   const [allItems, setAllItems] = useState([])
@@ -111,7 +102,10 @@ export default function CashierLunchWizard({
   // En edición arrancamos directo en 'destination' (con todo pre-cargado
   // y el destino actual destacado). En modo normal arrancamos en 'soup'.
   //   soup → soup-replace? → principio → principio-replace? → protein
-  //   → sides-combo → note → destination → next-action
+  //   → sides-combo → note → destination
+  // (No hay step 'next-action': al picar destino el wizard cierra y se
+  //  abre SendCommandaModal, que tiene la lista de items + chooser de
+  //  seguir agregando + selector de mesa.)
   const [step, setStep] = useState(editMode ? 'destination' : 'soup')
 
   function setCategory(catId, val) {
@@ -156,41 +150,19 @@ export default function CashierLunchWizard({
     }
   }
 
-  // Recordamos el destino elegido para mostrar en el next-action y
-  // permitir cambiar si la cajera se equivoca.
-  const [chosenDestination, setChosenDestination] = useState(null)
-
   function pickDestination(destination) {
     if (editMode) {
       onSaveEdit(buildPayload(destination))
       return
     }
-    // Guardamos el destino, agregamos al carrito CON another=true (para que
-    // el modal NO se cierre — vamos al next-action), y pasamos al next-action.
-    setChosenDestination(destination)
-    onAdd(buildPayload(destination), { another: true })
-    setStep('next-action')
-  }
-
-  function resetForAnotherCorriente() {
-    // Reset con pre-selección inmediata de side/salad/juice para que el
-    // próximo almuerzo arranque igual al primero (acompañante/ensalada/
-    // jugo del día ya marcados).
-    const fresh = {}
-    for (const catId of ['side', 'salad', 'juice']) {
-      const opts = resolvedMenu[catId] || []
-      if (opts.length > 0) fresh[catId] = { id: opts[0].id, name: opts[0].name }
-    }
-    setSelections(fresh)
-    setReplacements({})
-    setNote('')
-    setChosenDestination(null)
-    // Mantenemos preselectedRef true — ya pre-seleccionamos manualmente.
-    setStep('soup')
+    // Agregamos al carrito CON another=false: NewSale cerrará el wizard y
+    // abrirá SendCommandaModal con la lista de items y el selector de mesa.
+    // Desde ahí la cajera puede agregar más almuerzos o enviar la comanda.
+    onAdd(buildPayload(destination), { another: false })
   }
 
   // ─── Navegación ──────────────────────────────────────────────────
-  const TOTAL_STEPS = 7 // sopa, principio, proteína, sides, nota, destino, next-action
+  const TOTAL_STEPS = 6 // sopa, principio, proteína, sides, nota, destino
   const stepIndex = useMemo(() => {
     if (step.startsWith('soup')) return 0
     if (step.startsWith('principio')) return 1
@@ -198,7 +170,6 @@ export default function CashierLunchWizard({
     if (step === 'sides-combo') return 3
     if (step === 'note') return 4
     if (step === 'destination') return 5
-    if (step === 'next-action') return 6
     return 0
   }, [step])
 
@@ -212,9 +183,6 @@ export default function CashierLunchWizard({
       case 'sides-combo':       setStep('protein'); break
       case 'note':              setStep('sides-combo'); break
       case 'destination':       editMode ? onCancel() : setStep('note'); break
-      // En next-action ya agregamos el almuerzo al carrito; "atrás" no
-      // tiene sentido — la cajera debe decidir qué hacer.
-      case 'next-action':       break
     }
   }
 
@@ -388,23 +356,6 @@ export default function CashierLunchWizard({
                 editMode={editMode}
                 initialDestination={initialDestination}
                 onPick={pickDestination}
-              />
-            )}
-
-            {step === 'next-action' && (
-              <NextActionStep
-                addedDestination={chosenDestination}
-                currentCount={currentCount + 1}
-                specialAvailable={specialAvailable}
-                addonAvailable={addonAvailable}
-                onAnotherCorriente={resetForAnotherCorriente}
-                // Estos handlers son responsables de cerrar el wizard ellos
-                // mismos y abrir el siguiente modal. El wizard no llama
-                // onCancel — onCancel tiene lógica propia de "el usuario
-                // canceló" que no aplica acá.
-                onAnotherSpecial={onAddAnotherSpecial}
-                onAnotherAddon={onAddAnotherAddon}
-                onSend={onSendCommanda}
               />
             )}
           </div>
@@ -1023,135 +974,6 @@ function NoteStep({ note, onChange, onContinue }) {
         {note.trim() ? 'Continuar →' : 'Saltar, sin notas →'}
       </button>
     </div>
-  )
-}
-
-// ─── Step: Próxima acción después de Mesa/Llevar ────────────────
-// El almuerzo ya quedó en la comanda. Damos 4 opciones claras:
-//   1. + Otro almuerzo corriente (resetea wizard)
-//   2. + Almuerzo especial (cierra wizard, NewSale abre SpecialLunchModal)
-//   3. + Adición (cierra wizard, NewSale abre PublicAddonsModal)
-//   4. ✓ Enviar comanda (cierra wizard, NewSale abre SendCommandaModal)
-function NextActionStep({
-  addedDestination, currentCount,
-  specialAvailable, addonAvailable,
-  onAnotherCorriente, onAnotherSpecial, onAnotherAddon, onSend,
-}) {
-  const destLabel = addedDestination === 'llevar' ? '📦 Para llevar' : '🍽️ Para mesa'
-  return (
-    <div>
-      <div style={{ textAlign: 'center', padding: '8px 0 4px' }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: 999, margin: '0 auto 8px',
-          background: T.ok + '22', color: T.ok,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 32, fontWeight: 900,
-        }}>
-          ✓
-        </div>
-        <div style={{
-          fontSize: 20, fontWeight: 900, color: T.neutral[900],
-          letterSpacing: -0.4, lineHeight: 1.2, marginBottom: 6,
-        }}>
-          Almuerzo agregado
-        </div>
-        <div style={{
-          fontSize: 13, color: T.neutral[600], lineHeight: 1.5,
-        }}>
-          {destLabel} · ya hay <b>{currentCount}</b> en la comanda
-        </div>
-      </div>
-
-      <div style={{
-        marginTop: 18, display: 'flex', flexDirection: 'column', gap: 10,
-      }}>
-        <NextActionButton
-          emoji="🍽️"
-          title="+ Otro almuerzo corriente"
-          subtitle="Otro almuerzo del menú del día"
-          variant="primary"
-          onClick={onAnotherCorriente}
-        />
-        {specialAvailable && (
-          <NextActionButton
-            emoji="⭐"
-            title="+ Almuerzo especial"
-            subtitle="El especial publicado para hoy"
-            variant="warn"
-            onClick={onAnotherSpecial}
-          />
-        )}
-        {addonAvailable && (
-          <NextActionButton
-            emoji="➕"
-            title="+ Adición"
-            subtitle="Sopa, huevo o proteína extra"
-            variant="warn"
-            onClick={onAnotherAddon}
-          />
-        )}
-        <NextActionButton
-          emoji="📤"
-          title="✓ Enviar comanda"
-          subtitle="Cerrar y mandar todo a cocina"
-          variant="ok"
-          onClick={onSend}
-        />
-      </div>
-    </div>
-  )
-}
-
-function NextActionButton({ emoji, title, subtitle, variant, onClick }) {
-  const palette = {
-    primary: { bg: '#fff', border: T.copper[300], color: T.copper[700], iconBg: T.copper[50] },
-    warn:    { bg: '#fff', border: '#F4E0BC',    color: '#7A5C00',     iconBg: '#FFF7E6' },
-    ok:      { bg: T.ok,   border: T.ok,         color: '#fff',        iconBg: 'rgba(255,255,255,0.2)' },
-  }[variant] || { bg: '#fff', border: T.neutral[200], color: T.neutral[700], iconBg: T.neutral[100] }
-
-  const isFilled = variant === 'ok'
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: '100%', padding: '14px 16px', borderRadius: 14,
-        background: palette.bg,
-        border: `${isFilled ? 0 : 1.5}px solid ${palette.border}`,
-        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
-        display: 'flex', alignItems: 'center', gap: 14,
-        boxShadow: isFilled
-          ? `0 4px 14px ${T.ok}55`
-          : '0 2px 6px rgba(0,0,0,0.04)',
-        transition: 'transform 0.1s ease',
-      }}
-      onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
-      onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-      onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-    >
-      <div style={{
-        width: 42, height: 42, borderRadius: 12, flexShrink: 0,
-        background: palette.iconBg,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontSize: 22, lineHeight: 1,
-      }}>
-        {emoji}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 14.5, fontWeight: 800, color: palette.color,
-          letterSpacing: -0.2, lineHeight: 1.2,
-        }}>
-          {title}
-        </div>
-        <div style={{
-          fontSize: 12, color: palette.color,
-          opacity: isFilled ? 0.9 : 0.65,
-          marginTop: 2, lineHeight: 1.35,
-        }}>
-          {subtitle}
-        </div>
-      </div>
-    </button>
   )
 }
 

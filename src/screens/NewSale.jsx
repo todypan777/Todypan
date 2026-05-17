@@ -1435,8 +1435,6 @@ export default function NewSale({
           initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}
           initialDestination={lunchModal.edit?.initialDestination || null}
-          specialAvailable={!!specialFromDay}
-          addonAvailable={anyAddonAvailable}
           onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
             // En edición, cerrar es simplemente cerrar — sin flujo de comanda.
@@ -1444,20 +1442,14 @@ export default function NewSale({
               setLunchModal(null)
               return
             }
-            // Cerramos siempre el modal — los handlers del next-action ya
-            // habrán llamado onAdd antes. Si no hay almuerzos quedó vacío.
+            // Cerrar y, si ya hay almuerzos, abrir el send modal para que
+            // la cajera no pierda el progreso.
             setLunchModal(null)
-            // Solo abrimos el modal de envío si la cajera CANCELA con almuerzos
-            // ya agregados (caso accidental). El flujo normal del next-action
-            // dispara onSendCommanda/onAddAnotherX que ya manejan esto aparte.
             if (lunchCommanda.length > 0) {
               openSendCommandaModal()
             }
           }}
           onAdd={handleAddLunchToCommanda}
-          onAddAnotherSpecial={handleChooseSpecial}
-          onAddAnotherAddon={handleChooseAddon}
-          onSendCommanda={openSendCommandaModal}
         />
       )}
       {lunchModal?.kind === 'special' && (

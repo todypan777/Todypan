@@ -235,6 +235,7 @@ export default function ActiveTurnsCard() {
         <CloseSessionModal
           session={closingSession}
           adminUid={authUser.uid}
+          adminName={adminName}
           allUsers={allUsers}
           onCancel={() => setClosingSession(null)}
           onClosed={(reopenWith) => {
@@ -589,7 +590,7 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: Cerrar caja (admin cuenta + decide handover + resuelve cuadre)
 // ──────────────────────────────────────────────────────────────
-function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) {
+function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, onClosed }) {
   // Datos en vivo del turno
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
@@ -777,7 +778,11 @@ function CloseSessionModal({ session, adminUid, allUsers, onCancel, onClosed }) 
       } else if (pendingTabs.length > 0 && tabsDecision === 'delete') {
         for (const tab of pendingTabs) {
           try {
-            await cancelOrdersForTab(tab.id, { reason: 'Mesa eliminada al cerrar turno' })
+            await cancelOrdersForTab(tab.id, {
+              reason: 'Mesa eliminada al cerrar turno',
+              cancelledBy: adminUid,
+              cancelledByName: adminName,
+            })
             await deleteOpenTab(tab.id)
           } catch (err) {
             console.warn('[CloseSessionModal] no se pudo eliminar tab:', tab.id, err?.message || err)

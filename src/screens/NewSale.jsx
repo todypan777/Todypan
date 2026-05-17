@@ -366,14 +366,30 @@ export default function NewSale({
     )
   }
 
+  // Quién está cancelando: en modo asistir es el admin, no la cajera dueña
+  // del turno. Usamos authUser (el que tiene la sesión activa) + userDoc para
+  // el nombre legible. Lo recalculamos en cada cancel — los datos son estables
+  // mientras el componente está montado, no vale la pena memoizar.
+  function currentActor() {
+    const name = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+      || authUser?.email
+      || null
+    return { uid: authUser?.uid || null, name }
+  }
+
   function removeItem(key) {
     setCart(prev => {
       const it = prev.find(x => x.key === key)
       // Si es un item shim de cocina, cancelamos el kitchenOrder asociado.
       // Lo hacemos best-effort sin esperar (UI optimista).
       if (it?.source === 'kitchen' && it.kitchenOrderId) {
+        const actor = currentActor()
         import('../kitchenOrders').then(m =>
-          m.cancelKitchenOrder(it.kitchenOrderId, { reason: 'Eliminado de la mesa' })
+          m.cancelKitchenOrder(it.kitchenOrderId, {
+            reason: 'Eliminado de la mesa',
+            cancelledBy: actor.uid,
+            cancelledByName: actor.name,
+          })
         ).catch(err => console.warn('[NewSale] cancel kitchen order:', err))
       }
       return prev.filter(x => x.key !== key)
@@ -1564,6 +1580,7 @@ export default function NewSale({
           cart={cart}
           state={confirmDeleteTab}
           setState={setConfirmDeleteTab}
+          actor={currentActor()}
           onConfirmed={() => {
             setConfirmDeleteTab(null)
             onCancel()
@@ -3072,7 +3089,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
 // borrar la tab. Funciona igual en cajera y en modo asistir admin —
 // la diferencia la maneja Firestore Rules (cajera dueña o admin).
 // ──────────────────────────────────────────────────────────────
-function ConfirmDeleteTabModal({ tab, cart, state, setState, onConfirmed }) {
+function ConfirmDeleteTabModal({ tab, cart, state, setState, actor, onConfirmed }) {
   const kitchenItems = (cart || []).filter(it => it.source === 'kitchen' && it.kitchenOrderId)
   const hasKitchen = kitchenItems.length > 0
   const otherCount = (cart || []).length - kitchenItems.length
@@ -3087,7 +3104,11 @@ function ConfirmDeleteTabModal({ tab, cart, state, setState, onConfirmed }) {
         const m = await import('../kitchenOrders')
         await Promise.all(
           kitchenItems.map(it =>
-            m.cancelKitchenOrder(it.kitchenOrderId, { reason: 'Mesa eliminada' })
+            m.cancelKitchenOrder(it.kitchenOrderId, {
+              reason: 'Mesa eliminada',
+              cancelledBy: actor?.uid || null,
+              cancelledByName: actor?.name || null,
+            })
               .catch(err => console.warn('[NewSale] cancel order on tab delete:', err?.message || err))
           )
         )

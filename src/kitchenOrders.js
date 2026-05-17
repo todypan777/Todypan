@@ -8,6 +8,7 @@ import {
   query,
   where,
   onSnapshot,
+  Timestamp,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
 import { addDocOffline } from './utils/firestoreOffline'
@@ -119,11 +120,13 @@ export async function markOrderDelivered(id) {
 }
 
 /** La cajera cancela una orden (puede estar pending o ready). */
-export async function cancelKitchenOrder(id, { reason } = {}) {
+export async function cancelKitchenOrder(id, { reason, cancelledBy, cancelledByName } = {}) {
   await updateDoc(orderRef(id), {
     status: 'cancelled',
     cancelledAt: serverTimestamp(),
     cancelReason: reason?.trim() || null,
+    cancelledBy: cancelledBy || null,
+    cancelledByName: cancelledByName?.trim() || null,
   })
 }
 
@@ -214,7 +217,7 @@ export async function claimOrdersForTab(tabId, { sessionId, cashierUid }) {
  * el admin decide eliminar mesas pendientes al cerrar un turno (en lugar
  * de pasarlas a la próxima cajera).
  */
-export async function cancelOrdersForTab(tabId, { reason } = {}) {
+export async function cancelOrdersForTab(tabId, { reason, cancelledBy, cancelledByName } = {}) {
   if (!tabId) return
   try {
     const { getDocs } = await import('firebase/firestore')
@@ -228,6 +231,8 @@ export async function cancelOrdersForTab(tabId, { reason } = {}) {
       status: 'cancelled',
       cancelledAt: serverTimestamp(),
       cancelReason: reason?.trim() || 'Mesa eliminada al cerrar turno',
+      cancelledBy: cancelledBy || null,
+      cancelledByName: cancelledByName?.trim() || null,
     })))
   } catch (err) {
     console.warn('[kitchen] cancelOrdersForTab falló:', err?.message || err)
@@ -257,6 +262,54 @@ export function watchKitchenQueue(callback) {
     )
   } catch (err) {
     console.error('[kitchen] watchKitchenQueue setup failed:', err)
+    callback([])
+    return () => {}
+  }
+}
+
+/**
+ * Pedidos archivados de un día Bogotá específico (status delivered o cancelled).
+ *
+ * Por qué un watcher aparte: `watchKitchenQueue` solo trae pending/ready, así
+ * que cuando la cajera cobra y el pedido pasa a 'delivered' desaparece de la
+ * vista de la cocinera — incluyendo la sección "Archivados". Este watcher
+ * trae lo que ya salió de la cola viva para que la cocinera siga viendo el
+ * histórico del día (no se "borran").
+ *
+ * El filtro por día se hace en el cliente (sobre createdAt → Bogotá) porque
+ * Firestore no soporta funciones de zona horaria en queries. Para acotar el
+ * fetch, traemos un rango UTC un poco más amplio que el día Bogotá.
+ *
+ * `dateStr`: 'YYYY-MM-DD' en Bogotá.
+ */
+export function watchKitchenArchivedForDate(dateStr, callback) {
+  if (!dateStr) { callback([]); return () => {} }
+  try {
+    // Bogotá es UTC-5 todo el año. El día Bogotá 2026-05-17 va de
+    // 2026-05-17 00:00 -05:00 → 2026-05-18 00:00 -05:00, o sea
+    // 2026-05-17 05:00 UTC → 2026-05-18 05:00 UTC.
+    const startUtc = new Date(`${dateStr}T05:00:00.000Z`)
+    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000)
+    const q = query(
+      ordersCol(),
+      where('status', 'in', ['delivered', 'cancelled']),
+      where('createdAt', '>=', Timestamp.fromDate(startUtc)),
+      where('createdAt', '<', Timestamp.fromDate(endUtc)),
+    )
+    return onSnapshot(
+      q,
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => timeOf(a) - timeOf(b))
+        callback(list)
+      },
+      err => {
+        console.error('[kitchen] watchKitchenArchivedForDate error:', err)
+        callback([])
+      }
+    )
+  } catch (err) {
+    console.error('[kitchen] watchKitchenArchivedForDate setup failed:', err)
     callback([])
     return () => {}
   }

@@ -898,8 +898,25 @@ function KitchenOrderRow({ order, isLast }) {
   const isDone = isReady || isDelivered || isCancelled
   const [detailOpen, setDetailOpen] = useState(false)
 
-  const selections = order.selections || {}
+  // selections puede venir:
+  //   - objeto con cats (especial moderno / corriente)  → renderizar categorías
+  //   - null (especial viejo o "Almuerzo Especial sintético" generado por
+  //     buildLunchCommanda cuando la cajera pidió SOLO adiciones)        → renderizar description
+  // El bug anterior hacía `order.selections || {}` y eso convertía null en
+  // {} (truthy), llevando al render a buscar 'salad' y mostrar "SIN
+  // ENSALADA" para cada adición. Ahora distinguimos limpiamente.
+  const selections = order.selections && typeof order.selections === 'object'
+    ? order.selections
+    : null
+  const hasSelections = !!selections && Object.keys(selections).length > 0
   const description = order.description
+  // Adición pura: la cajera pidió solo addons (sopa adicional, huevo, etc.).
+  // No es un Almuerzo Especial real — productName === 'Adiciones' viene de
+  // buildLunchCommanda. Mostrarlo distinto: sin ⭐, con etiqueta "ADICIÓN"
+  // y el description como contenido principal.
+  const isAddonOnly = order.kind === 'special'
+    && !hasSelections
+    && order.productName === 'Adiciones'
 
   // Paleta por status. Los cancelados se ven en gris atenuado para que
   // la cocinera los identifique de un vistazo sin contarlos como vendidos.
@@ -950,8 +967,17 @@ function KitchenOrderRow({ order, isLast }) {
               {isReady && <span>✓</span>}
               {isDelivered && <span>💰</span>}
               {isCancelled && <span>✕</span>}
-              {order.productName || 'Almuerzo'}
-              {order.kind === 'special' && <span>⭐</span>}
+              {isAddonOnly ? (
+                <>
+                  <span>🍲</span>
+                  <span>Adición</span>
+                </>
+              ) : (
+                <>
+                  {order.productName || 'Almuerzo'}
+                  {order.kind === 'special' && <span>⭐</span>}
+                </>
+              )}
               {order.destination === 'llevar' && (
                 <span style={{
                   fontSize: 12, fontWeight: 800, color: '#7A5C00',
@@ -964,7 +990,7 @@ function KitchenOrderRow({ order, isLast }) {
               )}
             </div>
 
-            {order.kind === 'menu' && (
+            {order.kind === 'menu' && hasSelections && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {CORRIENTE_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
@@ -1035,8 +1061,12 @@ function KitchenOrderRow({ order, isLast }) {
               </div>
             )}
 
-            {/* Especial NUEVO con selections (soup, especial, salad) */}
-            {order.kind === 'special' && selections && (
+            {/* Especial NUEVO con selections (soup, especial, salad).
+                Solo entra si selections viene como objeto con datos —
+                hasSelections evita el bug histórico donde un especial
+                sintético de adiciones (selections=null) caía aquí y
+                mostraba "SIN ENSALADA" falsamente. */}
+            {order.kind === 'special' && hasSelections && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {SPECIAL_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
@@ -1075,8 +1105,24 @@ function KitchenOrderRow({ order, isLast }) {
                 })}
               </div>
             )}
-            {/* Backward-compat: especial viejo solo con description */}
-            {order.kind === 'special' && !selections && description && (
+            {/* Adición pura: la cajera pidió solo addons (sopa adicional,
+                huevo, proteína extra…). El destination y la mesa siguen
+                aplicando; solo cambia el contenido a una sola línea
+                grande con lo que la cocinera tiene que preparar. */}
+            {isAddonOnly && description && (
+              <div style={{
+                fontSize: 20, fontWeight: 800, color: T.copper[700],
+                letterSpacing: -0.2, lineHeight: 1.4,
+                padding: '12px 16px', borderRadius: 12,
+                background: T.copper[50], border: `1.5px solid ${T.copper[200]}`,
+                whiteSpace: 'pre-wrap',
+              }}>
+                ➕ {description}
+              </div>
+            )}
+            {/* Backward-compat: especial viejo (real, no addon) sin
+                selections — viene con description libre. */}
+            {order.kind === 'special' && !hasSelections && !isAddonOnly && description && (
               <div style={{
                 fontSize: 17, color: T.neutral[800], lineHeight: 1.55,
                 padding: '12px 16px', borderRadius: 12,
@@ -1207,8 +1253,17 @@ function KitchenOrderDetailModal({ order, onClose }) {
     }
   }
 
-  const selections = order.selections || {}
+  // Mismo tratamiento de selections que KitchenOrderRow: null si no es un
+  // objeto con datos reales, para que el render no caiga en la rama de
+  // SPECIAL_CATEGORIES y muestre "SIN ENSALADA" para una simple adición.
+  const selections = order.selections && typeof order.selections === 'object'
+    ? order.selections
+    : null
+  const hasSelections = !!selections && Object.keys(selections).length > 0
   const description = order.description
+  const isAddonOnly = order.kind === 'special'
+    && !hasSelections
+    && order.productName === 'Adiciones'
 
   return createPortal((
     <div
@@ -1297,8 +1352,9 @@ function KitchenOrderDetailModal({ order, onClose }) {
               fontSize: 14, color: T.neutral[600], marginTop: 6, fontWeight: 600,
               letterSpacing: -0.1,
             }}>
-              {order.productName || 'Almuerzo'}
-              {order.kind === 'special' && ' ⭐'}
+              {isAddonOnly
+                ? '🍲 Adición'
+                : <>{order.productName || 'Almuerzo'}{order.kind === 'special' && ' ⭐'}</>}
               {!isLlevarTab && isLlevar && (
                 <span style={{
                   marginLeft: 8,
@@ -1353,7 +1409,7 @@ function KitchenOrderDetailModal({ order, onClose }) {
             </div>
           )}
 
-          {order.kind === 'menu' && (
+          {order.kind === 'menu' && hasSelections && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {CORRIENTE_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
@@ -1426,8 +1482,10 @@ function KitchenOrderDetailModal({ order, onClose }) {
             </div>
           )}
 
-          {/* Especial NUEVO con selections (soup, especial, salad) */}
-          {order.kind === 'special' && selections && (
+          {/* Especial NUEVO con selections (soup, especial, salad).
+              hasSelections en lugar de selections para evitar tratar a
+              una adición sintética (selections=null) como especial. */}
+          {order.kind === 'special' && hasSelections && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {SPECIAL_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
@@ -1465,8 +1523,21 @@ function KitchenOrderDetailModal({ order, onClose }) {
               })}
             </div>
           )}
-          {/* Backward-compat */}
-          {order.kind === 'special' && !selections && description && (
+          {/* Adición pura — destacada en copper para que la cocinera vea
+              de inmediato qué tiene que preparar (es solo una línea). */}
+          {isAddonOnly && description && (
+            <div style={{
+              fontSize: 22, fontWeight: 800, color: T.copper[700],
+              letterSpacing: -0.3, lineHeight: 1.35,
+              padding: '16px 18px', borderRadius: 14,
+              background: T.copper[50], border: `1.5px solid ${T.copper[200]}`,
+              whiteSpace: 'pre-wrap',
+            }}>
+              ➕ {description}
+            </div>
+          )}
+          {/* Backward-compat: especial viejo real (no addon) sin selections. */}
+          {order.kind === 'special' && !hasSelections && !isAddonOnly && description && (
             <div style={{
               fontSize: 18, color: T.neutral[800], lineHeight: 1.6,
               padding: '14px 16px', borderRadius: 12,

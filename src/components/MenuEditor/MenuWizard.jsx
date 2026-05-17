@@ -35,12 +35,13 @@ export default function MenuWizard({
     return out
   })
 
-  // Estado del especial
+  // Estado del especial. Ahora tiene itemIds (la cocinera elige UN plato
+  // fuerte del catálogo categoría 'especial') en vez de description libre.
   const [special, setSpecial] = useState({
     active: false,
     priceMesa: '',
     priceLlevar: '',
-    description: '',
+    itemIds: [],
   })
 
   const [publishing, setPublishing] = useState(false)
@@ -63,15 +64,23 @@ export default function MenuWizard({
   async function publish() {
     setPublishing(true); setPublishError(null)
     try {
-      // Guardar cada categoría
+      const opts = { publishedBy: authUser?.uid, publishedByName: publisherName }
+
+      // Guardar cada categoría del corriente
       for (const cat of CORRIENTE_CATEGORY_IDS) {
-        await setDailyMenuItem(today, cat, selections[cat] || [], {
-          publishedBy: authUser?.uid,
-          publishedByName: publisherName,
-        })
+        await setDailyMenuItem(today, cat, selections[cat] || [], opts)
       }
-      // Guardar especial
-      if (special.active) {
+
+      // Guardar items del ESPECIAL como una categoría más
+      // (itemsByCategory.especial). Si no está activo o no tiene items,
+      // guardamos array vacío para limpiar.
+      const especialIds = (special.active && special.itemIds.length > 0)
+        ? special.itemIds
+        : []
+      await setDailyMenuItem(today, 'especial', especialIds, opts)
+
+      // Guardar flag active y precios del especial
+      if (special.active && especialIds.length > 0) {
         const pm = Number(special.priceMesa) || 0
         const pl = Number(special.priceLlevar) || 0
         if (pm > 0) {
@@ -79,15 +88,12 @@ export default function MenuWizard({
             active: true,
             priceMesa: pm,
             priceLlevar: pl > 0 ? pl : pm,
-            description: special.description,
-          }, { publishedBy: authUser?.uid, publishedByName: publisherName })
+          }, opts)
         } else {
-          await setDailySpecial(today, { active: false },
-            { publishedBy: authUser?.uid, publishedByName: publisherName })
+          await setDailySpecial(today, { active: false }, opts)
         }
       } else {
-        await setDailySpecial(today, { active: false },
-          { publishedBy: authUser?.uid, publishedByName: publisherName })
+        await setDailySpecial(today, { active: false }, opts)
       }
       onDone?.()
     } catch (err) {
@@ -130,6 +136,9 @@ export default function MenuWizard({
             <SpecialStep
               special={special}
               onChange={setSpecial}
+              allMenuItems={allMenuItems}
+              authUser={authUser}
+              publisherName={publisherName}
             />
           )}
 
@@ -598,9 +607,79 @@ function CategoryStep({
 }
 
 // ──────────────────────────────────────────────────────────────
-// Step del Almuerzo Especial
+// Step del Almuerzo Especial — ahora con items del catálogo
+// (categoría 'especial') en vez de description libre.
+//
+// El especial tiene 3 categorías: sopa, especial (plato fuerte) y
+// ensalada. La sopa y ensalada se HEREDAN del corriente (no se
+// publican aquí). Solo pedimos el plato fuerte aquí + precios.
 // ──────────────────────────────────────────────────────────────
-function SpecialStep({ special, onChange }) {
+function SpecialStep({ special, onChange, allMenuItems, authUser, publisherName }) {
+  const [query, setQuery] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState(null)
+
+  // Items disponibles en el catálogo de categoría 'especial'
+  const catalogItems = useMemo(() => {
+    return allMenuItems
+      .filter(it => it.category === 'especial' && !it.archived)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  }, [allMenuItems])
+
+  const selectedItems = useMemo(() => {
+    return (special.itemIds || [])
+      .map(id => allMenuItems.find(it => it.id === id))
+      .filter(Boolean)
+  }, [special.itemIds, allMenuItems])
+
+  const filteredSuggestions = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const selectedIds = new Set(special.itemIds || [])
+    const base = catalogItems.filter(it => !selectedIds.has(it.id))
+    if (!q) return base
+    return base.filter(it => (it.name || '').toLowerCase().includes(q))
+  }, [catalogItems, query, special.itemIds])
+
+  const hasExactMatch = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return true
+    return catalogItems.some(it => (it.name || '').toLowerCase() === q)
+  }, [catalogItems, query])
+
+  function addItem(itemId) {
+    if ((special.itemIds || []).includes(itemId)) return
+    // Por ahora maxSelections=1 — reemplazamos el item anterior.
+    onChange({ ...special, itemIds: [itemId] })
+    setQuery('')
+  }
+
+  function removeItem(itemId) {
+    onChange({
+      ...special,
+      itemIds: (special.itemIds || []).filter(id => id !== itemId),
+    })
+  }
+
+  async function handleCreateAndAdd() {
+    const name = query.trim()
+    if (!name || creating) return
+    setCreating(true); setCreateError(null)
+    try {
+      const newId = await createMenuItem({
+        category: 'especial',
+        name,
+        createdBy: authUser?.uid,
+        createdByName: publisherName,
+      })
+      addItem(newId)
+    } catch (err) {
+      console.error('[wizard special] create failed:', err)
+      setCreateError('No pudimos crear la opción.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
   return (
     <div>
       <div style={{ textAlign: 'center', padding: '20px 0 24px' }}>
@@ -615,7 +694,8 @@ function SpecialStep({ special, onChange }) {
           fontSize: 14, color: T.neutral[600], lineHeight: 1.5,
           maxWidth: 380, marginLeft: 'auto', marginRight: 'auto',
         }}>
-          Un plato fuera de menú con su propio precio. Sin categorías.
+          Un plato fuerte aparte (arroz con pollo, costillas…) con su propio precio.
+          Lleva la sopa y ensalada del menú del corriente.
         </div>
       </div>
 
@@ -648,6 +728,123 @@ function SpecialStep({ special, onChange }) {
 
       {special.active && (
         <div>
+          {/* Item del especial */}
+          <FieldLabel>¿Cuál es el plato especial?</FieldLabel>
+          {selectedItems.length > 0 && (
+            <div style={{
+              marginBottom: 12, padding: 12, borderRadius: 14,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+            }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {selectedItems.map(it => (
+                  <div key={it.id} style={{
+                    padding: '8px 10px 8px 14px', borderRadius: 999,
+                    background: T.warn, color: '#fff',
+                    display: 'inline-flex', alignItems: 'center', gap: 8,
+                    fontSize: 14, fontWeight: 700,
+                  }}>
+                    {it.name}
+                    <button
+                      onClick={() => removeItem(it.id)}
+                      aria-label={`Quitar ${it.name}`}
+                      style={{
+                        width: 22, height: 22, borderRadius: 999,
+                        background: 'rgba(255,255,255,0.25)', border: 'none',
+                        color: '#fff', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontFamily: 'inherit', padding: 0,
+                      }}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M2 2 L8 8 M8 2 L2 8" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {selectedItems.length === 0 && (
+            <>
+              <input
+                type="text"
+                value={query}
+                onChange={e => { setQuery(e.target.value); setCreateError(null) }}
+                placeholder="Ej: Arroz con pollo"
+                maxLength={60}
+                style={{ ...inputStyle(), fontSize: 16, padding: '14px 16px' }}
+              />
+              {createError && <ErrorBox>{createError}</ErrorBox>}
+
+              {filteredSuggestions.length > 0 && (
+                <div style={{
+                  marginTop: 4, marginBottom: 12,
+                  borderRadius: 14, background: '#fff',
+                  border: `1px solid ${T.neutral[100]}`,
+                  overflow: 'hidden',
+                }}>
+                  {filteredSuggestions.map((it, i) => (
+                    <button
+                      key={it.id}
+                      onClick={() => addItem(it.id)}
+                      style={{
+                        width: '100%', padding: '14px 16px',
+                        background: 'transparent', border: 'none',
+                        borderBottom: i === filteredSuggestions.length - 1
+                          ? 'none' : `0.5px solid ${T.neutral[100]}`,
+                        cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: 15, color: T.neutral[900], fontWeight: 600,
+                        textAlign: 'left',
+                        display: 'flex', alignItems: 'center', gap: 10,
+                      }}
+                    >
+                      <span style={{
+                        width: 22, height: 22, borderRadius: 999,
+                        background: '#FFF7E6', color: T.warn,
+                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 14, fontWeight: 800, flexShrink: 0,
+                      }}>+</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>{it.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {query.trim() && !hasExactMatch && (
+                <button
+                  onClick={handleCreateAndAdd}
+                  disabled={creating}
+                  style={{
+                    width: '100%', padding: '14px 16px', borderRadius: 14,
+                    background: '#fff', color: T.warn,
+                    border: `2px dashed #F4E0BC`,
+                    cursor: creating ? 'wait' : 'pointer',
+                    fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                    textAlign: 'left', lineHeight: 1.4,
+                    opacity: creating ? 0.7 : 1, marginBottom: 12,
+                  }}
+                >
+                  {creating ? 'Creando…' : (
+                    <>+ Crear <b>"{query.trim()}"</b> y guardarla en el catálogo</>
+                  )}
+                </button>
+              )}
+
+              {catalogItems.length === 0 && !query.trim() && (
+                <div style={{
+                  padding: 18, borderRadius: 14, textAlign: 'center',
+                  background: T.neutral[50], border: `1px dashed ${T.neutral[200]}`,
+                  color: T.neutral[600], fontSize: 13, lineHeight: 1.5,
+                  marginBottom: 12,
+                }}>
+                  Aún no tienes platos del especial en el catálogo. Escribe el nombre arriba para crear el primero.
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Precios */}
           <FieldLabel>Precio para mesa ($)</FieldLabel>
           <input
             type="number"
@@ -663,17 +860,6 @@ function SpecialStep({ special, onChange }) {
             onChange={e => onChange({ ...special, priceLlevar: e.target.value })}
             placeholder="Si vacío, se usa el de mesa"
             style={{ ...inputStyle(), fontSize: 16, padding: '14px 16px' }}
-          />
-          <FieldLabel>Qué incluye <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span></FieldLabel>
-          <textarea
-            value={special.description}
-            onChange={e => onChange({ ...special, description: e.target.value })}
-            placeholder="Ej: Bandeja paisa con aguacate y jugo natural"
-            rows={3}
-            style={{
-              ...inputStyle(), fontSize: 15, padding: '12px 14px',
-              resize: 'vertical', minHeight: 80,
-            }}
           />
         </div>
       )}
@@ -783,7 +969,14 @@ function SummaryStep({ selections, allMenuItems, special }) {
                   Almuerzo Especial
                 </div>
                 <div style={{ fontSize: 14, color: T.neutral[900], lineHeight: 1.45, fontWeight: 600 }}>
-                  {special.description || 'Sin descripción'}
+                  {(() => {
+                    const items = (special.itemIds || [])
+                      .map(id => allMenuItems.find(it => it.id === id))
+                      .filter(Boolean)
+                    return items.length > 0
+                      ? items.map(it => it.name).join(' · ')
+                      : 'Sin plato definido'
+                  })()}
                 </div>
                 <div style={{
                   fontSize: 12, color: T.neutral[600], marginTop: 3,

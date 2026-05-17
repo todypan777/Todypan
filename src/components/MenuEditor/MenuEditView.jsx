@@ -124,6 +124,7 @@ export default function MenuEditView({
           {/* Almuerzo Especial */}
           <SpecialEditCard
             dailyMenu={dailyMenu}
+            allMenuItems={allMenuItems}
             today={today}
             authUser={authUser}
             publisherName={publisherName}
@@ -566,23 +567,29 @@ function AddItemPicker({
 // ──────────────────────────────────────────────────────────────
 // Tarjeta de Almuerzo Especial (editor inline)
 // ──────────────────────────────────────────────────────────────
-function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
+function SpecialEditCard({ dailyMenu, allMenuItems, today, authUser, publisherName }) {
   const special = dailyMenu?.special || { active: false }
-  const [editing, setEditing] = useState(false)
+  const especialItemIds = dailyMenu?.itemsByCategory?.especial || []
+  const especialItems = useMemo(
+    () => especialItemIds.map(id => allMenuItems.find(m => m.id === id)).filter(Boolean),
+    [especialItemIds, allMenuItems]
+  )
+
+  const [editingPrices, setEditingPrices] = useState(false)
   const [priceMesa, setPriceMesa] = useState(String(special.priceMesa || ''))
   const [priceLlevar, setPriceLlevar] = useState(String(special.priceLlevar || ''))
-  const [description, setDescription] = useState(special.description || '')
   const [busy, setBusy] = useState(false)
+  // Picker para cambiar/agregar el plato del especial
+  const [pickingItem, setPickingItem] = useState(false)
 
   useEffect(() => {
-    if (!editing) {
+    if (!editingPrices) {
       setPriceMesa(String(special.priceMesa || ''))
       setPriceLlevar(String(special.priceLlevar || ''))
-      setDescription(special.description || '')
     }
-  }, [editing, special.priceMesa, special.priceLlevar, special.description])
+  }, [editingPrices, special.priceMesa, special.priceLlevar])
 
-  async function handleSave() {
+  async function handleSavePrices() {
     const pm = Number(priceMesa) || 0
     const pl = Number(priceLlevar) || 0
     if (pm <= 0) return
@@ -592,12 +599,33 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
         active: true,
         priceMesa: pm,
         priceLlevar: pl > 0 ? pl : pm,
-        description,
       }, { publishedBy: authUser?.uid, publishedByName: publisherName })
-      setEditing(false)
+      setEditingPrices(false)
     } catch (err) {
       console.error(err)
-      alert('No pudimos guardar el especial.')
+      alert('No pudimos guardar los precios del especial.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleActivate() {
+    const pm = Number(special.priceMesa) || 0
+    const pl = Number(special.priceLlevar) || pm
+    if (pm <= 0) {
+      // Sin precio aún: abrir el editor para que defina precio primero
+      setEditingPrices(true)
+      return
+    }
+    if (especialItems.length === 0) {
+      alert('Primero agrega el plato del especial (toca + Agregar plato).')
+      return
+    }
+    setBusy(true)
+    try {
+      await setDailySpecial(today, {
+        active: true, priceMesa: pm, priceLlevar: pl,
+      }, { publishedBy: authUser?.uid, publishedByName: publisherName })
     } finally {
       setBusy(false)
     }
@@ -615,6 +643,35 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
     }
   }
 
+  async function handleRemoveItem(itemId) {
+    const next = especialItemIds.filter(id => id !== itemId)
+    try {
+      await setDailyMenuItem(today, 'especial', next, {
+        publishedBy: authUser?.uid, publishedByName: publisherName,
+      })
+    } catch (err) {
+      console.error(err)
+      alert('No pudimos quitar el plato del especial.')
+    }
+  }
+
+  async function handlePickItem(itemId) {
+    // Por ahora maxSelections=1 — reemplazamos
+    try {
+      await setDailyMenuItem(today, 'especial', [itemId], {
+        publishedBy: authUser?.uid, publishedByName: publisherName,
+      })
+      setPickingItem(false)
+    } catch (err) {
+      console.error(err)
+      alert('No pudimos guardar el plato del especial.')
+    }
+  }
+
+  const hasItem = especialItems.length > 0
+  const hasPrices = Number(special.priceMesa) > 0
+  const canActivate = hasItem && hasPrices && !special.active
+
   return (
     <div style={{
       marginTop: 18, borderRadius: 16,
@@ -624,7 +681,7 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
     }}>
       <div style={{
         padding: '12px 14px',
-        borderBottom: editing || special.active ? `1px solid ${special.active ? '#F4E0BC' : T.neutral[100]}` : 'none',
+        borderBottom: `1px solid ${special.active ? '#F4E0BC' : T.neutral[100]}`,
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
         <span style={{ fontSize: 22, lineHeight: 1 }}>⭐</span>
@@ -636,7 +693,7 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
             {special.active ? 'Activo hoy' : 'Sin especial hoy'}
           </div>
         </div>
-        {special.active && !editing && (
+        {special.active && (
           <span style={{
             fontSize: 10, fontWeight: 800, color: T.warn,
             letterSpacing: 0.4, textTransform: 'uppercase',
@@ -649,8 +706,79 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
       </div>
 
       <div style={{ padding: '12px 14px 14px' }}>
-        {editing ? (
-          <div>
+        {/* Plato del especial */}
+        <div style={{
+          fontSize: 11, fontWeight: 800, color: T.neutral[500],
+          letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          Plato del especial
+        </div>
+        {hasItem ? (
+          <div style={{ marginBottom: 12 }}>
+            {especialItems.map(it => (
+              <div key={it.id} style={{
+                padding: '12px 14px', borderRadius: 12,
+                background: '#fff', border: `1px solid #F4E0BC`,
+                display: 'flex', alignItems: 'center', gap: 10,
+                marginBottom: 8,
+              }}>
+                <div style={{
+                  flex: 1, minWidth: 0,
+                  fontSize: 14.5, fontWeight: 700, color: T.neutral[900],
+                }}>
+                  {it.name}
+                </div>
+                <button
+                  onClick={() => handleRemoveItem(it.id)}
+                  style={{
+                    padding: '7px 11px', borderRadius: 10,
+                    background: '#FBE9E5', color: T.bad,
+                    border: `1px solid #F0C8BE`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 12, fontWeight: 800,
+                  }}
+                >
+                  ✕ Quitar
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setPickingItem(true)}
+              style={{
+                width: '100%', padding: '10px', borderRadius: 11,
+                background: 'transparent', color: T.warn,
+                border: `1.5px solid #F4E0BC`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12.5, fontWeight: 700,
+              }}
+            >
+              ✎ Cambiar plato
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setPickingItem(true)}
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12,
+              background: '#fff', color: T.warn,
+              border: `2px dashed #F4E0BC`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13.5, fontWeight: 700, marginBottom: 12,
+            }}
+          >
+            + Agregar plato del especial
+          </button>
+        )}
+
+        {/* Precios */}
+        <div style={{
+          fontSize: 11, fontWeight: 800, color: T.neutral[500],
+          letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          Precios
+        </div>
+        {editingPrices ? (
+          <div style={{ marginBottom: 12 }}>
             <FieldLabel>Precio para mesa ($)</FieldLabel>
             <input
               type="number" value={priceMesa}
@@ -665,110 +793,130 @@ function SpecialEditCard({ dailyMenu, today, authUser, publisherName }) {
               placeholder="Si vacío, se usa el de mesa"
               style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
             />
-            <FieldLabel>Qué incluye <span style={{ color: T.neutral[400], fontWeight: 500 }}>· opcional</span></FieldLabel>
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Ej: Bandeja paisa con aguacate y jugo"
-              rows={2}
-              style={{ ...inputStyle(), fontSize: 14, padding: '12px 14px', resize: 'vertical', minHeight: 60 }}
-            />
             <div style={{ display: 'flex', gap: 8 }}>
               <button
-                onClick={() => setEditing(false)} disabled={busy}
+                onClick={() => setEditingPrices(false)} disabled={busy}
                 style={{
-                  flex: 1, padding: '12px', borderRadius: 12,
+                  flex: 1, padding: '11px', borderRadius: 11,
                   background: T.neutral[100], color: T.neutral[700],
                   border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13.5, fontWeight: 700,
+                  fontSize: 13, fontWeight: 700,
                 }}
               >
                 Cancelar
               </button>
               <button
-                onClick={handleSave}
+                onClick={handleSavePrices}
                 disabled={busy || !priceMesa}
                 style={{
-                  flex: 1.4, padding: '12px', borderRadius: 12,
+                  flex: 1.4, padding: '11px', borderRadius: 11,
                   background: !priceMesa ? T.neutral[200] : T.warn,
                   color: '#fff', border: 'none',
                   cursor: !priceMesa ? 'not-allowed' : 'pointer',
-                  fontFamily: 'inherit', fontSize: 14, fontWeight: 800,
+                  fontFamily: 'inherit', fontSize: 13.5, fontWeight: 800,
                 }}
               >
-                {busy ? 'Guardando…' : 'Guardar especial'}
-              </button>
-            </div>
-          </div>
-        ) : special.active ? (
-          <div>
-            <div style={{
-              padding: '12px', borderRadius: 12, background: '#fff',
-              border: `1px solid #F4E0BC`, marginBottom: 10,
-            }}>
-              {special.description && (
-                <div style={{
-                  fontSize: 13.5, color: T.neutral[800], lineHeight: 1.45,
-                  marginBottom: 6, fontStyle: 'italic',
-                }}>
-                  "{special.description}"
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 2 }}>
-                <span style={{ color: T.neutral[600] }}>Mesa</span>
-                <span style={{ fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtCOP(special.priceMesa || 0)}
-                </span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: T.neutral[600] }}>Llevar</span>
-                <span style={{ fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
-                  {fmtCOP(special.priceLlevar || 0)}
-                </span>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                onClick={() => setEditing(true)} disabled={busy}
-                style={{
-                  flex: 1, padding: '11px', borderRadius: 11,
-                  background: '#fff', color: T.neutral[700],
-                  border: `1.5px solid ${T.neutral[200]}`,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13, fontWeight: 700,
-                }}
-              >
-                ✎ Editar
-              </button>
-              <button
-                onClick={handleDeactivate} disabled={busy}
-                style={{
-                  flex: 1, padding: '11px', borderRadius: 11,
-                  background: 'transparent', color: T.bad,
-                  border: `1.5px solid ${T.bad}55`,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13, fontWeight: 700,
-                }}
-              >
-                Desactivar
+                {busy ? 'Guardando…' : 'Guardar precios'}
               </button>
             </div>
           </div>
         ) : (
+          <div style={{
+            padding: '12px', borderRadius: 12,
+            background: '#fff', border: `1px solid ${hasPrices ? '#F4E0BC' : T.neutral[200]}`,
+            marginBottom: 12,
+          }}>
+            {hasPrices ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 2 }}>
+                  <span style={{ color: T.neutral[600] }}>Mesa</span>
+                  <span style={{ fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(special.priceMesa || 0)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}>
+                  <span style={{ color: T.neutral[600] }}>Llevar</span>
+                  <span style={{ fontWeight: 800, color: T.warn, fontVariantNumeric: 'tabular-nums' }}>
+                    {fmtCOP(special.priceLlevar || 0)}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setEditingPrices(true)}
+                  style={{
+                    width: '100%', padding: '8px', borderRadius: 10,
+                    background: 'transparent', color: T.warn,
+                    border: `1px solid #F4E0BC`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 11.5, fontWeight: 700,
+                  }}
+                >
+                  ✎ Cambiar precios
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setEditingPrices(true)}
+                style={{
+                  width: '100%', padding: '10px', borderRadius: 10,
+                  background: T.warn, color: '#fff',
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13, fontWeight: 800,
+                }}
+              >
+                + Definir precios
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Activación */}
+        {special.active ? (
           <button
-            onClick={() => setEditing(true)} disabled={busy}
+            onClick={handleDeactivate} disabled={busy}
             style={{
-              width: '100%', padding: '14px', borderRadius: 12,
-              background: T.warn, color: '#fff',
-              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 14, fontWeight: 800,
-              boxShadow: `0 3px 10px ${T.warn}44`,
+              width: '100%', padding: '11px', borderRadius: 11,
+              background: 'transparent', color: T.bad,
+              border: `1.5px solid ${T.bad}55`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 700,
             }}
           >
-            + Activar especial de hoy
+            Desactivar especial de hoy
+          </button>
+        ) : (
+          <button
+            onClick={handleActivate}
+            disabled={busy || !canActivate}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 12,
+              background: canActivate ? T.warn : T.neutral[200],
+              color: canActivate ? '#fff' : T.neutral[500],
+              border: 'none',
+              cursor: canActivate ? 'pointer' : 'not-allowed',
+              fontFamily: 'inherit',
+              fontSize: 14, fontWeight: 800,
+              boxShadow: canActivate ? `0 3px 10px ${T.warn}44` : 'none',
+            }}
+          >
+            {!hasItem ? 'Agrega un plato primero' :
+             !hasPrices ? 'Define precios primero' :
+             '+ Activar especial de hoy'}
           </button>
         )}
       </div>
+
+      {/* Picker para cambiar/agregar plato */}
+      {pickingItem && (
+        <AddItemPicker
+          category={CATEGORY_BY_ID.especial}
+          allMenuItems={allMenuItems}
+          alreadySelected={especialItemIds}
+          authUser={authUser}
+          publisherName={publisherName}
+          onCancel={() => setPickingItem(false)}
+          onPick={handlePickItem}
+        />
+      )}
     </div>
   )
 }

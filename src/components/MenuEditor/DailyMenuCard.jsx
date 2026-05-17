@@ -50,6 +50,7 @@ export default function DailyMenuCard({
     <PublishedMenuCard
       resolved={resolved}
       special={dailyMenu?.special}
+      especialItems={resolved.especial || []}
       corriente={corriente}
       onEdit={onEdit}
     />
@@ -162,7 +163,7 @@ function EmptyMenuCard({ today, authUser, publisherName, onCreate }) {
 //   - Tap en el cuerpo → despliega la lista de categorías inline
 //   - Botón ✎ Editar → abre MenuEditView (pantalla completa)
 // ──────────────────────────────────────────────────────────────
-function PublishedMenuCard({ resolved, special, corriente, onEdit }) {
+function PublishedMenuCard({ resolved, special, especialItems, corriente, onEdit }) {
   const [expanded, setExpanded] = useState(false)
   const visibleCategories = CORRIENTE_CATEGORIES.filter(
     c => (resolved[c.id] || []).length > 0
@@ -269,7 +270,7 @@ function PublishedMenuCard({ resolved, special, corriente, onEdit }) {
             />
           ))}
           {special?.active && (
-            <SpecialRow special={special} isLast />
+            <SpecialRow special={special} especialItems={especialItems} isLast />
           )}
         </div>
       )}
@@ -308,7 +309,12 @@ function CategoryRow({ category, items, isLast }) {
   )
 }
 
-function SpecialRow({ special, isLast }) {
+function SpecialRow({ special, especialItems, isLast }) {
+  // Backward-compat: si no hay items pero hay description (datos viejos),
+  // mostramos la description. Datos nuevos usan items.
+  const itemsText = (especialItems || []).length > 0
+    ? especialItems.map(it => it.name).join(' · ')
+    : (special.description || 'Sin plato definido')
   return (
     <div style={{
       padding: '12px 0 4px',
@@ -330,7 +336,7 @@ function SpecialRow({ special, isLast }) {
           Almuerzo Especial
         </div>
         <div style={{ fontSize: 14, color: T.neutral[900], lineHeight: 1.45, fontWeight: 600 }}>
-          {special.description || 'Sin descripción'}
+          {itemsText}
         </div>
         <div style={{
           fontSize: 12, color: T.neutral[600], marginTop: 3,

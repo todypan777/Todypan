@@ -291,8 +291,17 @@ export function watchCorrienteConfig(callback) {
 }
 
 /**
- * Activa o desactiva el "Almuerzo especial" del día con su precio.
- * config: { active, priceMesa, priceLlevar, description? }
+ * Activa o desactiva el "Almuerzo Especial" del día con su precio.
+ *
+ * config: { active, priceMesa, priceLlevar }
+ *
+ * Los ITEMS del especial (el plato fuerte) viven en
+ * `dailyMenu.itemsByCategory.especial` y se administran con
+ * setDailyMenuItem(date, 'especial', [itemId]). Esta función SOLO maneja
+ * el flag active y los precios.
+ *
+ * Nota: el campo legacy `description` (texto libre) ya no se escribe.
+ * Si llega en config lo ignoramos.
  */
 export async function setDailySpecial(dateStr, config, { publishedBy, publishedByName } = {}) {
   const payload = {
@@ -307,7 +316,6 @@ export async function setDailySpecial(dateStr, config, { publishedBy, publishedB
       active: true,
       priceMesa: Number(config.priceMesa) || 0,
       priceLlevar: Number(config.priceLlevar) || 0,
-      description: config.description?.trim() || null,
     }
   } else {
     payload.special = { active: false }

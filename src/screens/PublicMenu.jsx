@@ -223,6 +223,19 @@ export default function PublicMenu() {
               />
             )}
 
+            {/* El ESPECIAL va primero (cuando hay) para destacarlo —
+                lleva el mismo formato grande del corriente con tonos
+                dorados/warm que lo distinguen. */}
+            {special && (
+              <EspecialCardCompact
+                especialName={special.resolved.especial.map(it => it.name).join(' · ')}
+                price={Number(special.priceLlevar || special.priceMesa || 0)}
+                cartCount={cart.length}
+                onAdd={() => setSpecialWizardOpen(true)}
+                animDelay={120}
+              />
+            )}
+
             {/* Tarjeta corriente compacta — sin mostrar todo el menú,
                 solo precio y botón grande para abrir el wizard. */}
             {corriente.available && (
@@ -230,7 +243,7 @@ export default function PublicMenu() {
                 price={corriente.priceLlevar}
                 cartCount={cart.length}
                 onAdd={() => setPickerOpen(true)}
-                animDelay={120}
+                animDelay={special ? 180 : 120}
               />
             )}
 
@@ -242,16 +255,7 @@ export default function PublicMenu() {
                 prices={addonPrices}
                 hasProteinOptions={proteinOptions.length > 0}
                 onOpen={(type) => setAddonsOpen(type || 'menu')}
-                animDelay={corriente.available ? 180 : 120}
-              />
-            )}
-
-            {special && (
-              <EspecialCard
-                description={special.resolved.especial.map(it => it.name).join(' · ')}
-                price={Number(special.priceLlevar || special.priceMesa || 0)}
-                onAdd={() => setSpecialWizardOpen(true)}
-                animDelay={corriente.available ? 240 : 120}
+                animDelay={(special ? 240 : 0) + (corriente.available ? 180 : 120)}
               />
             )}
 
@@ -423,6 +427,79 @@ function CorrienteCardCompact({ price, cartCount, onAdd, animDelay = 0 }) {
         >
           <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
           {isFirst ? 'Agregar mi almuerzo' : 'Agregar otro almuerzo'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tarjeta del ALMUERZO ESPECIAL — mismo formato del corriente
+// pero con tonos warm/dorados para diferenciarlo. Va PRIMERO en la
+// landing para destacarlo cuando hay especial publicado.
+function EspecialCardCompact({ especialName, price, cartCount, onAdd, animDelay = 0 }) {
+  const isFirst = cartCount === 0
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 22,
+      border: `1.5px solid #F4E0BC`,
+      boxShadow: '0 6px 22px rgba(192,138,62,0.18)',
+      overflow: 'hidden', marginBottom: 18,
+      animation: `pmCardIn 0.5s cubic-bezier(0.2,0.9,0.3,1.05) ${animDelay}ms backwards`,
+    }}>
+      <div style={{
+        padding: '22px 22px 18px',
+        background: `linear-gradient(140deg, #FFF7E6 0%, #fff 100%)`,
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 6 }}>⭐</div>
+        <div style={{
+          fontSize: 11.5, fontWeight: 800, color: T.warn,
+          letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4,
+        }}>
+          Almuerzo Especial de hoy
+        </div>
+        <div style={{
+          fontSize: 30, fontWeight: 900, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', letterSpacing: -0.8,
+          lineHeight: 1.1,
+        }}>
+          {fmtCOP(price)}
+        </div>
+        {especialName && (
+          <div style={{
+            fontSize: 15, color: T.neutral[800], marginTop: 8,
+            fontWeight: 700, lineHeight: 1.4,
+          }}>
+            {especialName}
+          </div>
+        )}
+        <div style={{
+          fontSize: 13, color: T.neutral[600], marginTop: 6,
+          lineHeight: 1.45,
+        }}>
+          Te preguntamos paso a paso qué quieres
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 16px' }}>
+        <button
+          onClick={onAdd}
+          style={{
+            width: '100%', padding: '18px',
+            background: T.warn, color: '#fff',
+            border: 'none', borderRadius: 16, cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 16, fontWeight: 800,
+            letterSpacing: -0.2,
+            boxShadow: `0 6px 18px ${T.warn}55`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            transition: 'transform 0.1s ease',
+          }}
+          onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.98)')}
+          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+          {isFirst ? 'Agregar este especial' : 'Agregar otro especial'}
         </button>
       </div>
     </div>
@@ -830,64 +907,6 @@ function SendBigButton({ total, sending, onSend }) {
           )}
         </button>
       </div>
-    </div>
-  )
-}
-
-function EspecialCard({ description, price, onAdd, animDelay = 0 }) {
-  return (
-    <div style={{
-      background: '#fff', borderRadius: 20,
-      border: `1px solid #F4E0BC`,
-      boxShadow: '0 4px 18px rgba(192,138,62,0.10)',
-      overflow: 'hidden',
-      animation: `pmCardIn 0.5s cubic-bezier(0.2,0.9,0.3,1.05) ${animDelay}ms backwards`,
-      marginBottom: 18,
-    }}>
-      <div style={{
-        padding: '18px 20px',
-        background: `linear-gradient(180deg, #FFF7E6 0%, #fff 100%)`,
-      }}>
-        <div style={{
-          display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8,
-        }}>
-          <div style={{
-            fontSize: 11.5, fontWeight: 800, color: T.warn,
-            letterSpacing: 1.2, textTransform: 'uppercase',
-          }}>
-            Almuerzo Especial de hoy
-          </div>
-          <div style={{
-            fontSize: 22, fontWeight: 900, color: T.neutral[900],
-            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5,
-          }}>
-            {fmtCOP(price)}
-          </div>
-        </div>
-        <div style={{
-          fontSize: 15, color: T.neutral[800], marginTop: 10,
-          fontWeight: 700, lineHeight: 1.45,
-        }}>
-          {description}
-        </div>
-      </div>
-
-      <button
-        onClick={onAdd}
-        style={{
-          width: '100%', padding: '16px',
-          background: T.warn, color: '#fff',
-          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-          fontSize: 15, fontWeight: 800, letterSpacing: 0.3,
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15)',
-          transition: 'background 0.18s, transform 0.1s ease',
-        }}
-        onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.985)')}
-        onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
-        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
-      >
-        Agregar al pedido →
-      </button>
     </div>
   )
 }

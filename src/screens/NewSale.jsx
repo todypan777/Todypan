@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
@@ -86,6 +86,10 @@ export default function NewSale({
   // Modal de adición (sopa/huevo/proteína extra). null o 'menu' | 'soup'
   // | 'egg' | 'protein' (entrada directa al selector de cantidad).
   const [addonsModalState, setAddonsModalState] = useState(null)
+  // Lo último que la cajera tipeó en el SendCommandaModal — persiste entre
+  // aperturas del modal cuando agrega más items a la misma comanda. Sin
+  // esto, cada nuevo item resetearía el número de mesa al default.
+  const lastCommandaInputRef = useRef({ tableNumber: null, customerName: '' })
   // Comanda en construcción: lista de almuerzos seleccionados antes de enviar.
   // Cada item lleva SU PROPIA `note` — ya no hay nota global. Si la cajera
   // agrega varios almuerzos, cada uno carga su comentario independiente.
@@ -449,6 +453,19 @@ export default function NewSale({
     }
   }
 
+  // Abre el SendCommandaModal preservando los valores que la cajera ya
+  // tipeó (mesa #, nombre cliente) si abrió el modal antes y luego volvió
+  // a agregar otro item. Si es la primera vez, usa defaults.
+  function openSendCommandaModal() {
+    const last = lastCommandaInputRef.current
+    setSendCommandaModal({
+      tableNumber: last.tableNumber ?? (tableNumber || nextFreeTableNumber(openTabs)),
+      customerName: last.customerName || '',
+      error: null,
+      busy: false,
+    })
+  }
+
   // ── Handlers de almuerzos ──
   function handleAddLunchToCommanda(payload, { another }) {
     setLunchCommanda(prev => [...prev, payload])
@@ -458,12 +475,7 @@ export default function NewSale({
     }
     // Cerrar modal y abrir el de envío de comanda
     setLunchModal(null)
-    setSendCommandaModal({
-      tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-      customerName: '',
-      error: null,
-      busy: false,
-    })
+    openSendCommandaModal()
   }
 
   // Adición agregada desde PublicAddonsModal. Entra al lunchCommanda como
@@ -473,12 +485,7 @@ export default function NewSale({
   function handleAddAddonToCommanda(payload) {
     setLunchCommanda(prev => [...prev, payload])
     setAddonsModalState(null)
-    setSendCommandaModal({
-      tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-      customerName: '',
-      error: null,
-      busy: false,
-    })
+    openSendCommandaModal()
   }
 
   // Abre el chooser de tipo desde donde sea (POS principal, SendCommandaModal,
@@ -521,9 +528,11 @@ export default function NewSale({
   function handleRemoveLunchFromCommanda(index) {
     setLunchCommanda(prev => {
       const next = prev.filter((_, i) => i !== index)
-      // Si se queda sin almuerzos, también cerramos el modal de envío.
+      // Si se queda sin almuerzos, también cerramos el modal de envío y
+      // reseteamos los valores persistidos — la próxima comanda arranca fresh.
       if (next.length === 0) {
         setSendCommandaModal(null)
+        lastCommandaInputRef.current = { tableNumber: null, customerName: '' }
       }
       return next
     })
@@ -804,6 +813,7 @@ export default function NewSale({
       setLunchCommanda([])
       setSendCommandaModal(null)
       setLunchModal(null)
+      lastCommandaInputRef.current = { tableNumber: null, customerName: '' }
       onCancel() // vuelve al home — la burbuja roja aparece sola
       return null
     } catch (err) {
@@ -1011,11 +1021,7 @@ export default function NewSale({
               Descartar
             </button>
             <button
-              onClick={() => setSendCommandaModal({
-                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-                customerName: '',
-                error: null, busy: false,
-              })}
+              onClick={openSendCommandaModal}
               style={{
                 padding: '8px 14px', borderRadius: 10,
                 background: T.copper[500], color: '#fff',
@@ -1445,23 +1451,13 @@ export default function NewSale({
             // ya agregados (caso accidental). El flujo normal del next-action
             // dispara onSendCommanda/onAddAnotherX que ya manejan esto aparte.
             if (lunchCommanda.length > 0) {
-              setSendCommandaModal({
-                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-                customerName: '',
-                error: null, busy: false,
-              })
+              openSendCommandaModal()
             }
           }}
           onAdd={handleAddLunchToCommanda}
           onAddAnotherSpecial={handleChooseSpecial}
           onAddAnotherAddon={handleChooseAddon}
-          onSendCommanda={() => {
-            setSendCommandaModal({
-              tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-              customerName: '',
-              error: null, busy: false,
-            })
-          }}
+          onSendCommanda={openSendCommandaModal}
         />
       )}
       {lunchModal?.kind === 'special' && (
@@ -1479,11 +1475,7 @@ export default function NewSale({
             }
             if (lunchCommanda.length > 0) {
               setLunchModal(null)
-              setSendCommandaModal({
-                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-                customerName: '',
-                error: null, busy: false,
-              })
+              openSendCommandaModal()
             } else {
               setLunchModal(null)
             }
@@ -1508,11 +1500,7 @@ export default function NewSale({
             // Si la cajera cancela pero ya tiene almuerzos, vuelve al send
             // modal para que pueda enviar lo que ya armó.
             if (lunchCommanda.length > 0) {
-              setSendCommandaModal({
-                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-                customerName: '',
-                error: null, busy: false,
-              })
+              openSendCommandaModal()
             }
           }}
           onPickCorriente={handleChooseCorriente}
@@ -1530,11 +1518,7 @@ export default function NewSale({
           onCancel={() => {
             setAddonsModalState(null)
             if (lunchCommanda.length > 0) {
-              setSendCommandaModal({
-                tableNumber: tableNumber || nextFreeTableNumber(openTabs),
-                customerName: '',
-                error: null, busy: false,
-              })
+              openSendCommandaModal()
             }
           }}
           onAdd={handleAddAddonToCommanda}
@@ -1548,7 +1532,21 @@ export default function NewSale({
       {sendCommandaModal && (
         <SendCommandaModal
           state={sendCommandaModal}
-          setState={setSendCommandaModal}
+          setState={(updater) => {
+            // Cada cambio (tabla #, nombre cliente) lo persistimos en el ref
+            // para que si la cajera cierra el send modal para agregar otro
+            // item, al reabrirlo conserve los valores que ya tipeó.
+            setSendCommandaModal(prev => {
+              const next = typeof updater === 'function' ? updater(prev) : updater
+              if (next && typeof next === 'object') {
+                lastCommandaInputRef.current = {
+                  tableNumber: next.tableNumber ?? lastCommandaInputRef.current.tableNumber,
+                  customerName: next.customerName ?? lastCommandaInputRef.current.customerName,
+                }
+              }
+              return next
+            })
+          }}
           isTabMode={isTabMode}
           tab={tab}
           openTabs={openTabs}
@@ -1765,27 +1763,23 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
           </div>
         )}
 
-        {/* Selector de mesa (solo si no estamos en tab y kind='mesa') */}
+        {/* Selector de mesa (solo si no estamos en tab y kind='mesa').
+            Usamos el TableNumberStepper para coherencia visual con el
+            modal de "Crear mesa" (mismo control − N + en cualquier lugar
+            donde la cajera elige número de mesa). */}
         {!isTabMode && tabKind === 'mesa' && (
           <>
             <div style={{
               fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
               letterSpacing: 0.3, textTransform: 'uppercase', marginBottom: 6,
+              textAlign: 'center',
             }}>
               Número de mesa
             </div>
-            <input
-              type="number" min="1" value={num || ''}
-              onChange={e => setState(s => ({ ...s, tableNumber: Number(e.target.value) || 0, error: null }))}
-              autoFocus
-              style={{
-                width: '100%', padding: '14px', borderRadius: 12,
-                border: `1.5px solid ${taken ? '#F0D699' : T.neutral[200]}`,
-                fontSize: 18, fontFamily: 'inherit', fontWeight: 700,
-                background: '#fff', color: T.neutral[900],
-                outline: 'none', textAlign: 'center', marginBottom: 6,
-                boxSizing: 'border-box', fontVariantNumeric: 'tabular-nums',
-              }}
+            <TableNumberStepper
+              value={String(num || 1)}
+              onChange={(v) => setState(s => ({ ...s, tableNumber: Number(v) || 0, error: null }))}
+              error={taken}
             />
             {taken && (
               <div style={{

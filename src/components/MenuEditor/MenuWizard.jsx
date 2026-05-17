@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../../tokens'
 import { fmtCOP } from '../../utils/format'
 import {
-  CATEGORIES, CATEGORY_IDS,
+  CORRIENTE_CATEGORIES, CORRIENTE_CATEGORY_IDS,
   createMenuItem, setDailyMenuItem, setDailySpecial,
 } from '../../menu'
 import { FieldLabel, inputStyle, ErrorBox } from './ui'
@@ -25,13 +25,13 @@ export default function MenuWizard({
   today, authUser, publisherName, allMenuItems,
   onClose, onDone,
 }) {
-  const TOTAL_STEPS = CATEGORIES.length + 2 // categorías + especial + resumen
+  const TOTAL_STEPS = CORRIENTE_CATEGORIES.length + 2 // categorías + especial + resumen
   const [step, setStep] = useState(0)
 
   // Selecciones por categoría (arrays de itemIds)
   const [selections, setSelections] = useState(() => {
     const out = {}
-    for (const c of CATEGORY_IDS) out[c] = []
+    for (const c of CORRIENTE_CATEGORY_IDS) out[c] = []
     return out
   })
 
@@ -64,7 +64,7 @@ export default function MenuWizard({
     setPublishing(true); setPublishError(null)
     try {
       // Guardar cada categoría
-      for (const cat of CATEGORY_IDS) {
+      for (const cat of CORRIENTE_CATEGORY_IDS) {
         await setDailyMenuItem(today, cat, selections[cat] || [], {
           publishedBy: authUser?.uid,
           publishedByName: publisherName,
@@ -98,9 +98,9 @@ export default function MenuWizard({
     }
   }
 
-  const isCategoryStep = step < CATEGORIES.length
-  const isSpecialStep = step === CATEGORIES.length
-  const isSummaryStep = step === CATEGORIES.length + 1
+  const isCategoryStep = step < CORRIENTE_CATEGORIES.length
+  const isSpecialStep = step === CORRIENTE_CATEGORIES.length
+  const isSummaryStep = step === CORRIENTE_CATEGORIES.length + 1
 
   return (
     <FullscreenOverlay>
@@ -117,10 +117,10 @@ export default function MenuWizard({
         <div style={{ maxWidth: 540, margin: '0 auto', padding: '20px 18px 120px' }}>
           {isCategoryStep && (
             <CategoryStep
-              category={CATEGORIES[step]}
+              category={CORRIENTE_CATEGORIES[step]}
               allMenuItems={allMenuItems}
-              selected={selections[CATEGORIES[step].id]}
-              onChange={ids => setCategorySelection(CATEGORIES[step].id, ids)}
+              selected={selections[CORRIENTE_CATEGORIES[step].id]}
+              onChange={ids => setCategorySelection(CORRIENTE_CATEGORIES[step].id, ids)}
               authUser={authUser}
               publisherName={publisherName}
             />
@@ -146,8 +146,8 @@ export default function MenuWizard({
       <WizardFooter
         step={step}
         total={TOTAL_STEPS}
-        category={isCategoryStep ? CATEGORIES[step] : null}
-        selectionForCategory={isCategoryStep ? selections[CATEGORIES[step].id] : null}
+        category={isCategoryStep ? CORRIENTE_CATEGORIES[step] : null}
+        selectionForCategory={isCategoryStep ? selections[CORRIENTE_CATEGORIES[step].id] : null}
         publishing={publishing}
         publishError={publishError}
         onBack={back}
@@ -687,7 +687,7 @@ function SpecialStep({ special, onChange }) {
 function SummaryStep({ selections, allMenuItems, special }) {
   const resolved = useMemo(() => {
     const out = {}
-    for (const c of CATEGORIES) {
+    for (const c of CORRIENTE_CATEGORIES) {
       const ids = selections[c.id] || []
       out[c.id] = ids
         .map(id => allMenuItems.find(it => it.id === id))
@@ -696,7 +696,7 @@ function SummaryStep({ selections, allMenuItems, special }) {
     return out
   }, [selections, allMenuItems])
 
-  const visibleCategories = CATEGORIES.filter(c => resolved[c.id].length > 0)
+  const visibleCategories = CORRIENTE_CATEGORIES.filter(c => resolved[c.id].length > 0)
   const totalItems = visibleCategories.reduce(
     (sum, c) => sum + resolved[c.id].length, 0
   )

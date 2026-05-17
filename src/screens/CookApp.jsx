@@ -4,7 +4,7 @@ import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
 import {
-  CATEGORIES,
+  CORRIENTE_CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
@@ -815,7 +815,7 @@ function KitchenOrderRow({ order, isLast }) {
 
             {order.kind === 'menu' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {CATEGORIES.map(cat => {
+                {CORRIENTE_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
                   const isAlwaysServed = !!cat.alwaysServed
@@ -1075,7 +1075,7 @@ function KitchenOrderDetailModal({ order, onClose }) {
 
           {order.kind === 'menu' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {CATEGORIES.map(cat => {
+              {CORRIENTE_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
                 const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
                 const isAlwaysServed = !!cat.alwaysServed

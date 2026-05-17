@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../../tokens'
 import { fmtCOP } from '../../utils/format'
 import {
-  CATEGORIES, resolveDailyMenu, getCorrienteState,
+  CORRIENTE_CATEGORIES, CATEGORY_BY_ID, resolveDailyMenu, getCorrienteState,
   createMenuItem, setDailyMenuItem, setDailySpecial,
 } from '../../menu'
 import { FieldLabel, inputStyle, ErrorBox } from './ui'
@@ -61,7 +61,7 @@ export default function MenuEditView({
 
   async function addItem(categoryId, itemId) {
     const current = resolved[categoryId] || []
-    const cat = CATEGORIES.find(c => c.id === categoryId)
+    const cat = CATEGORY_BY_ID[categoryId]
     let nextIds
     if (cat.multi) {
       nextIds = [...current.map(it => it.id), itemId]
@@ -111,7 +111,7 @@ export default function MenuEditView({
           </div>
 
           {/* Categorías */}
-          {CATEGORIES.map(cat => (
+          {CORRIENTE_CATEGORIES.map(cat => (
             <CategoryBlock
               key={cat.id}
               category={cat}
@@ -153,7 +153,7 @@ export default function MenuEditView({
 
       {adding && (
         <AddItemPicker
-          category={CATEGORIES.find(c => c.id === adding)}
+          category={CATEGORY_BY_ID[adding]}
           allMenuItems={allMenuItems}
           alreadySelected={(resolved[adding] || []).map(it => it.id)}
           authUser={authUser}

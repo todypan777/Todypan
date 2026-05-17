@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { CATEGORIES, CATEGORY_BY_ID } from '../menu'
+import { CATEGORY_BY_ID, CORRIENTE_CATEGORIES } from '../menu'
 import { REPLACEMENT_OPTIONS, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
 // ──────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ export default function PublicLunchWizard({ resolvedMenu, price, onCancel, onAdd
 
   function handleAdd() {
     const fullSelections = {}
-    for (const cat of CATEGORIES) {
+    for (const cat of CORRIENTE_CATEGORIES) {
       fullSelections[cat.id] = selections[cat.id] || null
     }
     onAdd({
@@ -903,7 +903,7 @@ function SummaryStep({ selections, replacements, note, price, onConfirm }) {
           </div>
         </div>
         <div style={{ padding: '6px 16px 12px' }}>
-          {CATEGORIES.map(cat => {
+          {CORRIENTE_CATEGORIES.map(cat => {
             const val = selections[cat.id]
             const rep = replacements[cat.id]
             const repLabel = REPLACEMENT_LABELS[rep]

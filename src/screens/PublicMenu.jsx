@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import {
-  CATEGORIES,
+  CORRIENTE_CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig,
   getCorrienteState, resolveDailyMenu, getAddonPrices,
 } from '../menu'
@@ -637,7 +637,7 @@ function CartItemRow({ index, item, onRemove }) {
             display: 'flex', flexDirection: 'column', gap: 2,
             marginTop: 2,
           }}>
-            {CATEGORIES.map(cat => {
+            {CORRIENTE_CATEGORIES.map(cat => {
               const val = item.selections[cat.id]
               const rep = item.replacements?.[cat.id] || null
               const text = formatSelection(cat, val, rep)
@@ -995,7 +995,7 @@ function buildOrderMessage(cart, confirmUrl = null) {
     if (isEspecial) {
       if (item.description) lines.push(`  ${item.description}`)
     } else if (item.selections) {
-      for (const cat of CATEGORIES) {
+      for (const cat of CORRIENTE_CATEGORIES) {
         const val = item.selections[cat.id]
         const rep = item.replacements?.[cat.id] || null
         const text = formatSelection(cat, val, rep)

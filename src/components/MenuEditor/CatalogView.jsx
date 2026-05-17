@@ -3,6 +3,7 @@ import { T } from '../../tokens'
 import { fmtCOP } from '../../utils/format'
 import {
   CATEGORIES, CATEGORY_BY_ID, CATEGORY_IDS,
+  CORRIENTE_CATEGORIES,
   watchMenuItems, createMenuItem, renameMenuItem,
   archiveMenuItem, unarchiveMenuItem,
   watchCorrienteConfig, setDailyCorriente, setAddonPrices,
@@ -67,7 +68,39 @@ export default function CatalogView({ authUser, userDoc }) {
         Lo que crees acá podrás activarlo cualquier día desde el menú del día.
       </div>
 
-      {CATEGORIES.map(cat => (
+      {/* Categorías del corriente: las 6 originales. */}
+      {CORRIENTE_CATEGORIES.map(cat => (
+        <CatalogCategory
+          key={cat.id}
+          category={cat}
+          items={itemsByCategory[cat.id]}
+          onCreate={() => setCreatingFor(cat.id)}
+          onEdit={(item) => setEditing(item)}
+        />
+      ))}
+
+      {/* Categorías del especial (separadas visualmente porque pertenecen
+          a otro flujo). Por ahora solo es 'especial' — el plato fuerte
+          del Almuerzo Especial. La sopa y la ensalada del especial son
+          las mismas del corriente (ver arriba), no se duplican. */}
+      <div style={{
+        margin: '24px 4px 12px',
+        padding: '8px 12px', borderRadius: 10,
+        background: '#FFF7E6', border: `1px solid #F4E0BC`,
+        fontSize: 11.5, fontWeight: 800, color: T.warn,
+        letterSpacing: 0.5, textTransform: 'uppercase',
+        display: 'inline-block',
+      }}>
+        ⭐ Almuerzo Especial
+      </div>
+      <div style={{
+        margin: '0 4px 12px',
+        fontSize: 12.5, color: T.neutral[600], lineHeight: 1.5,
+      }}>
+        El plato fuerte del especial (arroz con pollo, costillas, etc.).
+        Su <b>sopa y ensalada</b> se toman del menú del corriente.
+      </div>
+      {CATEGORIES.filter(c => c.forSpecial).map(cat => (
         <CatalogCategory
           key={cat.id}
           category={cat}
@@ -664,6 +697,7 @@ function exampleByCategory(catId) {
     side: 'Arroz blanco',
     salad: 'Ensalada de tomate',
     juice: 'Jugo de mora',
+    especial: 'Arroz con pollo',
   }[catId] || 'Nombre'
 }
 

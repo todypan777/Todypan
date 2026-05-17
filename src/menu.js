@@ -49,16 +49,41 @@ import { getClientTimestamp } from './utils/network'
 //   "SIN [X]" como alerta visual. Si está seleccionada, la cocina la oculta
 //   porque ya sabe que va por defecto. Aplica a side/salad/juice.
 export const CATEGORIES = [
-  { id: 'soup',      label: 'Sopa',         multi: false, required: true,  maxSelections: 1, emoji: '🥣' },
+  // Sopa: multi:true permite a la cocinera publicar varias opciones del día.
+  // El cliente escoge UNA (maxSelections:1, sin mixto).
+  { id: 'soup',      label: 'Sopa',         multi: true,  required: true,  maxSelections: 1, emoji: '🥣' },
   { id: 'principio', label: 'Principio',    multi: true,  required: false, maxSelections: 2, emoji: '🫘' },
   { id: 'protein',   label: 'Proteína',     multi: true,  required: true,  maxSelections: 1, emoji: '🍗' },
   { id: 'side',      label: 'Acompañante',  multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🍚' },
   { id: 'salad',     label: 'Ensalada',     multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🥗' },
   { id: 'juice',     label: 'Jugo',         multi: false, required: false, maxSelections: 1, alwaysServed: true, emoji: '🥤' },
+  // Almuerzo Especial: el plato fuerte (arroz con pollo, costillas…).
+  // forSpecial:true significa que NO es parte del corriente — vive en su
+  // propio flujo. El especial tiene 3 categorías: soup (compartida con
+  // corriente), especial (esta) y salad (compartida).
+  // Por ahora maxSelections:1 (1 plato especial por día) pero la estructura
+  // soporta varios en el futuro cambiando ese número.
+  { id: 'especial',  label: 'Almuerzo Especial', multi: true,  required: true,  maxSelections: 1, emoji: '⭐', forSpecial: true },
 ]
 
 export const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]))
 export const CATEGORY_IDS = CATEGORIES.map(c => c.id)
+
+// Categorías SOLO del corriente (sin las marcadas forSpecial). Usar en los
+// flujos del corriente para no mostrar 'especial' como una más.
+export const CORRIENTE_CATEGORIES = CATEGORIES.filter(c => !c.forSpecial)
+export const CORRIENTE_CATEGORY_IDS = CORRIENTE_CATEGORIES.map(c => c.id)
+
+// Categorías del ESPECIAL: sopa (compartida), especial (propia), ensalada
+// (compartida). Si la cocinera publica sopa/ensalada para el corriente,
+// esas MISMAS opciones se ofrecen al cliente que pide el especial — no se
+// duplica nada en el menú del día.
+export const SPECIAL_CATEGORIES = [
+  CATEGORY_BY_ID.soup,
+  CATEGORY_BY_ID.especial,
+  CATEGORY_BY_ID.salad,
+]
+export const SPECIAL_CATEGORY_IDS = ['soup', 'especial', 'salad']
 
 const menuItemsCol = () => collection(firestoreDb, 'menuItems')
 const menuItemRef = (id) => doc(firestoreDb, 'menuItems', id)
@@ -310,6 +335,50 @@ export function resolveDailyMenu(dailyMenu, allMenuItems) {
 // Categorías OBLIGATORIAS para que el corriente esté disponible.
 // (principio/side/salad son fijos por la cocinera, no requeridos para activar.)
 const REQUIRED_FOR_CORRIENTE = ['soup', 'protein', 'juice']
+
+/**
+ * Estado del Almuerzo Especial para una fecha:
+ *   - available: bool — true si la cajera/cliente lo puede pedir
+ *   - active: bool — la cocinera lo activó hoy
+ *   - priceMesa, priceLlevar: precios del especial
+ *   - resolved: { soup, especial, salad } items resueltos del día
+ *   - missingPrice, missingEspecial: razones por las que NO está disponible
+ *
+ * El especial es "available" cuando:
+ *   - dailyMenu.special.active === true
+ *   - priceMesa > 0
+ *   - hay al menos UN item de categoría 'especial' publicado hoy
+ *
+ * Sopa y ensalada son OPCIONALES (el especial puede no llevar) pero si la
+ * cocinera publicó alguna, el cliente las verá como parte del flujo.
+ */
+export function getSpecialState(dailyMenu, allMenuItems) {
+  const sp = dailyMenu?.special || {}
+  const active = sp.active === true
+  const priceMesa = Number(sp.priceMesa) || 0
+  const priceLlevar = Number(sp.priceLlevar) || priceMesa
+  const resolved = {
+    soup:     resolveCategoryFor(dailyMenu, allMenuItems, 'soup'),
+    especial: resolveCategoryFor(dailyMenu, allMenuItems, 'especial'),
+    salad:    resolveCategoryFor(dailyMenu, allMenuItems, 'salad'),
+  }
+  const missingPrice = priceMesa <= 0
+  const missingEspecial = resolved.especial.length === 0
+  const available = active && !missingPrice && !missingEspecial
+  return {
+    active, available,
+    priceMesa, priceLlevar,
+    resolved,
+    missingPrice, missingEspecial,
+  }
+}
+
+function resolveCategoryFor(dailyMenu, allMenuItems, catId) {
+  const ids = dailyMenu?.itemsByCategory?.[catId] || []
+  return ids
+    .map(id => allMenuItems.find(m => m.id === id))
+    .filter(m => m && !m.archived)
+}
 
 /**
  * Estado del Almuerzo Corriente para una fecha:

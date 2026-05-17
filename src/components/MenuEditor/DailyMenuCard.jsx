@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { T } from '../../tokens'
 import { fmtCOP } from '../../utils/format'
 import {
-  CATEGORIES, resolveDailyMenu, getCorrienteState,
+  CORRIENTE_CATEGORIES, resolveDailyMenu, getCorrienteState,
   copyMenuFromDate, previousDateStr,
 } from '../../menu'
 
@@ -31,7 +31,7 @@ export default function DailyMenuCard({
     () => getCorrienteState(dailyMenu, allMenuItems, corrienteConfig),
     [dailyMenu, allMenuItems, corrienteConfig]
   )
-  const hasAny = CATEGORIES.some(c => (resolved[c.id] || []).length > 0)
+  const hasAny = CORRIENTE_CATEGORIES.some(c => (resolved[c.id] || []).length > 0)
   const specialActive = !!dailyMenu?.special?.active
   const isEmpty = !hasAny && !specialActive
 
@@ -164,7 +164,7 @@ function EmptyMenuCard({ today, authUser, publisherName, onCreate }) {
 // ──────────────────────────────────────────────────────────────
 function PublishedMenuCard({ resolved, special, corriente, onEdit }) {
   const [expanded, setExpanded] = useState(false)
-  const visibleCategories = CATEGORIES.filter(
+  const visibleCategories = CORRIENTE_CATEGORIES.filter(
     c => (resolved[c.id] || []).length > 0
   )
 

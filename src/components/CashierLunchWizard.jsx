@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import {
-  CATEGORIES, CATEGORY_BY_ID,
+  CATEGORIES, CATEGORY_BY_ID, CORRIENTE_CATEGORIES,
   watchMenuItems, watchDailyMenu, resolveDailyMenu,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
@@ -125,7 +125,7 @@ export default function CashierLunchWizard({
   // ─── Payload final ───────────────────────────────────────────────
   function buildPayload(destination) {
     const sel = {}
-    for (const cat of CATEGORIES) {
+    for (const cat of CORRIENTE_CATEGORIES) {
       sel[cat.id] = selections[cat.id] || null
     }
     const isLlevar = destination === 'llevar'

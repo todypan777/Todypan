@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { CATEGORIES } from '../menu'
+import { CORRIENTE_CATEGORIES } from '../menu'
 import { useAuth } from '../context/AuthCtx'
 import { getData, initDB } from '../db'
 import { watchCustomerOrder } from '../customerOrders'
@@ -249,7 +249,7 @@ function OrderItemRow({ item, index, isLast }) {
 
       {!isEspecial && !isAddon && item.selections && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {CATEGORIES.map(cat => {
+          {CORRIENTE_CATEGORIES.map(cat => {
             const val = item.selections[cat.id]
             const rep = item.replacements?.[cat.id] || null
             const text = formatSelection(cat, val, rep)

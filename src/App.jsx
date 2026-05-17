@@ -24,6 +24,7 @@ import Products from './screens/Products'
 import Pendientes from './screens/Pendientes'
 import Deudores from './screens/Deudores'
 import Tasks from './screens/Tasks'
+import Almuerzos from './screens/Almuerzos'
 import Login from './screens/Login'
 import {
   RegistrationForm,
@@ -212,6 +213,9 @@ function AppShell() {
     } else if (target === 'tasks') {
       setMoreSub('tasks')
       setTab('more')
+    } else if (target === 'almuerzos') {
+      setMoreSub('almuerzos')
+      setTab('more')
     } else {
       setTab(target)
     }
@@ -223,7 +227,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'tasks'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'tasks', 'almuerzos'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -356,6 +360,8 @@ function AppShell() {
           onBack={() => setMoreSub(null)}
         />
       )
+    } else if (moreSub === 'almuerzos') {
+      content = <Almuerzos />
     } else {
       content = <More onOpen={id => setMoreSub(id)} />
     }

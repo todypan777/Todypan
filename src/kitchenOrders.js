@@ -315,6 +315,44 @@ export function watchKitchenArchivedForDate(dateStr, callback) {
   }
 }
 
+/**
+ * Todos los kitchenOrders de un día Bogotá (cualquier status).
+ *
+ * Usado por la pantalla de stats "Almuerzos" del admin: necesita ver
+ * pending/ready/delivered/cancelled para computar "cuántos se vendieron",
+ * "qué proteína se pidió más", etc.
+ *
+ * Mismo enfoque de rango UTC que watchKitchenArchivedForDate.
+ */
+export function watchKitchenOrdersForDate(dateStr, callback) {
+  if (!dateStr) { callback([]); return () => {} }
+  try {
+    const startUtc = new Date(`${dateStr}T05:00:00.000Z`)
+    const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000)
+    const q = query(
+      ordersCol(),
+      where('createdAt', '>=', Timestamp.fromDate(startUtc)),
+      where('createdAt', '<', Timestamp.fromDate(endUtc)),
+    )
+    return onSnapshot(
+      q,
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => timeOf(a) - timeOf(b))
+        callback(list)
+      },
+      err => {
+        console.error('[kitchen] watchKitchenOrdersForDate error:', err)
+        callback([])
+      }
+    )
+  } catch (err) {
+    console.error('[kitchen] watchKitchenOrdersForDate setup failed:', err)
+    callback([])
+    return () => {}
+  }
+}
+
 /** Pedidos de una mesa específica (cualquier status no-cancelled). */
 export function watchOrdersForTab(tabId, callback) {
   if (!tabId) { callback([]); return () => {} }

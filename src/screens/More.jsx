@@ -22,6 +22,17 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'almuerzos', label: 'Almuerzos', desc: 'Cuántos almuerzos vendidos y qué se pidió más',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          {/* Plato con cubiertos: minimalista y consistente con el resto */}
+          <circle cx="11" cy="11" r="5.5" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
+          <circle cx="11" cy="11" r="2.2" stroke={T.copper[600]} strokeWidth="1.4" fill="none"/>
+          <path d="M3 3 V8 Q3 9.5 4.5 9.5 V17" stroke={T.copper[600]} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'deudores', label: 'Deudores', desc: 'Personas que deben y registrar pagos',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

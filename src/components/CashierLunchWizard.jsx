@@ -17,8 +17,8 @@ import {
 // y añade lo específico de la cajera:
 //
 //   • Paso final: Mesa/Llevar (con precios diferentes)
-//   • Modo edición: arranca en 'summary' con todo pre-cargado y solo
-//     guarda el cambio (sin "+ Otro almuerzo")
+//   • Modo edición: arranca en 'destination' con todo pre-cargado y
+//     solo guarda el cambio (sin "+ Otro almuerzo")
 //   • Badge "X en comanda" en el header cuando ya hay almuerzos
 //   • Botones "+ Otro" o "Continuar →" después del resumen
 //   • Chips de nota ampliados (típicos del corriente colombiano)
@@ -84,7 +84,9 @@ export default function CashierLunchWizard({
 
   // ─── Pre-selección de side/salad/juice en modo normal ────────────
   // En edición respetamos las selecciones del kitchenOrder existente
-  // (incluso si la cajera dejó algo en null = SIN).
+  // (incluso si la cajera dejó algo en null = SIN). Pre-seleccionamos
+  // cuando arrancan los datos Y cada vez que la cajera resetea el
+  // wizard para un nuevo almuerzo (selections vacías).
   const preselectedRef = useRef(false)
   useEffect(() => {
     if (editMode) return
@@ -171,11 +173,19 @@ export default function CashierLunchWizard({
   }
 
   function resetForAnotherCorriente() {
-    setSelections({})
+    // Reset con pre-selección inmediata de side/salad/juice para que el
+    // próximo almuerzo arranque igual al primero (acompañante/ensalada/
+    // jugo del día ya marcados).
+    const fresh = {}
+    for (const catId of ['side', 'salad', 'juice']) {
+      const opts = resolvedMenu[catId] || []
+      if (opts.length > 0) fresh[catId] = { id: opts[0].id, name: opts[0].name }
+    }
+    setSelections(fresh)
     setReplacements({})
     setNote('')
     setChosenDestination(null)
-    preselectedRef.current = false
+    // Mantenemos preselectedRef true — ya pre-seleccionamos manualmente.
     setStep('soup')
   }
 
@@ -230,7 +240,7 @@ export default function CashierLunchWizard({
           total={TOTAL_STEPS}
           editMode={editMode}
           onBack={goBack}
-          canCancel={step === 'soup' || (editMode && step === 'summary')}
+          canCancel={step === 'soup' || (editMode && step === 'destination')}
         />
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -368,7 +378,7 @@ export default function CashierLunchWizard({
               <NoteStep
                 note={note}
                 onChange={setNote}
-                onContinue={() => setStep('summary')}
+                onContinue={() => setStep('destination')}
               />
             )}
 

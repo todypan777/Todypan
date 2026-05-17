@@ -4,7 +4,7 @@ import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
 import {
-  CORRIENTE_CATEGORIES,
+  CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
@@ -884,7 +884,48 @@ function KitchenOrderRow({ order, isLast }) {
               </div>
             )}
 
-            {order.kind === 'special' && description && (
+            {/* Especial NUEVO con selections (soup, especial, salad) */}
+            {order.kind === 'special' && selections && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {SPECIAL_CATEGORIES.map(cat => {
+                  const sel = selections[cat.id]
+                  if (cat.id === 'salad' && (sel === null || sel === undefined)) {
+                    return (
+                      <div key={cat.id} style={{
+                        fontSize: 18, fontWeight: 900, color: T.bad,
+                        letterSpacing: 0.5, textTransform: 'uppercase',
+                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
+                        display: 'inline-block', alignSelf: 'flex-start',
+                        border: `2px solid ${T.bad}55`,
+                      }}>
+                        ⚠ SIN {cat.label.toUpperCase()}
+                      </div>
+                    )
+                  }
+                  if (!sel) return null
+                  return (
+                    <div key={cat.id} style={{
+                      display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
+                    }}>
+                      <span style={{
+                        fontSize: 13, fontWeight: 800, color: T.neutral[500],
+                        minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
+                      }}>
+                        {cat.emoji} {cat.label}
+                      </span>
+                      <span style={{
+                        fontSize: 18, fontWeight: 800, color: T.neutral[900],
+                        letterSpacing: -0.1,
+                      }}>
+                        {sel.name}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            {/* Backward-compat: especial viejo solo con description */}
+            {order.kind === 'special' && !selections && description && (
               <div style={{
                 fontSize: 17, color: T.neutral[800], lineHeight: 1.55,
                 padding: '12px 16px', borderRadius: 12,
@@ -1146,7 +1187,47 @@ function KitchenOrderDetailModal({ order, onClose }) {
             </div>
           )}
 
-          {order.kind === 'special' && description && (
+          {/* Especial NUEVO con selections (soup, especial, salad) */}
+          {order.kind === 'special' && selections && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {SPECIAL_CATEGORIES.map(cat => {
+                const sel = selections[cat.id]
+                if (cat.id === 'salad' && (sel === null || sel === undefined)) {
+                  return (
+                    <div key={cat.id} style={{
+                      fontSize: 20, fontWeight: 900, color: T.bad,
+                      letterSpacing: 0.5, textTransform: 'uppercase',
+                      background: '#FBE9E5', padding: '10px 16px', borderRadius: 10,
+                      display: 'inline-block', alignSelf: 'flex-start',
+                      border: `2px solid ${T.bad}55`,
+                    }}>
+                      ⚠ SIN {cat.label.toUpperCase()}
+                    </div>
+                  )
+                }
+                if (!sel) return null
+                return (
+                  <div key={cat.id} style={{
+                    display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
+                  }}>
+                    <span style={{
+                      fontSize: 14, fontWeight: 800, color: T.neutral[500],
+                      minWidth: 120, letterSpacing: 0.5, textTransform: 'uppercase',
+                    }}>
+                      {cat.emoji} {cat.label}
+                    </span>
+                    <span style={{
+                      fontSize: 20, fontWeight: 900, color: T.neutral[900],
+                    }}>
+                      {sel.name}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {/* Backward-compat */}
+          {order.kind === 'special' && !selections && description && (
             <div style={{
               fontSize: 18, color: T.neutral[800], lineHeight: 1.6,
               padding: '14px 16px', borderRadius: 12,

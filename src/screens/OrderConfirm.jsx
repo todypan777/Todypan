@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { CORRIENTE_CATEGORIES } from '../menu'
+import { CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES } from '../menu'
 import { useAuth } from '../context/AuthCtx'
 import { getData, initDB } from '../db'
 import { watchCustomerOrder } from '../customerOrders'
@@ -238,7 +238,39 @@ function OrderItemRow({ item, index, isLast }) {
         </div>
       )}
 
-      {isEspecial && item.description && (
+      {/* Especial NUEVO: muestra las 3 categorías. Backward-compat con
+          datos viejos: si no hay selections pero sí description, muestra
+          la description. */}
+      {isEspecial && item.selections && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {SPECIAL_CATEGORIES.map(cat => {
+            const val = item.selections[cat.id]
+            const rep = cat.id === 'soup' ? (item.replacements?.soup || null) : null
+            const text = formatSelection(cat, val, rep)
+            if (!text) return null
+            const isSin = !val && !REPLACEMENT_LABELS[rep]
+            return (
+              <div key={cat.id} style={{
+                display: 'flex', gap: 6, fontSize: 11.5, lineHeight: 1.4,
+              }}>
+                <span style={{
+                  color: T.neutral[500], fontWeight: 700,
+                  minWidth: 84, flexShrink: 0,
+                }}>
+                  {cat.label}
+                </span>
+                <span style={{
+                  flex: 1, color: isSin ? T.bad : T.neutral[800],
+                  fontWeight: isSin ? 800 : 600, wordBreak: 'break-word',
+                }}>
+                  {text}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {isEspecial && !item.selections && item.description && (
         <div style={{
           fontSize: 12.5, color: T.neutral[700], lineHeight: 1.4,
           fontWeight: 600,

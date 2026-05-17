@@ -182,4 +182,13 @@ export const REPLACEMENT_OPTIONS = {
     { key: 'extra_juice',     label: 'Más jugo',           emoji: '🥤' },
     { key: 'nada',            label: 'Nada, así está bien', emoji: '👌' },
   ],
+  // Reemplazos para la sopa CUANDO va dentro del especial: el especial
+  // solo lleva sopa + plato + ensalada, así que no tiene sentido ofrecer
+  // 'más principio', 'más acompañante' o 'más jugo' (no van en el especial).
+  especial_soup: [
+    { key: 'huevo',       label: 'Huevo',               emoji: '🍳' },
+    { key: 'extra_arroz', label: 'Más arroz',           emoji: '🍚' },
+    { key: 'extra_salad', label: 'Más ensalada',        emoji: '🥗' },
+    { key: 'nada',        label: 'Nada, así está bien', emoji: '👌' },
+  ],
 }

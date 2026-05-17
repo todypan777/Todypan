@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import {
-  CORRIENTE_CATEGORIES,
+  CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES, SPECIAL_CATEGORY_IDS,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig,
-  getCorrienteState, resolveDailyMenu, getAddonPrices,
+  getCorrienteState, resolveDailyMenu, getAddonPrices, getSpecialState,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import { createCustomerOrder } from '../customerOrders'
 import PublicLunchWizard from '../components/PublicLunchWizard'
+import PublicSpecialWizard from '../components/PublicSpecialWizard'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
@@ -39,6 +40,7 @@ export default function PublicMenu() {
   // }]
   const [cart, setCart] = useState([])
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [specialWizardOpen, setSpecialWizardOpen] = useState(false)
   // addonsOpen: null = cerrado, 'menu' = abierto en pantalla de elegir tipo,
   // 'soup'|'egg'|'protein' = abierto y saltó directo al selector de cantidad.
   const [addonsOpen, setAddonsOpen] = useState(null)
@@ -72,7 +74,13 @@ export default function PublicMenu() {
     () => resolveDailyMenu(dailyMenu, allItems),
     [dailyMenu, allItems]
   )
-  const special = dailyMenu?.special?.active === true ? dailyMenu.special : null
+  // Estado del especial. Si available, tiene items + precios. Si no
+  // (active pero faltan items o precios) no lo ofrecemos al cliente.
+  const specialState = useMemo(
+    () => getSpecialState(dailyMenu, allItems),
+    [dailyMenu, allItems]
+  )
+  const special = specialState.available ? specialState : null
   const addonPrices = useMemo(
     () => getAddonPrices(corrienteConfig),
     [corrienteConfig]
@@ -99,15 +107,9 @@ export default function PublicMenu() {
     setCart(prev => [...prev, { kind: 'corriente', ...payload }])
     setPickerOpen(false)
   }
-  function addEspecial() {
-    if (!special) return
-    const priceLlevar = Number(special.priceLlevar || special.priceMesa || 0)
-    setCart(prev => [...prev, {
-      kind: 'especial',
-      description: special.description || 'Almuerzo Especial',
-      note: '',
-      price: priceLlevar,
-    }])
+  function addEspecialFromWizard(payload) {
+    setCart(prev => [...prev, { kind: 'especial', ...payload }])
+    setSpecialWizardOpen(false)
   }
   function addAddon(payload) {
     setCart(prev => [...prev, payload])
@@ -241,9 +243,9 @@ export default function PublicMenu() {
 
             {special && (
               <EspecialCard
-                description={special.description || 'Almuerzo Especial'}
+                description={special.resolved.especial.map(it => it.name).join(' · ')}
                 price={Number(special.priceLlevar || special.priceMesa || 0)}
-                onAdd={addEspecial}
+                onAdd={() => setSpecialWizardOpen(true)}
                 animDelay={corriente.available ? 240 : 120}
               />
             )}
@@ -269,6 +271,18 @@ export default function PublicMenu() {
           price={corriente.priceLlevar}
           onCancel={() => setPickerOpen(false)}
           onAdd={addCorriente}
+        />
+      )}
+
+      {/* Wizard del cliente para armar el ESPECIAL paso a paso (sopa →
+          especial → ensalada → nota → resumen). */}
+      {specialWizardOpen && special && (
+        <PublicSpecialWizard
+          resolvedMenu={resolvedMenu}
+          especialItems={special.resolved.especial}
+          price={special.priceLlevar}
+          onCancel={() => setSpecialWizardOpen(false)}
+          onAdd={addEspecialFromWizard}
         />
       )}
 
@@ -623,7 +637,42 @@ function CartItemRow({ index, item, onRemove }) {
           </div>
         )}
 
-        {isEspecial && item.description && (
+        {/* Especial: muestra las 3 selecciones (sopa, especial, ensalada).
+            Si no hay selections (datos viejos), muestra description. */}
+        {isEspecial && item.selections && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 2,
+            marginTop: 2,
+          }}>
+            {SPECIAL_CATEGORIES.map(cat => {
+              const val = item.selections[cat.id]
+              const rep = cat.id === 'soup' ? (item.replacements?.soup || null) : null
+              const text = formatSelection(cat, val, rep)
+              if (!text) return null
+              const isSin = !val && !REPLACEMENT_LABELS[rep]
+              return (
+                <div key={cat.id} style={{
+                  display: 'flex', gap: 6, fontSize: 11, lineHeight: 1.35,
+                }}>
+                  <span style={{
+                    color: T.neutral[500], fontWeight: 700, letterSpacing: 0.2,
+                    minWidth: 78, flexShrink: 0,
+                  }}>
+                    {cat.label}
+                  </span>
+                  <span style={{
+                    flex: 1,
+                    color: isSin ? T.bad : T.neutral[800],
+                    fontWeight: isSin ? 800 : 600, wordBreak: 'break-word',
+                  }}>
+                    {text}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        {isEspecial && !item.selections && item.description && (
           <div style={{
             fontSize: 12, color: T.neutral[700], lineHeight: 1.4,
             fontWeight: 600,
@@ -977,6 +1026,7 @@ const CAT_LABEL = {
   side: 'Acompañante',
   salad: 'Ensalada',
   juice: 'Jugo',
+  especial: 'Especial',
 }
 
 function buildOrderMessage(cart, confirmUrl = null) {
@@ -992,7 +1042,16 @@ function buildOrderMessage(cart, confirmUrl = null) {
     const isEspecial = item.kind === 'especial'
     const kindLabel = isEspecial ? 'Especial' : 'Corriente'
     lines.push(`ALMUERZO ${idx + 1} - ${kindLabel} - ${fmtCOP(item.price)}`)
-    if (isEspecial) {
+    // Especial con nuevo modelo (3 categorías): muestra cada una.
+    // Backward-compat: si no tiene selections pero sí description, usa esa.
+    if (isEspecial && item.selections) {
+      for (const cat of SPECIAL_CATEGORIES) {
+        const val = item.selections[cat.id]
+        const rep = cat.id === 'soup' ? (item.replacements?.soup || null) : null
+        const text = formatSelection(cat, val, rep)
+        if (text) lines.push(`  ${CAT_LABEL[cat.id]}: ${text}`)
+      }
+    } else if (isEspecial) {
       if (item.description) lines.push(`  ${item.description}`)
     } else if (item.selections) {
       for (const cat of CORRIENTE_CATEGORIES) {

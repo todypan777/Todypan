@@ -65,7 +65,23 @@ export async function createCustomerOrder({ cart, total }) {
       price: Number(it.price) || 0,
     }
     if (kind === 'especial') {
-      out.description = it.description?.toString().trim() || null
+      // Nuevo modelo: el especial tiene selections (soup, especial, salad)
+      // + replacements (solo soup). description legacy se mantiene si llega.
+      if (it.selections) {
+        out.selections = it.selections
+        // Replacements del especial: solo soup admite (mismas llaves que corriente
+        // pero el cliente solo verá huevo/extra_arroz/extra_salad/nada en el wizard).
+        const validReps = new Set([
+          'huevo', 'extra_principio', 'extra_side',
+          'extra_arroz', 'extra_salad', 'extra_juice', 'nada',
+        ])
+        const reps = {}
+        if (validReps.has(it.replacements?.soup)) reps.soup = it.replacements.soup
+        if (Object.keys(reps).length > 0) out.replacements = reps
+      }
+      // Backward-compat: si solo viene description (cliente con app vieja),
+      // la guardamos también.
+      if (it.description) out.description = it.description.toString().trim() || null
     } else if (kind === 'addon') {
       out.addonType = it.addonType
       out.quantity = Math.max(1, Math.floor(Number(it.quantity) || 1))

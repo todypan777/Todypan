@@ -18,7 +18,7 @@ import { fmtCOP } from '../utils/format'
 //   addonAvailable
 //   onCancel
 //   onPickCorriente()   → abrir CashierLunchWizard
-//   onPickSpecial()     → abrir SpecialLunchModal
+//   onPickSpecial()     → abrir CashierSpecialWizard
 //   onPickAddon()       → abrir PublicAddonsModal
 // ──────────────────────────────────────────────────────────────────
 export default function LunchTypeChooserModal({

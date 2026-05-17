@@ -42,24 +42,26 @@ const WEB_ORDER_BRANCH_NAME = 'Panadería B'
 
 // Convierte un item del cart de customerOrder al shape que usa el state
 // `lunchCommanda` de NewSale (mismo que producen CashierLunchWizard /
-// SpecialLunchModal al armar un almuerzo).
+// CashierSpecialWizard al armar un almuerzo).
 // Los `replacements` (reemplazos del wizard cuando el cliente dice NO a
 // sopa/principio) se concatenan al `note` para que viajen a cocina sin
 // tocar el modelo de kitchenOrders.
 function customerOrderItemToLunchPayload(item) {
   const isEspecial = item.kind === 'especial'
-  const note = isEspecial
-    ? (item.note || null)
-    : buildKitchenNoteFromCustomerItem({
-        replacements: item.replacements,
-        note: item.note,
-      })
+  // Ambos (corriente y especial) pueden tener replacements en el note
+  // (corriente: soup/principio, especial: solo soup).
+  const note = buildKitchenNoteFromCustomerItem({
+    replacements: item.replacements,
+    note: item.note,
+  })
   return {
     kind: isEspecial ? 'special' : 'menu',
     productId: null,
     productName: isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente',
     destination: 'llevar',
-    selections: isEspecial ? null : (item.selections || null),
+    // El especial NUEVO tiene selections (soup, especial, salad); el viejo
+    // tenía solo description. Pasamos ambos para máxima compatibilidad.
+    selections: item.selections || null,
     description: isEspecial ? (item.description || null) : null,
     price: Number(item.price) || 0,
     note,

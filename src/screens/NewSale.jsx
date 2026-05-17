@@ -24,9 +24,9 @@ import {
   formatTableLabel,
 } from '../openTabs'
 import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder } from '../kitchenOrders'
-import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getAddonPrices } from '../menu'
+import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getSpecialState, getAddonPrices } from '../menu'
 import CashierLunchWizard from '../components/CashierLunchWizard'
-import SpecialLunchModal from '../components/SpecialLunchModal'
+import CashierSpecialWizard from '../components/CashierSpecialWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
@@ -166,9 +166,13 @@ export default function NewSale({
     () => getCorrienteState(dailyMenu, allMenuItems, corrienteConfig),
     [dailyMenu, allMenuItems, corrienteConfig]
   )
-  const specialFromDay = dailyMenu?.special?.active && Number(dailyMenu?.special?.priceMesa) > 0
-    ? dailyMenu.special
-    : null
+  // Estado completo del especial (incluye items publicados). Solo se
+  // ofrece como opción si está available (active + tiene plato + precios).
+  const specialState = useMemo(
+    () => getSpecialState(dailyMenu, allMenuItems),
+    [dailyMenu, allMenuItems]
+  )
+  const specialFromDay = specialState.available ? specialState : null
   const addonPrices = useMemo(
     () => getAddonPrices(corrienteConfig),
     [corrienteConfig]
@@ -597,8 +601,12 @@ export default function NewSale({
         edit: {
           orderId: order.id,
           cartKey: item.key,
+          // Nuevo modelo: selections (soup, especial, salad). Backward-compat:
+          // si solo hay description (datos viejos), la pasamos como fallback.
+          initialSelections: order.selections || null,
           initialDescription: order.description || '',
           initialNote: order.commandaNote || '',
+          initialDestination: order.destination || null,
           initialPrice: Number(order.price) || 0,
         },
       })
@@ -1453,23 +1461,21 @@ export default function NewSale({
         />
       )}
       {lunchModal?.kind === 'special' && (
-        <SpecialLunchModal
+        <CashierSpecialWizard
           currentCount={lunchCommanda.length}
           editMode={!!lunchModal.edit}
-          initialDescription={lunchModal.edit?.initialDescription || ''}
+          initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}
-          initialPrice={lunchModal.edit?.initialPrice || 0}
+          initialDestination={lunchModal.edit?.initialDestination || null}
           onSaveEdit={handleSaveKitchenEdit}
           onCancel={() => {
             if (lunchModal.edit) {
               setLunchModal(null)
               return
             }
+            setLunchModal(null)
             if (lunchCommanda.length > 0) {
-              setLunchModal(null)
               openSendCommandaModal()
-            } else {
-              setLunchModal(null)
             }
           }}
           onAdd={handleAddLunchToCommanda}
@@ -1484,7 +1490,9 @@ export default function NewSale({
           corrienteAvailable={corrienteState.available}
           corrientePrice={corrienteState.priceMesa}
           specialActive={!!specialFromDay}
-          specialDescription={specialFromDay?.description || ''}
+          specialDescription={specialFromDay
+            ? specialFromDay.resolved.especial.map(it => it.name).join(' · ')
+            : ''}
           specialPrice={Number(specialFromDay?.priceMesa) || 0}
           addonAvailable={anyAddonAvailable}
           onCancel={() => {

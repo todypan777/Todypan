@@ -48,6 +48,7 @@ export default function DailyMenuCard({
 
   return (
     <PublishedMenuCard
+      today={today}
       resolved={resolved}
       special={dailyMenu?.special}
       especialItems={resolved.especial || []}
@@ -163,11 +164,40 @@ function EmptyMenuCard({ today, authUser, publisherName, onCreate }) {
 //   - Tap en el cuerpo → despliega la lista de categorías inline
 //   - Botón ✎ Editar → abre MenuEditView (pantalla completa)
 // ──────────────────────────────────────────────────────────────
-function PublishedMenuCard({ resolved, special, especialItems, corriente, onEdit }) {
+function PublishedMenuCard({ today, resolved, special, especialItems, corriente, onEdit }) {
   const [expanded, setExpanded] = useState(false)
+  const [promptCopied, setPromptCopied] = useState(false)
+  const [promptError, setPromptError] = useState(null)
   const visibleCategories = CORRIENTE_CATEGORIES.filter(
     c => (resolved[c.id] || []).length > 0
   )
+
+  async function handleCopyPrompt() {
+    const prompt = buildMenuImagePrompt({
+      resolved, corriente, special, especialItems, today,
+    })
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(prompt)
+      } else {
+        // Fallback: navegadores viejos / contextos sin permisos de clipboard.
+        const ta = document.createElement('textarea')
+        ta.value = prompt
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setPromptCopied(true)
+      setPromptError(null)
+      setTimeout(() => setPromptCopied(false), 2400)
+    } catch (err) {
+      console.error('[menu] copy prompt failed:', err)
+      setPromptError('No pudimos copiar. Intenta de nuevo.')
+    }
+  }
 
   return (
     <div style={{
@@ -272,6 +302,50 @@ function PublishedMenuCard({ resolved, special, especialItems, corriente, onEdit
           {special?.active && (
             <SpecialRow special={special} especialItems={especialItems} isLast />
           )}
+
+          {/* Atajo para generar imagen del menú con IA externa.
+              Copia un prompt parametrizado con el menú de hoy ya inyectado;
+              la cocinera/admin lo pega en ChatGPT / Midjourney / Gemini y
+              obtiene la imagen para WhatsApp / redes. */}
+          <div style={{
+            marginTop: 10, paddingTop: 12,
+            borderTop: `1px dashed ${T.copper[100]}`,
+          }}>
+            <button
+              onClick={handleCopyPrompt}
+              style={{
+                width: '100%', padding: '11px 14px', borderRadius: 12,
+                background: promptCopied ? T.copper[100] : '#fff',
+                color: promptCopied ? T.copper[700] : T.neutral[700],
+                border: `1.5px solid ${promptCopied ? T.copper[400] : T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 800, letterSpacing: -0.1,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                transition: 'background 0.15s, border-color 0.15s, color 0.15s',
+              }}
+              aria-label="Copiar prompt para generar imagen del menú con IA"
+            >
+              {promptCopied
+                ? <>✓ Copiado al portapapeles</>
+                : <>🎨 Copiar prompt para imagen IA</>}
+            </button>
+            <div style={{
+              fontSize: 11, color: T.neutral[500], marginTop: 6,
+              textAlign: 'center', lineHeight: 1.4,
+            }}>
+              Pegalo en ChatGPT, Midjourney o Gemini para generar la imagen del día.
+            </div>
+            {promptError && (
+              <div style={{
+                marginTop: 8, padding: '6px 10px', borderRadius: 8,
+                background: '#FBE9E5', border: `1px solid #F0C8BE`,
+                color: T.bad, fontSize: 11.5, lineHeight: 1.4,
+                textAlign: 'center',
+              }}>
+                {promptError}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -347,4 +421,66 @@ function SpecialRow({ special, especialItems, isLast }) {
       </div>
     </div>
   )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Prompt builder para imagen IA del menú del día.
+// Devuelve un string listo para pegar en ChatGPT / Midjourney /
+// Gemini Imagen. La cocinera elige su IA y obtiene la imagen.
+// Si en el futuro cambia el número de WhatsApp, actualizar también
+// PublicMenu.jsx — son los dos únicos lugares que lo usan.
+// ──────────────────────────────────────────────────────────────
+const WHATSAPP_DISPLAY = '324 187 8756'
+
+function formatLongDate(dateStr) {
+  if (!dateStr) return ''
+  const dt = new Date(dateStr + 'T00:00:00')
+  const days = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado']
+  const months = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+  return `${days[dt.getDay()]} ${dt.getDate()} de ${months[dt.getMonth()]}`
+}
+
+function buildMenuImagePrompt({ resolved, corriente, special, especialItems, today }) {
+  const dateLong = formatLongDate(today)
+  const cats = CORRIENTE_CATEGORIES.filter(c => (resolved[c.id] || []).length > 0)
+
+  const listLines = cats.map(c => {
+    const names = resolved[c.id].map(it => it.name).join(' · ')
+    return `${c.emoji} ${c.label.toUpperCase()} · ${names}`
+  })
+
+  const hasEspecial = special?.active && (especialItems || []).length > 0
+  if (hasEspecial) {
+    const names = especialItems.map(it => it.name).join(' · ')
+    listLines.push(`⭐ ALMUERZO ESPECIAL · ${names}`)
+  }
+
+  // Narrativa para la foto: lista de comida natural para que la IA imagine
+  // el flat-lay (sopa, plato principal con sus componentes, jugo).
+  const foodNarrative = cats
+    .map(c => resolved[c.id].map(it => it.name).join(', '))
+    .filter(Boolean)
+    .join('; ')
+
+  const mesa = corriente.priceMesa ? fmtCOP(corriente.priceMesa).replace('$ ', '$') : '$—'
+  const llevar = (corriente.priceLlevar || corriente.priceMesa)
+    ? fmtCOP(corriente.priceLlevar || corriente.priceMesa).replace('$ ', '$')
+    : mesa
+
+  const especialPriceLine = hasEspecial && special?.priceMesa
+    ? `\n    "⭐ Especial Mesa ${fmtCOP(special.priceMesa).replace('$ ', '$')} · Llevar ${fmtCOP(special.priceLlevar || special.priceMesa).replace('$ ', '$')}"`
+    : ''
+
+  return `Tarjeta promocional vertical 9:16 del "Menú del día" para TodyPan, restaurante colombiano de almuerzos caseros. Paleta cálida cobre, crema y marrón terracota (colores de la marca). Fondo de madera clara con sombras suaves de luz natural cenital.
+
+Composición:
+- Encabezado superior con el logo "TodyPan" en tipografía manuscrita elegante color cobre oscuro, y debajo en cursiva más pequeña: "${dateLong}".
+- En el centro, una fotografía gastronómica cenital tipo flat-lay ESTILO EDITORIAL DE REVISTA GASTRONÓMICA mostrando: ${foodNarrative}. Iluminación cálida apetitosa, sombras suaves, alta resolución.
+- Debajo, una lista limpia con íconos pequeños en línea:
+${listLines.map(l => '    ' + l).join('\n')}
+- Pie de página con dos badges redondeados color cobre:
+    "🍽️ En mesa ${mesa}"   "🥡 Para llevar ${llevar}"${especialPriceLine}
+- Texto pequeño abajo: "Pedí por WhatsApp 📱 ${WHATSAPP_DISPLAY}"
+
+Estilo: fotografía apetitosa profesional con tipografía moderna sobrepuesta limpia, look acogedor y casero, sensación de hogar colombiano. Sin marcas de agua. Sin manos en cuadro. Texto perfectamente legible y bien tipografiado.`
 }

@@ -23,7 +23,7 @@ import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 //     "Solicitar menú" que también abre WhatsApp.
 // ──────────────────────────────────────────────────────────────────
 
-const WHATSAPP_NUMBER = '573115874957'  // Colombia (57) + 311 5874957
+const WHATSAPP_NUMBER = '573241878756'  // Colombia (57) + 324 1878756
 
 export default function PublicMenu() {
   const today = useBogotaDate()

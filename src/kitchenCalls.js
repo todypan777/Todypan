@@ -68,13 +68,15 @@ export async function createKitchenCall(payload) {
  * y la cocinera puede volver a llamar.
  */
 export async function acknowledgeKitchenCall(callId, { byUid, byName } = {}) {
-  await updateDoc(callRef(callId), {
+  // Fire-and-forget para modo ahorro: `await updateDoc` se cuelga. El overlay
+  // de la cajera se cierra cuando el watcher ve el cambio en el caché local.
+  updateDoc(callRef(callId), {
     status: 'acknowledged',
     acknowledgedAt: serverTimestamp(),
     acknowledgedAtClient: getClientTimestamp(),
     acknowledgedBy: byUid || null,
     acknowledgedByName: byName || null,
-  })
+  }).catch(err => console.warn('[kitchenCalls] acknowledgeKitchenCall deferred:', err?.message || err))
 }
 
 /**

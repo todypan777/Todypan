@@ -2,7 +2,6 @@ import { firestoreDb } from './firebase'
 import {
   doc,
   collection,
-  addDoc,
   updateDoc,
   serverTimestamp,
   query,
@@ -149,10 +148,12 @@ export async function flagSale(saleId, { note, byUid, byName }) {
     at: Date.now(),
     message: note.trim(),
   }
-  await updateDoc(saleRef(saleId), {
+  // Fire-and-forget para modo ahorro: `await updateDoc` se cuelga y dejaba el
+  // modal de "Reportar error" atrapado en "Enviando...". Se encola y sube luego.
+  updateDoc(saleRef(saleId), {
     status: 'flagged',
     notes: arrayUnion(newNote),
-  })
+  }).catch(err => console.warn('[sales] flagSale deferred:', err?.message || err))
 }
 
 /**

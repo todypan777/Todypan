@@ -2469,13 +2469,15 @@ function CreateProductModal({ initialName, authUser, userDoc, branchId, branchNa
 
   const valid = name.trim().length >= 2 && Number(priceStr) > 0
 
-  async function handleCreate() {
+  function handleCreate() {
     if (!valid || busy) return
     setBusy(true)
     setError(null)
     try {
       const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
-      const productId = await createCashierProduct({
+      // createCashierProduct es fire-and-forget: devuelve el id al instante y
+      // encola la escritura. NO usar await — en modo ahorro nunca resolvería.
+      const productId = createCashierProduct({
         name: name.trim(),
         salePrice: Number(priceStr) || 0,
         branchId,
@@ -2491,7 +2493,7 @@ function CreateProductModal({ initialName, authUser, userDoc, branchId, branchNa
   }
 
   return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
+    <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
           Crear producto
@@ -2518,7 +2520,7 @@ function CreateProductModal({ initialName, authUser, userDoc, branchId, branchNa
         {error && <ErrorBox text={error} />}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleCreate}
             disabled={!valid || busy}

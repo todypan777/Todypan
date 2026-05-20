@@ -78,13 +78,15 @@ export async function createTask(payload) {
  * pueda mostrar en el cierre antiguo).
  */
 export async function markTaskDone(taskId, { sessionId, note } = {}) {
-  await updateDoc(taskRef(taskId), {
+  // Fire-and-forget para modo ahorro: `await updateDoc` se cuelga y dejaba el
+  // check de la tarea girando para siempre. El watcher refleja el cambio local.
+  updateDoc(taskRef(taskId), {
     status: 'done',
     completedAt: serverTimestamp(),
     completedAtClient: getClientTimestamp(),
     completedInSessionId: sessionId || null,
     completedNote: note?.trim() || null,
-  })
+  }).catch(err => console.warn('[tasks] markTaskDone deferred:', err?.message || err))
 }
 
 /**
@@ -92,13 +94,14 @@ export async function markTaskDone(taskId, { sessionId, note } = {}) {
  * 'pending' y borra los campos de completada.
  */
 export async function unmarkTaskDone(taskId) {
-  await updateDoc(taskRef(taskId), {
+  // Fire-and-forget para modo ahorro (mismo motivo que markTaskDone).
+  updateDoc(taskRef(taskId), {
     status: 'pending',
     completedAt: deleteField(),
     completedAtClient: deleteField(),
     completedInSessionId: deleteField(),
     completedNote: deleteField(),
-  })
+  }).catch(err => console.warn('[tasks] unmarkTaskDone deferred:', err?.message || err))
 }
 
 /** Admin cancela una tarea (no se completó pero ya no aplica). */

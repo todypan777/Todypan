@@ -2,7 +2,6 @@ import { firestoreDb } from './firebase'
 import {
   doc,
   collection,
-  addDoc,
   updateDoc,
   deleteDoc,
   serverTimestamp,
@@ -11,6 +10,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore'
 import { updateProduct } from './db'
+import { addDocOffline } from './utils/firestoreOffline'
 
 /**
  * Solicitudes de cambio en productos pedidas por cajeras.
@@ -82,7 +82,7 @@ export function watchPendingChangeRequestForProduct(productId, callback) {
  * Crea una solicitud de cambio. La UI debe haber validado que no exista
  * otra pendiente para el mismo producto.
  */
-export async function createChangeRequest({
+export function createChangeRequest({
   productId, source,
   currentName, requestedName,
   currentPricesByBranch, requestedPricesByBranch,
@@ -105,7 +105,9 @@ export async function createChangeRequest({
     status: 'pending',
     createdAt: serverTimestamp(),
   }
-  const ref = await addDoc(reqCol(), data)
+  // Fire-and-forget: la cajera la envía en modo ahorro; `await addDoc` se
+  // colgaba y dejaba el modal "Reportar cambio" atrapado en "Enviando...".
+  const ref = addDocOffline(reqCol(), data)
   return ref.id
 }
 

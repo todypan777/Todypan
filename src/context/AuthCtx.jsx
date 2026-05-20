@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { onAuthChange, consumeRedirectResult, ADMIN_EMAIL } from '../auth'
 import { firebaseAuth } from '../firebase'
 import { watchUserDoc, bootstrapAdminIfNeeded } from '../users'
+import { isDataSaverEnabled } from '../utils/network'
 
 const AuthCtx = createContext({
   authUser: null,
@@ -183,9 +184,16 @@ export function AuthProvider({ children }) {
 
     const unsub = watchUserDoc(authUser.uid, doc => {
       setDocLoading(false)
-      // Solo aceptamos null si online (significa que el doc realmente no existe).
-      // Offline + null = error transitorio; mantener lo que ya teníamos.
-      if (!doc && !navigator.onLine && userDoc) {
+      // Solo aceptamos null si estamos REALMENTE online (significa que el doc no
+      // existe → mostrar registro). Tratamos como "sin red" tanto el offline real
+      // como el MODO AHORRO: en ahorro, `disableNetwork` sirve desde caché y un
+      // cache-miss devuelve null aunque `navigator.onLine` siga en true. Sin esto,
+      // una cajera habilitada y en turno era expulsada a la pantalla de registro.
+      // Usamos el caché de localStorage en vivo (no el `userDoc` del closure, que
+      // puede estar viejo por las deps del effect).
+      const offlineish = !navigator.onLine || isDataSaverEnabled()
+      const hadDoc = userDoc || readUserDocCache(authUser.uid)
+      if (!doc && offlineish && hadDoc) {
         return
       }
       setUserDoc(doc)

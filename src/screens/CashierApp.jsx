@@ -1749,12 +1749,14 @@ function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
   const isAlreadyFlagged = sale.status === 'flagged'
   const valid = note.trim().length >= 10
 
-  async function handleReport() {
+  function handleReport() {
     if (!valid || busy) return
     setBusy(true); setError(null)
     try {
       const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
-      await flagSale(sale.id, {
+      // flagSale es fire-and-forget: encola el reporte y no se cuelga en modo
+      // ahorro. No usar await.
+      flagSale(sale.id, {
         note,
         byUid: authUser.uid,
         byName: cashierName,
@@ -1773,7 +1775,7 @@ function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
     : '—'
 
   return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
+    <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={{
         width: '100%', maxWidth: 420, background: '#fff', borderRadius: 22,
         padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
@@ -1857,7 +1859,7 @@ function ReportSaleModal({ sale, authUser, userDoc, onCancel, onDone }) {
             {error && <ErrorBox text={error} />}
 
             <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+              <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
               <button
                 onClick={handleReport}
                 disabled={!valid || busy}

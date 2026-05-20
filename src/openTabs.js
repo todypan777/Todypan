@@ -2,7 +2,6 @@ import { firestoreDb } from './firebase'
 import {
   doc,
   collection,
-  addDoc,
   updateDoc,
   deleteDoc,
   serverTimestamp,
@@ -238,12 +237,18 @@ export async function updateOpenTab(id, { items, tableNumber, customerName }) {
   if (customerName != null) {
     updates.customerName = String(customerName).trim() || 'Cliente'
   }
-  await updateDoc(tabRef(id), updates)
+  // Fire-and-forget: en modo ahorro `await updateDoc` se cuelga y dejaba a la
+  // cajera atrapada al guardar/salir de una mesa. Se encola y sube con la red.
+  updateDoc(tabRef(id), updates).catch(err =>
+    console.warn('[openTabs] updateOpenTab deferred:', err?.message || err))
 }
 
 /** Elimina una tab (al cobrar o al eliminarla manualmente). */
 export async function deleteOpenTab(id) {
-  await deleteDoc(tabRef(id))
+  // Fire-and-forget: en modo ahorro `await deleteDoc` se cuelga (mismo motivo
+  // que updateOpenTab). La eliminación se encola y se aplica con la red.
+  deleteDoc(tabRef(id)).catch(err =>
+    console.warn('[openTabs] deleteOpenTab deferred:', err?.message || err))
 }
 
 /**

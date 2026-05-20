@@ -3,13 +3,13 @@ import {
   doc,
   getDoc,
   collection,
-  addDoc,
   updateDoc,
   deleteDoc,
   serverTimestamp,
   query,
   onSnapshot,
 } from 'firebase/firestore'
+import { addDocOffline } from './utils/firestoreOffline'
 
 const productsCol = () => collection(firestoreDb, 'products')
 
@@ -36,7 +36,7 @@ export function watchCashierProducts(callback) {
  * Otras cajeras en otra panadería verán el producto sin precio y se les pedirá
  * el suyo la primera vez.
  */
-export async function createCashierProduct({ name, salePrice, branchId, createdByUid, createdByName }) {
+export function createCashierProduct({ name, salePrice, branchId, createdByUid, createdByName }) {
   const key = String(branchId)
   const data = {
     name: name.trim(),
@@ -51,7 +51,10 @@ export async function createCashierProduct({ name, salePrice, branchId, createdB
     createdByName: createdByName || null,
     createdAt: serverTimestamp(),
   }
-  const ref = await addDoc(productsCol(), data)
+  // Fire-and-forget: el ID se genera local; la escritura se encola y resuelve
+  // cuando haya red. Crítico para modo ahorro de datos, donde `await addDoc()`
+  // se cuelga indefinidamente y dejaba a la cajera atrapada en "Creando...".
+  const ref = addDocOffline(productsCol(), data)
   return ref.id
 }
 

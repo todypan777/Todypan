@@ -2,7 +2,6 @@ import { firestoreDb } from './firebase'
 import {
   doc,
   collection,
-  addDoc,
   updateDoc,
   serverTimestamp,
   query,
@@ -113,21 +112,25 @@ export async function unmarkOrderReady(id) {
 
 /** La cajera entrega (cierra) una orden lista. */
 export async function markOrderDelivered(id) {
-  await updateDoc(orderRef(id), {
+  // Fire-and-forget para modo ahorro: `await updateDoc` se cuelga (la cajera
+  // tiene la red desconectada). Se encola y sube cuando vuelva la conexión.
+  updateDoc(orderRef(id), {
     status: 'delivered',
     deliveredAt: serverTimestamp(),
-  })
+  }).catch(err => console.warn('[kitchenOrders] markOrderDelivered deferred:', err?.message || err))
 }
 
 /** La cajera cancela una orden (puede estar pending o ready). */
 export async function cancelKitchenOrder(id, { reason, cancelledBy, cancelledByName } = {}) {
-  await updateDoc(orderRef(id), {
+  // Fire-and-forget para modo ahorro (mismo motivo que markOrderDelivered).
+  // Crítico: al eliminar una mesa con cocina, un `await` aquí colgaba el modal.
+  updateDoc(orderRef(id), {
     status: 'cancelled',
     cancelledAt: serverTimestamp(),
     cancelReason: reason?.trim() || null,
     cancelledBy: cancelledBy || null,
     cancelledByName: cancelledByName?.trim() || null,
-  })
+  }).catch(err => console.warn('[kitchenOrders] cancelKitchenOrder deferred:', err?.message || err))
 }
 
 /**
@@ -152,7 +155,9 @@ export async function updateKitchenOrder(id, payload) {
   if (payload.selections !== undefined) data.selections = payload.selections || null
   if (payload.description !== undefined) data.description = payload.description?.trim() || null
   if (payload.note !== undefined) data.commandaNote = payload.note?.trim() || null
-  await updateDoc(orderRef(id), data)
+  // Fire-and-forget para modo ahorro (la cajera corrige el almuerzo offline).
+  updateDoc(orderRef(id), data).catch(err =>
+    console.warn('[kitchenOrders] updateKitchenOrder deferred:', err?.message || err))
 }
 
 /** Marca toda una comanda como pagada antes de tiempo (solo para llevar). */
@@ -160,7 +165,9 @@ export async function markCommandaPaid(commandaId, _ids) {
   // Recibe commandaId pero firestore necesita actualizar doc por doc;
   // la UI debe pasar la lista de ids a actualizar.
   if (!Array.isArray(_ids)) return
-  await Promise.all(_ids.map(id => updateDoc(orderRef(id), { paid: true })))
+  // Fire-and-forget para modo ahorro: encolar cada update sin esperar al server.
+  _ids.forEach(id => updateDoc(orderRef(id), { paid: true }).catch(err =>
+    console.warn('[kitchenOrders] markCommandaPaid deferred:', err?.message || err)))
 }
 
 /**

@@ -228,12 +228,14 @@ function ChangeRequestModal({
   const hasChanges = nameChanged || pricesChanged
   const canSubmit = !busy && hasChanges && (name || '').trim().length >= 2 && !existingReq
 
-  async function handleSubmit() {
+  function handleSubmit() {
     if (!canSubmit) return
     setBusy(true)
     setError(null)
     try {
-      await createChangeRequest({
+      // createChangeRequest es fire-and-forget: devuelve al instante y encola
+      // la escritura. NO usar await — en modo ahorro nunca resolvería.
+      createChangeRequest({
         productId: product.id,
         source: product.source || 'admin',
         currentName: product.name || '',
@@ -247,18 +249,13 @@ function ChangeRequestModal({
       onSent()
     } catch (err) {
       console.error('[changeReq] create failed:', err)
-      const code = err?.code || ''
-      if (code === 'permission-denied') {
-        setError('Las reglas de Firestore bloquean esta acción. El admin debe habilitar /productChangeRequests.')
-      } else {
-        setError('No se pudo enviar la solicitud. Intenta de nuevo.')
-      }
+      setError('No se pudo enviar la solicitud. Intenta de nuevo.')
       setBusy(false)
     }
   }
 
   return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
+    <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
           Reportar cambio
@@ -357,7 +354,7 @@ function ChangeRequestModal({
         )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
-          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleSubmit}
             disabled={!canSubmit}

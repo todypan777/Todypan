@@ -2743,6 +2743,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
     if (!debtorName.trim()) return []
     const q = normalizeName(debtorName)
     return debtors
+      .filter(d => !d.mergedInto) // ocultar deudores ya fusionados
       .map(d => ({ d, score: scoreNameMatch(normalizeName(d.name), q) }))
       .filter(x => x.score >= 0)
       .sort((a, b) => a.score - b.score || a.d.name.localeCompare(b.d.name))

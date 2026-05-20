@@ -4,7 +4,7 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
-import { watchDebtors, registerDebtorPayment } from '../debtors'
+import { watchDebtors, registerDebtorPayment, mergeDebtors } from '../debtors'
 import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
 import { useAuth } from '../context/AuthCtx'
@@ -16,6 +16,10 @@ export default function Deudores({ onBack }) {
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState('active')
   const [selected, setSelected] = useState(null)
+  // Modo fusión: seleccionar varios deudores para unirlos en uno.
+  const [mergeMode, setMergeMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [mergeModalOpen, setMergeModalOpen] = useState(false)
 
   useEffect(() => {
     const unsub = watchDebtors(list => {
@@ -25,12 +29,17 @@ export default function Deudores({ onBack }) {
     return unsub
   }, [])
 
+  // Deudores "vivos": excluimos los fusionados (mergedInto). Son tombstones
+  // ocultos que solo existen para auditoría; no deben listarse, contarse ni
+  // sumarse en ningún lado.
+  const liveDebtors = useMemo(() => debtors.filter(d => !d.mergedInto), [debtors])
+
   // Filtros y conteos basados ÚNICAMENTE en `totalOwed` (no en `status`).
   // El campo `status` es solo un cache denormalizado: si por bug histórico
   // hay deudores con totalOwed>0 y status='paid', deben aparecer como activos.
   // La verdad es la plata pendiente, no el flag.
   const filtered = useMemo(() => {
-    const list = debtors.filter(d => {
+    const list = liveDebtors.filter(d => {
       const owed = Number(d.totalOwed) || 0
       if (tab === 'active' && owed <= 0) return false
       if (tab === 'paid' && owed > 0) return false
@@ -42,13 +51,27 @@ export default function Deudores({ onBack }) {
     })
     list.sort((a, b) => (b.totalOwed || 0) - (a.totalOwed || 0))
     return list
-  }, [debtors, tab, search])
+  }, [liveDebtors, tab, search])
 
-  const totalActive = debtors
+  const totalActive = liveDebtors
     .filter(d => (Number(d.totalOwed) || 0) > 0)
     .reduce((s, d) => s + (d.totalOwed || 0), 0)
-  const activeCount = debtors.filter(d => (Number(d.totalOwed) || 0) > 0).length
-  const paidCount = debtors.filter(d => (Number(d.totalOwed) || 0) <= 0).length
+  const activeCount = liveDebtors.filter(d => (Number(d.totalOwed) || 0) > 0).length
+  const paidCount = liveDebtors.filter(d => (Number(d.totalOwed) || 0) <= 0).length
+
+  const selectedDebtors = useMemo(
+    () => liveDebtors.filter(d => selectedIds.includes(d.id)),
+    [liveDebtors, selectedIds]
+  )
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+  function exitMergeMode() {
+    setMergeMode(false)
+    setSelectedIds([])
+    setMergeModalOpen(false)
+  }
 
   return (
     <div style={{ paddingBottom: isDesktop ? 0 : 110 }}>
@@ -131,6 +154,35 @@ export default function Deudores({ onBack }) {
             ))}
           </div>
         </div>
+
+        {/* Botón fusionar duplicados */}
+        {!loading && liveDebtors.length >= 2 && (
+          <button
+            onClick={() => mergeMode ? exitMergeMode() : setMergeMode(true)}
+            style={{
+              marginTop: 8, width: '100%', padding: '10px',
+              borderRadius: 12,
+              background: mergeMode ? '#FBE9E5' : '#fff',
+              color: mergeMode ? T.bad : T.copper[700],
+              border: `1px solid ${mergeMode ? '#F0C8BE' : T.neutral[200]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12.5, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            {mergeMode
+              ? '✕ Cancelar fusión'
+              : '🔗 Fusionar deudores repetidos'}
+          </button>
+        )}
+        {mergeMode && (
+          <div style={{
+            marginTop: 6, fontSize: 11.5, color: T.neutral[500],
+            textAlign: 'center', lineHeight: 1.4,
+          }}>
+            Marca los nombres que son la misma persona y toca <b>Fusionar</b>.
+          </div>
+        )}
       </div>
 
       {/* Lista de deudores */}
@@ -164,24 +216,251 @@ export default function Deudores({ onBack }) {
                 key={d.id}
                 debtor={d}
                 isLast={i === filtered.length - 1}
-                onClick={() => setSelected(d)}
+                selectable={mergeMode}
+                selected={selectedIds.includes(d.id)}
+                onClick={() => mergeMode ? toggleSelect(d.id) : setSelected(d)}
               />
             ))}
           </Card>
         )}
       </div>
 
-      {selected && (
+      {selected && !mergeMode && (
         <DebtorDetailModal
           debtor={selected}
           onClose={() => setSelected(null)}
+        />
+      )}
+
+      {/* Barra flotante en modo fusión */}
+      {mergeMode && (
+        <div style={{
+          position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 80,
+          padding: '12px 16px calc(12px + env(safe-area-inset-bottom))',
+          background: 'rgba(255,255,255,0.96)',
+          backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)',
+          borderTop: `1px solid ${T.neutral[200]}`,
+          display: 'flex', alignItems: 'center', gap: 10,
+          maxWidth: 720, margin: '0 auto',
+        }}>
+          <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: T.neutral[700] }}>
+            {selectedIds.length === 0
+              ? 'Ninguno seleccionado'
+              : `${selectedIds.length} seleccionado${selectedIds.length === 1 ? '' : 's'}`}
+          </div>
+          <button
+            onClick={() => setMergeModalOpen(true)}
+            disabled={selectedIds.length < 2}
+            style={{
+              padding: '11px 20px', borderRadius: 12,
+              background: selectedIds.length >= 2 ? T.copper[500] : T.neutral[200],
+              color: selectedIds.length >= 2 ? '#fff' : T.neutral[400],
+              border: 'none', fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+              cursor: selectedIds.length >= 2 ? 'pointer' : 'not-allowed',
+              boxShadow: selectedIds.length >= 2 ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+            }}
+          >
+            Fusionar
+          </button>
+        </div>
+      )}
+
+      {mergeModalOpen && (
+        <MergeModal
+          debtors={selectedDebtors}
+          onCancel={() => setMergeModalOpen(false)}
+          onDone={exitMergeMode}
         />
       )}
     </div>
   )
 }
 
-function DebtorRow({ debtor, isLast, onClick }) {
+// ──────────────────────────────────────────────────────────────
+// Modal de confirmación de fusión
+// ──────────────────────────────────────────────────────────────
+function MergeModal({ debtors, onCancel, onDone }) {
+  const { authUser } = useAuth()
+  // Superviviente sugerido: el de mayor deuda (suele ser el "real").
+  const suggested = useMemo(() => {
+    return [...debtors].sort((a, b) => (Number(b.totalOwed) || 0) - (Number(a.totalOwed) || 0))[0]
+  }, [debtors])
+
+  const [survivorId, setSurvivorId] = useState(suggested?.id || null)
+  const [finalName, setFinalName] = useState(suggested?.name || '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const combinedOwed = debtors.reduce((s, d) => s + (Number(d.totalOwed) || 0), 0)
+  const totalMovs = debtors.reduce((s, d) => s + (d.history?.length || 0), 0)
+  const valid = finalName.trim().length >= 2 && survivorId && debtors.length >= 2
+
+  // Cuando el admin elige otro principal, sugerimos su nombre (si no tocó el campo).
+  function pickSurvivor(id) {
+    const prevName = debtors.find(d => d.id === survivorId)?.name || ''
+    setSurvivorId(id)
+    if (finalName.trim() === prevName.trim()) {
+      setFinalName(debtors.find(d => d.id === id)?.name || finalName)
+    }
+  }
+
+  async function handleConfirm() {
+    if (!valid || busy) return
+    setBusy(true); setError(null)
+    try {
+      await mergeDebtors({
+        debtorIds: debtors.map(d => d.id),
+        survivorId,
+        finalName: finalName.trim(),
+        byUid: authUser?.uid,
+      })
+      onDone()
+    } catch (err) {
+      console.error('[merge] error:', err)
+      const code = err?.code || ''
+      setError(code === 'permission-denied'
+        ? 'Las reglas de Firestore no permiten esta acción. Avisa al administrador del sistema.'
+        : (err?.message || 'No se pudo fusionar. Intenta de nuevo.'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div onClick={busy ? undefined : onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 95,
+      background: 'rgba(0,0,0,0.45)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 460, background: '#fff', borderRadius: 22,
+        boxShadow: '0 16px 48px rgba(0,0,0,0.2)', maxHeight: '92vh', overflowY: 'auto',
+      }}>
+        <div style={{ padding: '22px 22px 4px' }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+            Fusionar {debtors.length} deudores
+          </div>
+          <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4, lineHeight: 1.5 }}>
+            Se unirán en un solo deudor. Las deudas se suman y todos los movimientos
+            quedan bajo el nombre que elijas. Esta acción no se deshace fácilmente.
+          </div>
+        </div>
+
+        {/* Quién queda como principal */}
+        <div style={{ padding: '14px 22px 0' }}>
+          <Label>Deudor principal (sobre el que se unen)</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+            {[...debtors]
+              .sort((a, b) => (Number(b.totalOwed) || 0) - (Number(a.totalOwed) || 0))
+              .map(d => {
+                const active = d.id === survivorId
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => pickSurvivor(d.id)}
+                    disabled={busy}
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                      padding: '10px 12px', borderRadius: 12, textAlign: 'left',
+                      background: active ? T.copper[50] : '#fff',
+                      border: `1.5px solid ${active ? T.copper[400] : T.neutral[200]}`,
+                      cursor: busy ? 'default' : 'pointer', fontFamily: 'inherit',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <span style={{
+                        width: 16, height: 16, borderRadius: 999, flexShrink: 0,
+                        border: `2px solid ${active ? T.copper[500] : T.neutral[300]}`,
+                        background: active ? T.copper[500] : '#fff',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {active && <span style={{ width: 6, height: 6, borderRadius: 999, background: '#fff' }} />}
+                      </span>
+                      <span style={{
+                        fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}>
+                        {d.name}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: T.bad, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                      {fmtCOP(d.totalOwed || 0)}
+                    </span>
+                  </button>
+                )
+              })}
+          </div>
+
+          <Label>Nombre final</Label>
+          <input
+            value={finalName}
+            onChange={e => setFinalName(e.target.value)}
+            placeholder="Nombre del deudor"
+            disabled={busy}
+            style={{
+              width: '100%', padding: '11px 12px', borderRadius: 12,
+              border: `1px solid ${T.neutral[200]}`, background: '#fff',
+              fontFamily: 'inherit', fontSize: 14, fontWeight: 600,
+              color: T.neutral[900], outline: 'none', boxSizing: 'border-box',
+              marginBottom: 12,
+            }}
+          />
+
+          {/* Resumen */}
+          <div style={{
+            padding: '12px 14px', borderRadius: 12, marginBottom: 4,
+            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: T.neutral[600], marginBottom: 4 }}>
+              <span>Deuda combinada</span>
+              <span style={{ fontWeight: 800, color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(combinedOwed)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, color: T.neutral[600] }}>
+              <span>Movimientos totales</span>
+              <span style={{ fontWeight: 700, color: T.neutral[800] }}>{totalMovs}</span>
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ padding: '0 22px' }}>
+            <div style={{
+              marginTop: 12, padding: '10px 12px', borderRadius: 10,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+              fontSize: 12.5, fontWeight: 500, textAlign: 'center',
+            }}>
+              {error}
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, padding: '16px 22px 22px' }}>
+          <button onClick={onCancel} disabled={busy} style={{
+            flex: 1, padding: '12px', borderRadius: 12,
+            background: '#fff', color: T.neutral[700],
+            border: `1px solid ${T.neutral[200]}`,
+            cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 700,
+          }}>Cancelar</button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid || busy}
+            style={{
+              flex: 1.4, padding: '12px', borderRadius: 12,
+              background: valid && !busy ? T.copper[500] : T.neutral[200],
+              color: valid && !busy ? '#fff' : T.neutral[400],
+              border: 'none', cursor: valid && !busy ? 'pointer' : 'not-allowed',
+              fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+            }}
+          >
+            {busy ? 'Fusionando...' : 'Fusionar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DebtorRow({ debtor, isLast, onClick, selectable = false, selected = false }) {
   // Igual que el filtro: confiamos solo en `totalOwed`. El flag `status` es
   // un cache que puede quedar desincronizado por escrituras viejas.
   const isPaid = (Number(debtor.totalOwed) || 0) <= 0
@@ -192,12 +471,24 @@ function DebtorRow({ debtor, isLast, onClick }) {
       onClick={onClick}
       style={{
         width: '100%', padding: '12px 14px',
-        background: 'transparent', border: 'none',
+        background: selected ? T.copper[50] : 'transparent', border: 'none',
         borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
         cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
         display: 'flex', alignItems: 'center', gap: 12,
+        transition: 'background 0.12s',
       }}
     >
+      {selectable && (
+        <div style={{
+          width: 20, height: 20, borderRadius: 999, flexShrink: 0,
+          border: `2px solid ${selected ? T.copper[500] : T.neutral[300]}`,
+          background: selected ? T.copper[500] : '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#fff', fontSize: 12, fontWeight: 800,
+        }}>
+          {selected ? '✓' : ''}
+        </div>
+      )}
       <div style={{
         width: 38, height: 38, borderRadius: 999, flexShrink: 0,
         background: isPaid ? T.neutral[100] : T.copper[100],

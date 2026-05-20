@@ -2,13 +2,16 @@ import { firestoreDb } from './firebase'
 import {
   doc,
   collection,
-  addDoc,
   updateDoc,
   serverTimestamp,
   query,
+  where,
   onSnapshot,
   arrayUnion,
   getDoc,
+  getDocs,
+  writeBatch,
+  increment,
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
 
@@ -48,7 +51,11 @@ export function watchDebtors(callback) {
  */
 export async function addDebtSale(existingDebtors, { name, amount, saleId, date }) {
   const normalized = normalizeName(name)
-  const existing = existingDebtors.find(d => normalizeName(d.name) === normalized)
+  // Ignorar deudores fusionados (mergedInto): si no, una venta con el nombre
+  // viejo "resucitaría" un tombstone en vez de ir al deudor superviviente.
+  const existing = existingDebtors
+    .filter(d => !d.mergedInto)
+    .find(d => normalizeName(d.name) === normalized)
 
   if (existing) {
     const newTotal = (Number(existing.totalOwed) || 0) + (Number(amount) || 0)
@@ -167,4 +174,120 @@ export async function adjustDebtorForSaleChange(debtorId, { saleId, oldAmount, n
   })
 
   return { newOwed, delta }
+}
+
+/**
+ * Solo admin: FUSIONA varios deudores en uno solo. Resuelve el problema de
+ * que una cajera registró a la misma persona con varios nombres distintos.
+ *
+ * Cómo funciona (operación ATÓMICA con writeBatch — todo o nada):
+ *   - `survivorId`: el deudor que sobrevive y queda con el nombre final.
+ *   - El resto ("losers") se marcan con `mergedInto: survivorId` y `status:
+ *     'merged'`. NO se borran ni se vacían: quedan ocultos por filtro pero con
+ *     sus datos intactos para auditoría (y por si hay que revertir).
+ *   - La deuda de los losers se SUMA al superviviente con `increment()` (a
+ *     prueba de carreras) y su historial se anexa con `arrayUnion()`.
+ *   - TODAS las ventas a crédito de los deudores seleccionados se re-apuntan
+ *     al superviviente (`debtorId`) y se renombran (`debtorName`), para que el
+ *     detalle, los reportes y los ajustes de venta sigan cuadrando.
+ *
+ * Importante: los consumidores de la lista de deudores (pantalla Deudores,
+ * sugerencias del POS, matching de `addDebtSale`) deben filtrar `mergedInto`.
+ *
+ * @param {object} p
+ * @param {string[]} p.debtorIds  ids seleccionados (incluye al superviviente)
+ * @param {string}   p.survivorId id del deudor que sobrevive
+ * @param {string}   p.finalName  nombre final del deudor fusionado
+ * @param {string}   p.byUid      uid del admin que ejecuta
+ * @returns {{ survivorId, addedOwed, salesRepointed, mergedCount }}
+ */
+export async function mergeDebtors({ debtorIds, survivorId, finalName, byUid }) {
+  if (!Array.isArray(debtorIds) || debtorIds.length < 2) {
+    throw new Error('Selecciona al menos 2 deudores para fusionar.')
+  }
+  if (!survivorId || !debtorIds.includes(survivorId)) {
+    throw new Error('Debes elegir cuál deudor queda como principal.')
+  }
+  const cleanName = (finalName || '').trim()
+  if (cleanName.length < 2) {
+    throw new Error('Escribe un nombre válido para el deudor fusionado.')
+  }
+
+  const loserIds = debtorIds.filter(id => id !== survivorId)
+
+  // Confirmar que el superviviente existe.
+  const survivorSnap = await getDoc(debtorRef(survivorId))
+  if (!survivorSnap.exists()) throw new Error('El deudor principal ya no existe.')
+  const survivorOwed = Number(survivorSnap.data()?.totalOwed) || 0
+
+  // Leer losers: sumar su deuda y juntar su historial.
+  const loserSnaps = await Promise.all(loserIds.map(id => getDoc(debtorRef(id))))
+  let addedOwed = 0
+  let addedHistory = []
+  for (const s of loserSnaps) {
+    if (!s.exists()) continue
+    const d = s.data()
+    addedOwed += Number(d.totalOwed) || 0
+    if (Array.isArray(d.history)) addedHistory = addedHistory.concat(d.history)
+  }
+
+  // Recolectar TODAS las ventas a crédito de los deudores seleccionados.
+  // (Las del superviviente también, para renombrarlas al nombre final.)
+  const saleRefs = []
+  for (const id of debtorIds) {
+    const qs = await getDocs(query(debtorsSalesCol(), where('debtorId', '==', id)))
+    qs.forEach(docSnap => saleRefs.push(docSnap.ref))
+  }
+
+  // Límite de Firestore: 500 operaciones por batch. Dejamos margen.
+  const totalOps = 1 + loserIds.length + saleRefs.length
+  if (totalOps > 450) {
+    throw new Error('Hay demasiados registros para fusionar de una vez. Fusiona en grupos más pequeños.')
+  }
+
+  const combinedOwed = survivorOwed + addedOwed
+  const batch = writeBatch(firestoreDb)
+
+  // Superviviente: nombre final + deuda sumada (increment) + historial anexado.
+  const survivorUpdate = {
+    name: cleanName,
+    normalizedName: normalizeName(cleanName),
+    totalOwed: increment(addedOwed),
+    // status usa totalOwed como verdad en la UI, así que esto es best-effort.
+    status: combinedOwed > 0 ? 'active' : 'paid',
+    lastUpdate: serverTimestamp(),
+    mergedAt: serverTimestamp(),
+    mergedBy: byUid || null,
+  }
+  if (addedHistory.length > 0) {
+    survivorUpdate.history = arrayUnion(...addedHistory)
+  }
+  batch.update(debtorRef(survivorId), survivorUpdate)
+
+  // Losers: marcar como fusionados (ocultos por filtro). Datos intactos.
+  for (const id of loserIds) {
+    batch.update(debtorRef(id), {
+      mergedInto: survivorId,
+      status: 'merged',
+      lastUpdate: serverTimestamp(),
+    })
+  }
+
+  // Re-apuntar todas las ventas al superviviente con el nombre final.
+  for (const ref of saleRefs) {
+    batch.update(ref, { debtorId: survivorId, debtorName: cleanName })
+  }
+
+  await batch.commit()
+  return {
+    survivorId,
+    addedOwed,
+    salesRepointed: saleRefs.length,
+    mergedCount: loserIds.length,
+  }
+}
+
+/** Colección de ventas (local a este módulo, para la fusión). */
+function debtorsSalesCol() {
+  return collection(firestoreDb, 'sales')
 }

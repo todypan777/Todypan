@@ -245,6 +245,30 @@ export function watchCashierSalesByDate(cashierUid, dateStr, callback) {
   )
 }
 
+/**
+ * READ-ONLY (diagnóstico admin): todas las ventas de UNA fecha (zona Bogotá),
+ * sin importar cajera ni sesión. Sirve para auditar descuadres comparando el
+ * `sessionId`/`cashierUid` real de cada venta contra la sesión que el admin
+ * cierra. Filtro de campo único (`date`) → Firestore lo indexa solo, no
+ * requiere índice compuesto. No muta nada.
+ */
+export function watchSalesByDate(dateStr, callback) {
+  if (!dateStr) { callback([]); return () => {} }
+  const q = query(salesCol(), where('date', '==', dateStr))
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => timeOf(b) - timeOf(a))
+      callback(list)
+    },
+    err => {
+      console.error('[sales] watchSalesByDate error:', err)
+      callback([])
+    }
+  )
+}
+
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */
 export function watchAllSales(callback) {
   const q = query(salesCol())

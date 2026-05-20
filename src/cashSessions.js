@@ -8,9 +8,11 @@ import {
   query,
   where,
   onSnapshot,
+  getDoc,
   getDocs,
+  writeBatch,
 } from 'firebase/firestore'
-import { addMovement, getBogotaDateStr, setCashFloor } from './db'
+import { addMovement, deleteMovement, getBogotaDateStr, setCashFloor, CASH_FLOOR_DEFAULT } from './db'
 import { getClientTimestamp } from './utils/network'
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -341,6 +343,7 @@ export function watchClosedSessionsForDate(dateStr, callback) {
       const list = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(s => {
+          if (s.mergedIntoSession) return false // turno absorbido en otra combinación
           const ts = s.closedAt?.toDate?.()
           if (!ts) return false
           const bogotaDate = ts.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
@@ -354,4 +357,228 @@ export function watchClosedSessionsForDate(dateStr, callback) {
       callback([])
     }
   )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// COMBINAR TURNOS (corrección de cierres fantasma)
+//
+// Cuando un turno se cerró con ventas sin sincronizar (cierre en cero) y luego
+// se abrió otro turno de la misma cajera/caja, el día queda partido en dos. Esta
+// herramienta los une en UNO solo, recalculando el cuadre con TODAS las ventas y
+// gastos reales. El admin revisa el antes/después y confirma antes de escribir.
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Construye el breakdown de ventas/gastos a partir de docs ya leídos. */
+function snapshotFromDocs(saleDocs, expenseDocs) {
+  const salesBreakdown = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
+  saleDocs.forEach(s => {
+    if ((s.status || 'active') === 'deleted') return
+    const t = Number(s.total) || 0
+    if (s.paymentSplit) {
+      for (const [m, amt] of Object.entries(s.paymentSplit)) {
+        const a = Number(amt) || 0
+        if (a > 0) salesBreakdown[m] = (salesBreakdown[m] || 0) + a
+      }
+    } else {
+      const m = s.paymentMethod || 'efectivo'
+      salesBreakdown[m] = (salesBreakdown[m] || 0) + t
+    }
+    salesBreakdown.total += t
+    salesBreakdown.count += 1
+  })
+  const expensesAtClose = { approvedTotal: 0, pendingTotal: 0, rejectedTotal: 0, count: 0 }
+  expenseDocs.forEach(e => {
+    const a = Number(e.amount) || 0
+    if (e.status === 'approved') expensesAtClose.approvedTotal += a
+    else if (e.status === 'rejected') expensesAtClose.rejectedTotal += a
+    else expensesAtClose.pendingTotal += a
+    expensesAtClose.count += 1
+  })
+  return { salesBreakdown, expensesAtClose }
+}
+
+/** Lee ventas y gastos (con su ref) de varios turnos. */
+async function readSessionsData(sessionIds) {
+  const saleRefs = [], expenseRefs = []
+  const saleDocs = [], expenseDocs = []
+  for (const id of sessionIds) {
+    const ss = await getDocs(query(collection(firestoreDb, 'sales'), where('sessionId', '==', id)))
+    ss.forEach(d => { saleRefs.push(d.ref); saleDocs.push(d.data()) })
+    const es = await getDocs(query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', id)))
+    es.forEach(d => { expenseRefs.push(d.ref); expenseDocs.push(d.data()) })
+  }
+  return { saleRefs, expenseRefs, saleDocs, expenseDocs }
+}
+
+function computeMergeResult(survivor, saleDocs, expenseDocs) {
+  const { salesBreakdown, expensesAtClose } = snapshotFromDocs(saleDocs, expenseDocs)
+  const baseAtOpen = survivor.openingSource?.type === 'empty' ? CASH_FLOOR_DEFAULT : 0
+  const openingFloat = Number(survivor.openingFloat) || 0
+  const expectedCash = baseAtOpen + openingFloat + (salesBreakdown.efectivo || 0) - expensesAtClose.approvedTotal
+  const declared = Number(survivor.declaredClosingCash) || 0
+  const difference = declared - expectedCash
+  return { salesBreakdown, expensesAtClose, baseAtOpen, openingFloat, expectedCash, declared, difference }
+}
+
+/**
+ * READ-ONLY: calcula cómo quedaría el turno combinado SIN escribir nada.
+ * Devuelve el antes (cada turno) y el después (combinado).
+ */
+export async function previewMergeCashSessions({ survivorId, loserIds }) {
+  if (!survivorId || !Array.isArray(loserIds) || loserIds.length === 0) {
+    throw new Error('Faltan turnos para combinar.')
+  }
+  const allIds = [survivorId, ...loserIds]
+  const snaps = await Promise.all(allIds.map(id => getDoc(sessionRef(id))))
+  const sessionsById = {}
+  snaps.forEach((s, i) => { if (s.exists()) sessionsById[allIds[i]] = { id: allIds[i], ...s.data() } })
+  const survivor = sessionsById[survivorId]
+  if (!survivor) throw new Error('El turno principal ya no existe.')
+
+  const { saleDocs, expenseDocs } = await readSessionsData(allIds)
+  const result = computeMergeResult(survivor, saleDocs, expenseDocs)
+
+  const earliestOpenedAt = allIds
+    .map(id => sessionsById[id]?.openedAt?.toMillis?.() ?? null)
+    .filter(v => v != null)
+    .sort((a, b) => a - b)[0] ?? null
+
+  return {
+    survivor,
+    losers: loserIds.map(id => sessionsById[id]).filter(Boolean),
+    ...result,
+    earliestOpenedAt,
+  }
+}
+
+/**
+ * ESCRIBE: combina los turnos `loserIds` dentro de `survivorId`.
+ *  - Re-apunta TODAS las ventas y gastos de los perdedores al superviviente.
+ *  - Recalcula salesBreakdown / expectedCash / difference / closingDiscrepancy
+ *    del superviviente con TODO junto.
+ *  - Ajusta el movimiento de "sobra" (borra los viejos, crea el correcto).
+ *  - Marca los perdedores con `mergedIntoSession` (ocultos en Registro).
+ *
+ * El cambio de ventas/gastos/sesiones es ATÓMICO (writeBatch). El ajuste del
+ * movimiento contable va después (otro almacén); si fallara, el turno ya quedó
+ * bien y se reporta para reintentar.
+ */
+export async function mergeCashSessions({ survivorId, loserIds, byUid }) {
+  if (!survivorId || !Array.isArray(loserIds) || loserIds.length === 0) {
+    throw new Error('Faltan turnos para combinar.')
+  }
+  const allIds = [survivorId, ...loserIds]
+
+  const snaps = await Promise.all(allIds.map(id => getDoc(sessionRef(id))))
+  const sessionsById = {}
+  snaps.forEach((s, i) => { if (s.exists()) sessionsById[allIds[i]] = { id: allIds[i], ...s.data() } })
+  const survivor = sessionsById[survivorId]
+  if (!survivor) throw new Error('El turno principal ya no existe.')
+
+  const { saleRefs, expenseRefs, saleDocs, expenseDocs } = await readSessionsData(allIds)
+  const { salesBreakdown, expensesAtClose, expectedCash, declared, difference } =
+    computeMergeResult(survivor, saleDocs, expenseDocs)
+
+  const isSurplus = difference > 0
+  const isShortage = difference < 0
+
+  // Movimientos de "sobra" viejos a eliminar (del superviviente y perdedores).
+  const oldSobraIds = allIds
+    .map(id => sessionsById[id]?.closingDiscrepancy?.surplusMovementId)
+    .filter(Boolean)
+
+  // openedAt más temprano → el turno combinado abarca todo el día.
+  const earliestOpenedAt = allIds
+    .map(id => ({ id, ms: sessionsById[id]?.openedAt?.toMillis?.() ?? Infinity }))
+    .sort((a, b) => a.ms - b.ms)[0]
+  const earliestSession = earliestOpenedAt ? sessionsById[earliestOpenedAt.id] : null
+
+  // closingDiscrepancy recalculado.
+  let closingDiscrepancy = null
+  if (isSurplus) {
+    closingDiscrepancy = {
+      type: 'surplus',
+      amount: Math.abs(difference),
+      status: 'resolved_as_income',
+      reviewedBy: byUid || null,
+      reviewedAt: serverTimestamp(),
+      note: 'Recalculado al combinar turnos',
+    }
+  } else if (isShortage) {
+    closingDiscrepancy = {
+      type: 'shortage',
+      amount: Math.abs(difference),
+      status: 'absorbed',
+      resolution: 'business_loss',
+      reviewedBy: byUid || null,
+      reviewedAt: serverTimestamp(),
+      note: 'Recalculado al combinar turnos',
+    }
+  }
+
+  // ── 1. Batch atómico: ventas + gastos + superviviente + perdedores ──
+  const batch = writeBatch(firestoreDb)
+  for (const ref of saleRefs) batch.update(ref, { sessionId: survivorId })
+  for (const ref of expenseRefs) batch.update(ref, { sessionId: survivorId })
+
+  const survivorUpdate = {
+    salesBreakdown,
+    expensesAtClose,
+    expectedCash,
+    difference,
+    mergedFrom: loserIds,
+    mergedAt: serverTimestamp(),
+    mergedBy: byUid || null,
+  }
+  if (earliestSession?.openedAt) survivorUpdate.openedAt = earliestSession.openedAt
+  if (earliestSession?.openedAtClient) survivorUpdate.openedAtClient = earliestSession.openedAtClient
+  survivorUpdate.closingDiscrepancy = closingDiscrepancy
+  batch.update(sessionRef(survivorId), survivorUpdate)
+
+  for (const id of loserIds) {
+    batch.update(sessionRef(id), {
+      mergedIntoSession: survivorId,
+      lastUpdate: serverTimestamp(),
+    })
+  }
+  await batch.commit()
+
+  // ── 2. Ajustar el movimiento contable de "sobra" (otro almacén) ──
+  let newSobraMovementId = null
+  let movementError = null
+  try {
+    for (const mid of oldSobraIds) deleteMovement(mid)
+    if (isSurplus) {
+      newSobraMovementId = addMovement({
+        type: 'income',
+        amount: Math.abs(difference),
+        date: getBogotaDateStr(),
+        cat: 'sobra_caja',
+        branch: survivor.branchId || 'both',
+        origin: 'caja',
+        sessionId: survivorId,
+        cashierName: survivor.cashierName,
+        note: `Sobra de cierre (turnos combinados) · ${survivor.cashierName || 'cajera'}`,
+      })
+      // Guardar el id del nuevo movimiento en el cierre.
+      await updateDoc(sessionRef(survivorId), {
+        'closingDiscrepancy.surplusMovementId': newSobraMovementId,
+      })
+    }
+  } catch (e) {
+    movementError = e?.message || 'No se pudo ajustar el movimiento de sobra'
+    console.error('[cashSessions] mergeCashSessions movimiento:', e)
+  }
+
+  return {
+    survivorId,
+    mergedCount: loserIds.length,
+    salesRepointed: saleRefs.length,
+    expensesRepointed: expenseRefs.length,
+    expectedCash,
+    declared,
+    difference,
+    newSobraMovementId,
+    movementError,
+  }
 }

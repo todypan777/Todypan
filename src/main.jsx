@@ -2,7 +2,6 @@ import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App.jsx'
 import { startPhotoQueueWorker } from './utils/photoQueue'
-import { applyDataSaverOnBoot } from './utils/network'
 
 // ── Kill switch one-shot ──
 // Los celulares con SW viejo (sin skipWaiting) quedaban atascados sirviendo
@@ -68,9 +67,10 @@ async function requestPersistentStorage() {
 }
 requestPersistentStorage()
 
-// Si la cajera dejó "Modo ahorro de datos" activado y recargó la app,
-// aplicar el corte de red ANTES del primer render para que Firestore no
-// queme datos buscando snapshots frescos.
-applyDataSaverOnBoot()
+// NOTA: el "Modo ahorro de datos" (disableNetwork) ya NO se aplica aquí al
+// arrancar. Se gestiona en AuthCtx según el ROL: solo se desconecta cuando hay
+// una CAJERA confirmada. Hacerlo al boot (antes de saber el rol) desconectaba
+// también al admin/cocina que entraba en el mismo dispositivo y reventaba el
+// cierre de caja (lo veía en cero). Ver AuthProvider.
 
 createRoot(document.getElementById('root')).render(<App />)

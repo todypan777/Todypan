@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { onAuthChange, consumeRedirectResult, ADMIN_EMAIL } from '../auth'
 import { firebaseAuth } from '../firebase'
 import { watchUserDoc, bootstrapAdminIfNeeded } from '../users'
-import { isDataSaverEnabled } from '../utils/network'
+import { isDataSaverEnabled, disableDataSaver, applyDataSaverOnBoot } from '../utils/network'
 
 const AuthCtx = createContext({
   authUser: null,
@@ -217,6 +217,32 @@ export function AuthProvider({ children }) {
   const isAdmin = !!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved'
   const isCashier = !!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved'
   const isCook = !!userDoc && userDoc.role === 'cook' && userDoc.status === 'approved'
+
+  // ─── BLINDAJE: el modo ahorro es EXCLUSIVO de cajeras ──────────────────
+  // El flag se guarda por-DISPOSITIVO (localStorage), no por-usuario. Si una
+  // cajera dejó el modo ahorro activo y luego en el MISMO dispositivo entra un
+  // admin (o cocina), Firestore quedaba desconectado para esa cuenta → el admin
+  // no podía cargar/guardar nada (ej. subir menú) y, peor, el CIERRE de caja
+  // veía 0 ventas y se guardaba en cero (cierre fantasma → descuadre).
+  //
+  // Regla: la red SOLO se desconecta cuando hay una CAJERA confirmada. En
+  // cualquier otro estado (rol desconocido, admin, cocina) la red queda
+  // CONECTADA. Mientras el rol no se conozca NO desconectamos — así el doc del
+  // usuario siempre puede cargar y nunca quedamos en deadlock sin red.
+  useEffect(() => {
+    const role = userDoc?.role
+    if (!role) return // rol aún desconocido → no tocar la red (queda conectada)
+    if (role === 'cashier') {
+      // Cajera: respetar su preferencia de ahorro (desconectar si el flag está).
+      if (isDataSaverEnabled()) applyDataSaverOnBoot().catch(() => {})
+    } else {
+      // Admin / cocina: jamás desconectado. Limpiar flag heredado + reconectar.
+      if (isDataSaverEnabled()) {
+        console.warn('[Auth] modo ahorro activo en cuenta NO cajera — forzando reconexión')
+        disableDataSaver().catch(() => {})
+      }
+    }
+  }, [userDoc?.role])
 
   const value = {
     authUser,

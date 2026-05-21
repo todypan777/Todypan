@@ -688,8 +688,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   )
 
   const [resolution, setResolution] = useState(null) // para shortage
-  const [handoverChoice, setHandoverChoice] = useState('admin') // 'admin' | 'cashier' | 'leave'
-  const [nextCashierUid, setNextCashierUid] = useState('') // si handoverChoice==='cashier'
+  const [handoverChoice, setHandoverChoice] = useState('admin') // 'admin' | 'leave'
   const [reopenAfter, setReopenAfter] = useState(false) // checkbox para abrir nuevo turno después
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -767,8 +766,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
     declaredStr.trim() !== '' &&
     pendingExpensesCount === 0 &&
     (!hasShortage || !!resolution) &&
-    (pendingTabs.length === 0 || !!tabsDecision) &&
-    (handoverChoice !== 'cashier' || !!nextCashierUid)
+    (pendingTabs.length === 0 || !!tabsDecision)
 
   async function handleConfirm() {
     if (!canConfirm) return
@@ -821,15 +819,9 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
           toName: 'Administrador',
           amount: declared,
         }
-      } else if (handoverChoice === 'cashier') {
-        const next = cashiers.find(c => c.uid === nextCashierUid)
-        handover = {
-          type: 'cashier',
-          toUid: next.uid,
-          toName: `${next.nombre || ''} ${next.apellido || ''}`.trim() || next.email,
-          amount: declared,
-        }
       } else {
+        // 'leave' → la plata queda en caja. No se asigna a nadie todavía;
+        // el admin elige al abrir el siguiente turno.
         handover = { type: 'none', amount: declared }
       }
 
@@ -1077,7 +1069,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
             </div>
           )}
 
-          {/* Handover: a quién entrega */}
+          {/* Handover: qué hacer físicamente con la plata */}
           <SectionLabel>¿Qué hacer con la caja?</SectionLabel>
           <RadioOption
             selected={handoverChoice === 'admin'}
@@ -1089,53 +1081,25 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
             selected={handoverChoice === 'leave'}
             onClick={() => setHandoverChoice('leave')}
             title="Dejar todo en la caja"
-            subtitle={`Quedan ${fmtCOP(declared)} para el próximo turno.`}
+            subtitle={`Quedan ${fmtCOP(declared)} para el próximo turno. Al abrirlo eliges a quién se lo asignas.`}
           />
-          <RadioOption
-            selected={handoverChoice === 'cashier'}
-            onClick={() => setHandoverChoice('cashier')}
-            title="Transferir a otra cajera"
-            subtitle="La próxima cajera arranca con todo lo que hay."
-          />
-          {handoverChoice === 'cashier' && (
-            <div style={{ marginTop: 8, marginBottom: 8 }}>
-              <select
-                value={nextCashierUid}
-                onChange={e => setNextCashierUid(e.target.value)}
-                disabled={busy}
-                style={selectStyle}
-              >
-                <option value="">Selecciona la cajera entrante...</option>
-                {cashiers
-                  .filter(c => c.uid !== session.cashierUid)
-                  .map(c => (
-                    <option key={c.uid} value={c.uid}>
-                      {c.nombre} {c.apellido}
-                    </option>
-                  ))
-                }
-              </select>
-            </div>
-          )}
 
           {/* Reabrir turno después */}
-          {handoverChoice !== 'cashier' && (
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: '10px 12px', borderRadius: 10,
-              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-              fontSize: 13, color: T.neutral[700],
-              cursor: 'pointer', marginTop: 4, marginBottom: 12,
-            }}>
-              <input
-                type="checkbox"
-                checked={reopenAfter}
-                onChange={e => setReopenAfter(e.target.checked)}
-                disabled={busy}
-              />
-              Después de cerrar, abrir nuevo turno aquí
-            </label>
-          )}
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 12px', borderRadius: 10,
+            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+            fontSize: 13, color: T.neutral[700],
+            cursor: 'pointer', marginTop: 4, marginBottom: 12,
+          }}>
+            <input
+              type="checkbox"
+              checked={reopenAfter}
+              onChange={e => setReopenAfter(e.target.checked)}
+              disabled={busy}
+            />
+            Después de cerrar, abrir nuevo turno aquí
+          </label>
         </>
       )}
 
@@ -1200,7 +1164,7 @@ function AdminActionCard({ declared, cashFloor, handoverChoice }) {
     )
   }
 
-  if (handoverChoice === 'cashier' || handoverChoice === 'leave') {
+  if (handoverChoice === 'leave') {
     return (
       <div style={{
         padding: '14px 16px', borderRadius: 14,
@@ -1211,7 +1175,7 @@ function AdminActionCard({ declared, cashFloor, handoverChoice }) {
           Acción física
         </div>
         <div style={{ fontSize: 14, color: T.neutral[800], lineHeight: 1.5 }}>
-          Deja los <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</b> en la caja{handoverChoice === 'cashier' ? ' para la próxima cajera' : ''}.
+          Deja los <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</b> en la caja para el próximo turno.
         </div>
       </div>
     )

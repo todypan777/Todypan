@@ -9,6 +9,7 @@ import { watchAllUsers } from '../users'
 import {
   watchSessionsWithPendingReview,
   resolveClosingDiscrepancy,
+  resolveOpeningDispute,
 } from '../cashSessions'
 import { watchAllSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
@@ -61,6 +62,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     s.closingDiscrepancy?.status === 'pending' &&
     s.closingDiscrepancy?.type === 'shortage'
   )
+  // Disputas de apertura: la cajera contó un monto distinto al que abrió el admin.
+  const openingDisputes = pendingSessions.filter(s =>
+    s.openingDispute?.status === 'pending'
+  )
   const flaggedSales = useMemo(
     () => allSales.filter(s => s.status === 'flagged'),
     [allSales]
@@ -68,6 +73,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
 
   const totalCount =
     pendingUsers.length +
+    openingDisputes.length +
     orphanShortages.length +
     flaggedSales.length +
     changeRequests.length +
@@ -158,6 +164,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
             </div>
           )}
         </Section>
+      )}
+
+      {openingDisputes.length > 0 && (
+        <OpeningDisputesSection sessions={openingDisputes} adminUid={authUser.uid} />
       )}
 
       {orphanShortages.length > 0 && (
@@ -255,6 +265,142 @@ function Section({ title, count, tone = 'copper', actionLabel, onAction, childre
         )}
       </Card>
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Disputas de apertura (la cajera contó un monto distinto al que abrió el admin)
+// ──────────────────────────────────────────────────────────────
+function OpeningDisputesSection({ sessions, adminUid }) {
+  const [resolving, setResolving] = useState(null)
+  return (
+    <>
+      <Section title="Diferencias al abrir caja" count={sessions.length} tone="warn">
+        {sessions.map((s, i) => {
+          const od = s.openingDispute
+          const diff = Number(od?.difference) || 0
+          return (
+            <div key={s.id} style={{
+              padding: '12px 14px',
+              borderBottom: i < sessions.length - 1 ? `0.5px solid ${T.warn}33` : 'none',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
+                  {s.cashierName} · {s.branchName || 'Sin nombre'}
+                </div>
+                <div style={{ fontSize: 12, color: diff < 0 ? T.bad : T.ok, fontWeight: 700, marginTop: 2 }}>
+                  Contó {fmtCOP(od?.declared)} · {diff < 0 ? 'falta' : 'sobra'} {fmtCOP(Math.abs(diff))}
+                </div>
+                {od?.note && (
+                  <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 4, fontStyle: 'italic' }}>
+                    "{od.note}"
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setResolving(s)} style={btnSmall(T.warn)}>
+                Revisar
+              </button>
+            </div>
+          )
+        })}
+      </Section>
+
+      {resolving && (
+        <OpeningDisputeModal
+          session={resolving}
+          adminUid={adminUid}
+          onCancel={() => setResolving(null)}
+          onResolved={() => setResolving(null)}
+        />
+      )}
+    </>
+  )
+}
+
+function OpeningDisputeModal({ session, adminUid, onCancel, onResolved }) {
+  const [resolution, setResolution] = useState(null) // 'accept' | 'reject'
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const od = session.openingDispute || {}
+  const diff = Number(od.difference) || 0
+
+  async function handleConfirm() {
+    if (!resolution || busy) return
+    setBusy(true); setError(null)
+    try {
+      await resolveOpeningDispute(session.id, {
+        resolution,
+        note: note.trim() || null,
+        reviewedBy: adminUid,
+      })
+      onResolved()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos guardar la decisión.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalOverlay onClose={busy ? undefined : onCancel}>
+      <ModalCard>
+        <ModalTitle>Diferencia al abrir caja</ModalTitle>
+        <ModalSub>
+          {session.cashierName} · {session.branchName || 'Sin nombre'}
+        </ModalSub>
+
+        <div style={{
+          padding: '14px', borderRadius: 12, background: T.neutral[50],
+          border: `1px solid ${T.neutral[200]}`, marginBottom: 14,
+        }}>
+          <Row label="Abierto por el admin" value={fmtCOP(od.expected)} />
+          <Row label="Contado por la cajera" value={fmtCOP(od.declared)} />
+          <Row
+            label={diff < 0 ? 'Falta' : 'Sobra'}
+            value={fmtCOP(Math.abs(diff))}
+            highlight
+            tone={diff < 0 ? 'bad' : 'ok'}
+          />
+          {od.note && (
+            <div style={{ fontSize: 12.5, color: T.neutral[700], marginTop: 8, fontStyle: 'italic' }}>
+              Nota de la cajera: "{od.note}"
+            </div>
+          )}
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], marginBottom: 8 }}>
+          ¿Qué decides?
+        </div>
+
+        <RadioOption
+          selected={resolution === 'accept'}
+          onClick={() => setResolution('accept')}
+          title="Aceptar la cuenta de la cajera"
+          subtitle="Das por buena la diferencia. Queda registrada, sin afectar nómina."
+        />
+        <RadioOption
+          selected={resolution === 'reject'}
+          onClick={() => setResolution('reject')}
+          title="Mantener el monto que abriste"
+          subtitle="No aceptas la diferencia. Queda registrada como rechazada."
+        />
+
+        <NoteInput value={note} onChange={setNote} placeholder="Nota interna (opcional)" disabled={busy} />
+
+        {error && <ErrorBox>{error}</ErrorBox>}
+
+        <ModalActions
+          onCancel={onCancel}
+          onConfirm={handleConfirm}
+          confirmLabel={busy ? 'Guardando...' : 'Confirmar'}
+          confirmDisabled={!resolution || busy}
+          confirmColor={T.copper[500]}
+        />
+      </ModalCard>
+    </ModalOverlay>
   )
 }
 

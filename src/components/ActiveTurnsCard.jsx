@@ -552,6 +552,7 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
         cashierName,
         openingFloat: isJustBase ? 0 : amount,
         openingSource: isJustBase ? { type: 'empty' } : { type: 'handover' },
+        openingAmount: amount,
         shiftType: 'cash',
       })
 

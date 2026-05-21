@@ -2702,6 +2702,10 @@ function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfir
 // ──────────────────────────────────────────────────────────────
 // MODAL: Método de pago
 // ──────────────────────────────────────────────────────────────
+// Recargo fijo que se suma al total cuando el pago es digital (NEQUI/DAVIPLATA).
+// Cubre el costo de la transferencia. No aplica a efectivo puro ni a deuda.
+const DIGITAL_SURCHARGE = 500
+
 function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onCancel, onConfirmed }) {
   // method primario seleccionado por la cajera. Cuando hay split, 'mixto' es
   // un estado derivado — no se elige directamente.
@@ -2733,10 +2737,16 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   }, [method])
 
   const cashReceived = Number(cashReceivedStr) || 0
-  const change = cashReceived - total
   // En split desde efectivo: la cajera dice cuánto efectivo recibió y el
   // sistema infiere que el resto va al método digital escogido. No hay vuelto.
   const isSplit = !!split
+  const isDigital = method === 'nequi' || method === 'daviplata'
+  // El recargo digital aplica al pago 100% digital y a cualquier split (siempre
+  // lleva una porción digital). effectiveTotal es el monto real a cobrar.
+  const hasDigital = isDigital || isSplit
+  const surcharge = hasDigital ? DIGITAL_SURCHARGE : 0
+  const effectiveTotal = total + surcharge
+  const change = cashReceived - effectiveTotal
 
   // Sugerencias de deudores existentes (ordenadas por relevancia: prefijo > contiene)
   const debtorSuggestions = useMemo(() => {
@@ -2750,8 +2760,6 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
       .slice(0, 5)
       .map(x => x.d)
   }, [debtors, debtorName])
-
-  const isDigital = method === 'nequi' || method === 'daviplata'
 
   const canConfirm = (() => {
     if (!method) return false
@@ -2777,7 +2785,8 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   // (< total) y escogió el digital para el resto. Calculamos las dos porciones.
   function activateSplitFromCash(digitalMethod) {
     const efectivo = cashReceived
-    const digitalAmount = total - efectivo
+    // El split lleva una porción digital → el total a cubrir incluye el recargo.
+    const digitalAmount = (total + DIGITAL_SURCHARGE) - efectivo
     if (efectivo <= 0 || digitalAmount <= 0) return
     setSplit({ efectivo, digitalMethod, digitalAmount })
   }
@@ -2786,8 +2795,9 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   // recibió del cliente además del pago digital.
   function activateSplitFromDigital(efectivoAmount) {
     const efectivo = Number(efectivoAmount) || 0
-    const digitalAmount = total - efectivo
-    if (efectivo <= 0 || efectivo >= total) {
+    const digitalTotal = total + DIGITAL_SURCHARGE
+    const digitalAmount = digitalTotal - efectivo
+    if (efectivo <= 0 || efectivo >= digitalTotal) {
       setSplit(null)
       return
     }
@@ -2829,8 +2839,11 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           unitPrice: it.unitPrice,
           subtotal: it.qty * it.unitPrice,
         })),
-        total,
+        total: effectiveTotal,
         paymentMethod: isSplit ? 'mixto' : method,
+      }
+      if (surcharge > 0) {
+        payload.digitalSurcharge = surcharge
       }
 
       if (isSplit) {
@@ -2905,7 +2918,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           fontSize: 28, fontWeight: 800, color: T.copper[600],
           fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5, marginBottom: 16,
         }}>
-          {fmtCOP(total)}
+          {fmtCOP(effectiveTotal)}
         </div>
 
         <div style={{ fontSize: 13, fontWeight: 600, color: T.neutral[600], marginBottom: 10 }}>
@@ -2918,6 +2931,38 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           <PaymentOption icon="📱" label="NEQUI" selected={method === 'nequi'} onClick={() => selectMethod('nequi')} />
           <PaymentOption icon="📱" label="DAVIPLATA" selected={method === 'daviplata'} onClick={() => selectMethod('daviplata')} />
         </div>
+
+        {/* Aviso de recargo por pago digital. La cajera confirma el total con los $500. */}
+        {hasDigital && (
+          <div style={{
+            padding: '12px 14px', borderRadius: 12, marginBottom: 14,
+            background: T.copper[50], border: `1.5px solid ${T.copper[200]}`,
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              fontSize: 12.5, color: T.copper[700], fontWeight: 600, marginBottom: 6,
+            }}>
+              <span>Subtotal productos</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(total)}</span>
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              fontSize: 12.5, color: T.copper[700], fontWeight: 600, marginBottom: 8,
+            }}>
+              <span>Recargo por pago digital</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>+ {fmtCOP(DIGITAL_SURCHARGE)}</span>
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              paddingTop: 8, borderTop: `1px solid ${T.copper[200]}`,
+            }}>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: T.neutral[900] }}>Total a cobrar</span>
+              <span style={{ fontSize: 17, fontWeight: 900, color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>
+                {fmtCOP(effectiveTotal)}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Detalles según método */}
         {method === 'efectivo' && !isSplit && (
@@ -2982,7 +3027,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
         {isDigital && !isSplit && (
           <>
             <button
-              onClick={() => setSplit({ efectivo: 0, digitalMethod: method, digitalAmount: total })}
+              onClick={() => setSplit({ efectivo: 0, digitalMethod: method, digitalAmount: total + DIGITAL_SURCHARGE })}
               disabled={busy}
               style={{
                 width: '100%', padding: '10px 12px', borderRadius: 12,

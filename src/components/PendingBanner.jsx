@@ -42,8 +42,12 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
   const closingShortages = pendingSessions.filter(s =>
     s.closingDiscrepancy?.status === 'pending' && s.closingDiscrepancy?.type === 'shortage'
   )
+  // Diferencias al abrir caja reportadas por la cajera
+  const openingDisputes = pendingSessions.filter(s =>
+    s.openingDispute?.status === 'pending'
+  )
 
-  const total = pendingUsers.length + closingShortages.length
+  const total = pendingUsers.length + closingShortages.length + openingDisputes.length
 
   const subtitleParts = []
   if (pendingUsers.length > 0) {
@@ -51,6 +55,13 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
       pendingUsers.length === 1
         ? '1 solicitud de cuenta'
         : `${pendingUsers.length} solicitudes de cuenta`
+    )
+  }
+  if (openingDisputes.length > 0) {
+    subtitleParts.push(
+      openingDisputes.length === 1
+        ? '1 diferencia de apertura'
+        : `${openingDisputes.length} diferencias de apertura`
     )
   }
   if (closingShortages.length > 0) {
@@ -105,6 +116,25 @@ export default function PendingBanner({ onOpenUsers, onOpenPendientes }) {
               </svg>
             </button>
           </Card>
+
+          {openingDisputes.length > 0 && (
+            <DetailBox title="Diferencia al abrir caja" tone="warn">
+              {openingDisputes.map(s => {
+                const od = s.openingDispute || {}
+                const diff = Number(od.difference) || 0
+                return (
+                  <div key={s.id} style={{ marginTop: 4, fontWeight: 500 }}>
+                    <b>{s.cashierName}</b> abrió {s.branchName || '(sin nombre)'} y contó <b>{fmtMoney(od.declared)}</b> ({diff < 0 ? 'falta' : 'sobra'} <b>{fmtMoney(Math.abs(diff))}</b>).
+                    {od.note && (
+                      <div style={{ marginTop: 4, fontStyle: 'italic', color: T.neutral[600], fontWeight: 400 }}>
+                        Nota: {od.note}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </DetailBox>
+          )}
 
           {closingShortages.length > 0 && (
             <DetailBox title="Falta al cerrar caja" tone="bad">

@@ -5,7 +5,7 @@ import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
 import { signOut } from '../auth'
 import { getData } from '../db'
-import { watchMyOpenSession } from '../cashSessions'
+import { watchMyOpenSession, confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
 import { watchAllDeductionsForCashier } from '../cashierDeductions'
@@ -63,7 +63,11 @@ export default function CashierApp({ authUser, userDoc }) {
       <ConnectivityBanner />
 
       {mySession ? (
-        <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
+        mySession.openingConfirmation?.status === 'pending' ? (
+          <ConfirmOpeningScreen session={mySession} userDoc={userDoc} authUser={authUser} />
+        ) : (
+          <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
+        )
       ) : (
         <NoShiftAssigned userDoc={userDoc} />
       )}
@@ -198,6 +202,225 @@ function NoShiftAssigned({ userDoc }) {
       }}>
         Esta pantalla se actualiza sola en cuanto admin abra tu turno.
       </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// PANTALLA: Confirmar monto de apertura
+// El admin abre el turno con un monto físico. Antes de poder vender, la cajera
+// cuenta el efectivo y confirma. Si no coincide, reporta al admin (queda en
+// Pendientes) pero igual puede empezar a vender — no la dejamos parada.
+// ──────────────────────────────────────────────────────────────
+function ConfirmOpeningScreen({ session, userDoc, authUser }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [mismatchOpen, setMismatchOpen] = useState(false)
+  const [countedStr, setCountedStr] = useState('')
+  const [note, setNote] = useState('')
+
+  const expected = Number(session.openingAmount) || 0
+  const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+    || authUser?.email || 'Cajera'
+
+  async function handleConfirm() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      await confirmOpeningAmount(session.id, { byUid: authUser.uid, byName: cashierName })
+      // El watcher recibe el update y cambia solo a la pantalla de turno activo.
+    } catch (err) {
+      console.error('[opening] confirm error:', err)
+      setError('No pudimos guardar la confirmación. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  async function handleReport() {
+    if (busy) return
+    const counted = Number(countedStr)
+    if (!countedStr || Number.isNaN(counted) || counted < 0) {
+      setError('Escribe cuánto contaste.')
+      return
+    }
+    setBusy(true); setError(null)
+    try {
+      await reportOpeningDispute(session.id, {
+        expected,
+        declared: counted,
+        byUid: authUser.uid,
+        byName: cashierName,
+        note: note.trim() || null,
+      })
+      // El watcher recibe el update y cambia solo a la pantalla de turno activo.
+    } catch (err) {
+      console.error('[opening] report error:', err)
+      setError('No pudimos enviar el reporte. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      padding: '40px 24px 40px', maxWidth: 460, margin: '0 auto',
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+    }}>
+      <div style={{
+        width: 72, height: 72, borderRadius: 999,
+        background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        marginBottom: 16,
+      }}>
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="6" width="18" height="12" rx="2" stroke={T.copper[600]} strokeWidth="1.7" fill="none"/>
+          <circle cx="12" cy="12" r="2.5" stroke={T.copper[600]} strokeWidth="1.7" fill="none"/>
+        </svg>
+      </div>
+
+      <div style={{
+        fontSize: 21, fontWeight: 800, color: T.neutral[900],
+        letterSpacing: -0.4, textAlign: 'center', lineHeight: 1.25, marginBottom: 6,
+      }}>
+        Confirma el monto de tu caja
+      </div>
+      <div style={{
+        fontSize: 13.5, color: T.neutral[600], textAlign: 'center',
+        lineHeight: 1.55, maxWidth: 340, marginBottom: 22,
+      }}>
+        El administrador abrió tu turno con este monto. Cuenta el efectivo físico
+        y confirma que coincide antes de empezar a vender.
+      </div>
+
+      {/* Monto en grande */}
+      <div style={{
+        width: '100%', padding: '22px', borderRadius: 18, marginBottom: 18,
+        background: 'linear-gradient(135deg, #FFE4D2 0%, #FFD0B0 100%)',
+        border: `1.5px solid ${T.copper[200]}`, textAlign: 'center',
+      }}>
+        <div style={{
+          fontSize: 11.5, fontWeight: 800, color: T.copper[700],
+          letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          Monto en caja
+        </div>
+        <div style={{
+          fontSize: 38, fontWeight: 900, color: T.neutral[900],
+          letterSpacing: -1, fontVariantNumeric: 'tabular-nums',
+        }}>
+          {fmtCOP(expected)}
+        </div>
+      </div>
+
+      {error && <ErrorBox text={error} />}
+
+      {!mismatchOpen ? (
+        <>
+          <button
+            onClick={handleConfirm}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '18px', borderRadius: 16,
+              background: T.ok, color: '#fff', border: 'none',
+              cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontSize: 16, fontWeight: 800, letterSpacing: 0.2,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+              boxShadow: `0 8px 20px ${T.ok}55`, opacity: busy ? 0.7 : 1, marginBottom: 10,
+            }}
+          >
+            <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+              <path d="M5 11 L9 15 L17 7" stroke="#fff" strokeWidth="2.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            {busy ? 'Confirmando...' : `Sí, confirmo ${fmtCOP(expected)}`}
+          </button>
+
+          <button
+            onClick={() => { setMismatchOpen(true); setError(null) }}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '13px', borderRadius: 14,
+              background: 'transparent', color: T.neutral[600],
+              border: `1.5px solid ${T.neutral[200]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13.5, fontWeight: 700,
+            }}
+          >
+            El monto no coincide
+          </button>
+        </>
+      ) : (
+        <div style={{ width: '100%' }}>
+          <div style={{
+            fontSize: 13, color: T.neutral[700], lineHeight: 1.5, marginBottom: 12,
+          }}>
+            Escribe cuánto contaste de verdad. Se le avisa al administrador y
+            puedes empezar a vender de una vez.
+          </div>
+
+          <label style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+            ¿Cuánto contaste?
+          </label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={countedStr}
+            onChange={e => setCountedStr(e.target.value)}
+            placeholder="0"
+            autoFocus
+            disabled={busy}
+            style={{
+              width: '100%', padding: '14px 16px', borderRadius: 12,
+              border: `1.5px solid ${T.neutral[200]}`, outline: 'none',
+              fontFamily: 'inherit', fontSize: 18, fontWeight: 700,
+              color: T.neutral[900], background: '#fff', marginBottom: 12,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          />
+
+          <label style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+            Nota para el administrador (opcional)
+          </label>
+          <textarea
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Ej: faltaban dos billetes de $20.000"
+            rows={3}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12,
+              border: `1.5px solid ${T.neutral[200]}`, outline: 'none',
+              fontFamily: 'inherit', fontSize: 13.5, color: T.neutral[900],
+              background: '#fff', resize: 'vertical', minHeight: 60, marginBottom: 14,
+            }}
+          />
+
+          <button
+            onClick={handleReport}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '16px', borderRadius: 14,
+              background: T.copper[500], color: '#fff', border: 'none',
+              cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontSize: 15, fontWeight: 800,
+              boxShadow: `0 6px 16px ${T.copper[500]}55`,
+              opacity: busy ? 0.7 : 1, marginBottom: 10,
+            }}
+          >
+            {busy ? 'Enviando...' : 'Reportar y empezar turno'}
+          </button>
+
+          <button
+            onClick={() => { setMismatchOpen(false); setError(null) }}
+            disabled={busy}
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12,
+              background: 'transparent', color: T.neutral[600], border: 'none',
+              cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600,
+            }}
+          >
+            Volver
+          </button>
+        </div>
+      )}
     </div>
   )
 }

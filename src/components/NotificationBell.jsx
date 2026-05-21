@@ -44,6 +44,9 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     s.closingDiscrepancy?.status === 'pending' &&
     s.closingDiscrepancy?.type === 'shortage'
   )
+  const openingDisputes = pendingSessions.filter(s =>
+    s.openingDispute?.status === 'pending'
+  )
 
   // Reminders vencidos — dataTick fuerza recálculo cuando AppShell hace refresh
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -61,6 +64,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
 
   const totalCount =
     pendingUsers.length +
+    openingDisputes.length +
     orphanShortages.length +
     flaggedSales.length +
     changeRequests.length +

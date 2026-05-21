@@ -56,6 +56,7 @@ La app actual (`todypan-app`) es el **panel de administración**. Vamos a añadi
 | **D20** | Si admin elige "descontar a la cajera", el monto se **integra automáticamente al sistema de nómina existente**: se resta del próximo pago en la pantalla Equipo / pago de nómina. La cajera puede agregar una **nota** explicativa al momento de cerrar el turno. |
 | **D21** | **Control anti-fraude:** la cajera **NUNCA** ve el monto esperado en caja, el total acumulado, ni la diferencia. Aplica durante todo el turno y en la lista de ventas. (Con D25 ya tampoco ve el cierre — el admin lo hace solo.) |
 | **D25** | **El admin abre y cierra todos los turnos** (cambio de modelo, 2026-05-06). La cajera solo vende y registra gastos: no abre, no cierra, no decide handover, no deja notas. Reemplaza a D3, D6 (parcial), D17. El admin gestiona todo desde el panel central del Dashboard ("Caja · N/M con turno"): un solo modal para `Abrir turno` (elige cajera + monto inicial) y un solo modal para `Cerrar caja` (cuenta físico + decide qué hacer con la plata + resuelve gastos pendientes y discrepancias en una sola operación). El estado `pending_close` ya no se genera; se mantiene solo para sesiones legacy. |
+| **D30** | **La cajera confirma el monto de apertura** (enmienda parcial a D25, 2026-05-21). Cuando el admin abre un turno de caja, la cajera ve una pantalla con el monto físico (`openingAmount`) y debe contar y confirmar antes de poder vender (`openingConfirmation.status`: `pending` → `confirmed`). Si no coincide, reporta lo que contó: se crea un `openingDispute.status='pending'` (revive el campo previsto en Fase 2) que el admin resuelve en Pendientes (`aceptar`/`rechazar`, sin mover nómina), pero la cajera igual puede empezar a vender. Excepción a D21: ver el monto de apertura es necesario para la confirmación; no se le muestran ventas, esperado ni diferencia. Solo aplica a turnos `cash`; los turnos legacy abiertos sin el campo no piden confirmación. |
 
 ---
 
@@ -536,4 +537,4 @@ todypan/data  (doc principal — se añaden estos campos)
 
 ---
 
-**Última actualización:** 2026-05-07 — **Fases 1-9 + 9.5 + 11 (Tareas) completas + D25-D29.** Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D29 cerradas (D3, D17 obsoletas por D25).
+**Última actualización:** 2026-05-21 — **Fases 1-9 + 9.5 + 11 (Tareas) completas + D25-D30.** Añadido: confirmación de monto de apertura por la cajera (D30) — pantalla de confirmación + disputas de apertura en Pendientes/banner/campana. Próxima y última: Fase 10 (lockdown reglas Firestore). Decisiones D1-D30 cerradas (D3, D17 obsoletas por D25).

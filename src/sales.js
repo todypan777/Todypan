@@ -59,6 +59,11 @@ export async function createSale(payload) {
   if (payload.cashReceived !== undefined && payload.cashReceived !== null) {
     data.cashReceived = Number(payload.cashReceived) || 0
   }
+  // Recargo por pago digital (NEQUI/DAVIPLATA). Se suma al total; lo guardamos
+  // aparte para que el admin entienda por qué el total supera la suma de items.
+  if (payload.digitalSurcharge) {
+    data.digitalSurcharge = Number(payload.digitalSurcharge) || 0
+  }
   // Pago dividido: el desglose por método. Solo se guarda si la venta
   // realmente es 'mixto' — para el resto de métodos queda ausente y los
   // consumidores que no conocen split siguen funcionando como antes.

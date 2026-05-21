@@ -103,6 +103,10 @@ export async function getLatestClosedSessionForBranch(branchId) {
  *     'waitress' → turno de domiciliaria/mesera. Pantalla por definir.
  * - openingFloat: monto físicamente en caja al abrir (solo aplica si cash).
  * - openingSource: { type: 'empty' | 'handover', ... }. Solo aplica si cash.
+ * - openingAmount: total físico que el admin dice dejar en la caja (lo que la
+ *     cajera debe contar y confirmar). A diferencia de openingFloat, este es el
+ *     monto bruto que el admin digitó (incluida la base), no el "sobre la base".
+ *     Solo aplica si cash; sirve para la pantalla de confirmación de la cajera.
  */
 export async function openSession({
   branchId,
@@ -111,6 +115,7 @@ export async function openSession({
   cashierName,
   openingFloat,
   openingSource,
+  openingAmount,
   shiftType,
 }) {
   const type = shiftType === 'kitchen' || shiftType === 'waitress' ? shiftType : 'cash'
@@ -126,8 +131,79 @@ export async function openSession({
     openedAtClient: getClientTimestamp(),
     status: 'open',
   }
+  // Turnos de caja: la cajera debe contar y confirmar el monto antes de vender.
+  // Guardamos el monto físico y dejamos la confirmación en 'pending'. Los turnos
+  // legacy (sin este campo) no piden confirmación, así no se interrumpe un turno
+  // ya abierto cuando se despliega este cambio.
+  if (type === 'cash') {
+    data.openingAmount = Number(openingAmount) || 0
+    data.openingConfirmation = { status: 'pending' }
+  }
   const ref = await addDoc(sessionsCol(), data)
   return ref.id
+}
+
+/**
+ * La CAJERA confirma que contó el efectivo y coincide con lo que abrió el admin.
+ * Desbloquea la venta (openingConfirmation.status pasa de 'pending' a 'confirmed').
+ */
+export async function confirmOpeningAmount(sessionId, { byUid, byName } = {}) {
+  await updateDoc(sessionRef(sessionId), {
+    openingConfirmation: {
+      status: 'confirmed',
+      confirmedBy: byUid || null,
+      confirmedByName: byName || null,
+      confirmedAt: serverTimestamp(),
+      confirmedAtClient: getClientTimestamp(),
+    },
+  })
+}
+
+/**
+ * La CAJERA reporta que el efectivo contado NO coincide con lo que abrió el admin.
+ * Crea un openingDispute pendiente (lo ve el admin en Pendientes) pero igual
+ * desbloquea la venta — no la dejamos parada esperando al admin.
+ */
+export async function reportOpeningDispute(sessionId, { expected, declared, byUid, byName, note } = {}) {
+  const exp = Number(expected) || 0
+  const dec = Number(declared) || 0
+  await updateDoc(sessionRef(sessionId), {
+    openingConfirmation: {
+      status: 'reported',
+      confirmedBy: byUid || null,
+      confirmedByName: byName || null,
+      confirmedAt: serverTimestamp(),
+      confirmedAtClient: getClientTimestamp(),
+    },
+    openingDispute: {
+      expected: exp,
+      declared: dec,
+      difference: dec - exp,
+      status: 'pending',
+      note: note || null,
+      reportedBy: byUid || null,
+      reportedByName: byName || null,
+      reportedAt: serverTimestamp(),
+      reportedAtClient: getClientTimestamp(),
+    },
+  })
+}
+
+/**
+ * EL ADMIN resuelve una disputa de apertura desde Pendientes.
+ *  - resolution 'accept' → da por buena la cuenta de la cajera (status 'resolved').
+ *  - resolution 'reject' → mantiene el monto original (status 'rejected').
+ * No mueve dinero ni nómina: es un registro/aclaración. Si el admin quiere
+ * corregir el monto físico, lo hace cerrando/reabriendo el turno como siempre.
+ */
+export async function resolveOpeningDispute(sessionId, { resolution, note, reviewedBy } = {}) {
+  await updateDoc(sessionRef(sessionId), {
+    'openingDispute.status': resolution === 'accept' ? 'resolved' : 'rejected',
+    'openingDispute.resolution': resolution || null,
+    'openingDispute.reviewNote': note || null,
+    'openingDispute.reviewedBy': reviewedBy || null,
+    'openingDispute.reviewedAt': serverTimestamp(),
+  })
 }
 
 /**
@@ -338,7 +414,8 @@ export function watchSessionsWithPendingReview(callback) {
     snap => {
       const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       const filtered = all.filter(s =>
-        s.closingDiscrepancy?.status === 'pending'
+        s.closingDiscrepancy?.status === 'pending' ||
+        s.openingDispute?.status === 'pending'
       )
       callback(filtered)
     },

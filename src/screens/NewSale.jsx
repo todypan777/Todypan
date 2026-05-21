@@ -2974,6 +2974,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
               disabled={busy}
               hint="Si lo digitas, te calcula el vuelto o te ofrece dividir."
             />
+            <QuickCashChips total={total} onPick={setCashReceivedStr} disabled={busy} />
             {cashReceivedStr && cashReceived >= total && (
               <div style={{
                 padding: '12px 14px', borderRadius: 12,
@@ -3239,6 +3240,35 @@ function ConfirmDeleteTabModal({ tab, cart, state, setState, actor, onConfirmed 
         </div>
       </div>
     </ModalOverlay>
+  )
+}
+
+// Chips de "billete rápido" para el campo de efectivo. Muestra los billetes
+// reales mayores al total — así se ocultan los montos inútiles (ej. en una
+// venta de $47.000 no muestra $5.000).
+function QuickCashChips({ total, onPick, disabled }) {
+  const BILLS = [5000, 10000, 20000, 50000, 100000]
+  const options = BILLS.filter(b => b > total)
+  if (options.length === 0) return null
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: -4, marginBottom: 12 }}>
+      {options.map(b => (
+        <button
+          key={b}
+          onClick={() => onPick(String(b))}
+          disabled={disabled}
+          style={{
+            flex: '1 1 28%', minWidth: 86, padding: '10px 6px', borderRadius: 10,
+            background: '#fff', color: T.neutral[700],
+            border: `1.5px solid ${T.neutral[200]}`,
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {fmtCOP(b)}
+        </button>
+      ))}
+    </div>
   )
 }
 

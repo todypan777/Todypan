@@ -53,9 +53,8 @@ export function watchAllUsers(callback) {
 }
 
 /**
- * Crea un user pendiente. El rol final lo decide el admin al aprobar; mientras
- * tanto guardamos 'cashier' como default histórico — al aprobar se sobrescribe
- * con 'cashier' o 'cook' según escoja el admin.
+ * Crea un user pendiente. Todos los miembros del equipo son 'staff' — el rol
+ * funcional (caja / cocina / mesera) se decide por turno, no es permanente.
  */
 export async function createPendingUser(authUser, nombre, apellido) {
   const data = {
@@ -63,7 +62,7 @@ export async function createPendingUser(authUser, nombre, apellido) {
     photoURL: authUser.photoURL || null,
     nombre: nombre.trim(),
     apellido: apellido.trim(),
-    role: 'cashier',
+    role: 'staff',
     status: 'pending',
     createdAt: serverTimestamp(),
   }
@@ -96,30 +95,24 @@ export async function bootstrapAdminIfNeeded(authUser) {
 
 /**
  * Aprueba un user pendiente y crea su empleado vinculado.
- * employeeData: { nombre, apellido, telefono, cargo, branch, restDay, rate, role }
- *   role: 'cashier' | 'cook'  (default 'cashier' por compatibilidad)
+ * employeeData: { nombre, apellido, telefono }
+ *
+ * El rol del usuario queda como 'staff'. El "rol funcional" (caja, cocina,
+ * mesera) se asigna por turno, no es permanente.
  */
 export async function approveUserAndCreateEmployee(uid, employeeData, approvedByUid) {
   const fullName = `${employeeData.nombre.trim()} ${employeeData.apellido.trim()}`.trim()
   const empPayload = {
     name: fullName,
-    role: employeeData.cargo?.trim() || '',
-    branch: employeeData.branch ?? 1,
-    restDay: Number.isInteger(employeeData.restDay) ? employeeData.restDay : 0,
     phone: employeeData.telefono.trim(),
-    rate: Number(employeeData.rate) || 0,
-    type: 'regular',
-    workHours: 9,
     linkedUserId: uid,
   }
   const employeeId = addEmployee(empPayload)
 
-  const userRole = employeeData.role === 'cook' ? 'cook' : 'cashier'
-
   await updateDoc(userRef(uid), {
     nombre: employeeData.nombre.trim(),
     apellido: employeeData.apellido.trim(),
-    role: userRole,
+    role: 'staff',
     status: 'approved',
     approvedAt: serverTimestamp(),
     approvedBy: approvedByUid,
@@ -127,21 +120,6 @@ export async function approveUserAndCreateEmployee(uid, employeeData, approvedBy
   })
 
   return employeeId
-}
-
-/**
- * Cambia el rol de un usuario aprobado entre 'cashier' y 'cook'.
- * Útil cuando se aprobó por error (ej: marcaron Cajera siendo Cocinera).
- * NO permite cambiar el rol del admin ni asignar 'admin'.
- */
-export async function changeUserRole(uid, newRole) {
-  if (newRole !== 'cashier' && newRole !== 'cook') {
-    throw new Error('Rol inválido')
-  }
-  await updateDoc(userRef(uid), {
-    role: newRole,
-    roleChangedAt: serverTimestamp(),
-  })
 }
 
 /** Desactiva un usuario (sin borrar). */

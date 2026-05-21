@@ -12,8 +12,6 @@ import {
 } from '../users'
 import { useIsDesktop } from '../context/DesktopCtx'
 
-const REST_DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-
 export default function Users({ onBack, onRefresh }) {
   const { authUser } = useAuth()
   const [users, setUsers] = useState([])
@@ -241,25 +239,15 @@ function primaryBtn() {
 
 // ─── Modal de aprobación ──────────────────────────────────────
 export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
-  // Sin default — el admin DEBE elegir el rol explícitamente. Evita el bug
-  // de aprobar una cocinera por error como cajera y que vea pantalla "sin
-  // turno asignado".
-  const [role, setRole] = useState(null) // null | 'cashier' | 'cook'
   const [nombre, setNombre] = useState(user.nombre || '')
   const [apellido, setApellido] = useState(user.apellido || '')
   const [telefono, setTelefono] = useState('')
-  const [cargo, setCargo] = useState('')
-  const [restDay, setRestDay] = useState(0)
-  const [salario, setSalario] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  const valid = role !== null
-    && nombre.trim().length >= 2
+  const valid = nombre.trim().length >= 2
     && apellido.trim().length >= 2
     && telefono.trim().length >= 7
-    && cargo.trim().length >= 2
-    && Number(salario) > 0
 
   async function handleApprove() {
     if (!valid || busy) return
@@ -268,14 +256,7 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
     try {
       await approveUserAndCreateEmployee(
         user.uid,
-        {
-          nombre, apellido, telefono,
-          cargo: cargo.trim(),
-          branch: 'both',
-          restDay,
-          rate: Number(salario),
-          role,
-        },
+        { nombre, apellido, telefono },
         adminUid,
       )
       onDone()
@@ -298,10 +279,10 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
 
         <div style={{ padding: '20px 22px 12px' }}>
           <div style={{ fontSize: 18, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.2 }}>
-            Aprobar y crear empleada
+            Aprobar nuevo miembro
           </div>
           <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 4 }}>
-            Define su rol y datos. Se crea su registro en Equipo automáticamente.
+            Se crea su registro en Equipo. Su rol del día (caja, cocina, mesera) lo decidirás al abrir cada turno.
           </div>
         </div>
 
@@ -322,86 +303,9 @@ export function ApprovalModal({ user, adminUid, onCancel, onDone }) {
         </div>
 
         <div style={{ padding: '16px 22px 20px' }}>
-          {/* Selector de rol — OBLIGATORIO, define qué app verá la persona.
-              Sin default para que el admin no apruebe por error como cajera. */}
-          <div style={{
-            marginBottom: 14, padding: role === null ? '12px 14px 14px' : 0,
-            background: role === null ? '#FFF7E6' : 'transparent',
-            border: role === null ? `1.5px solid ${T.warn}55` : 'none',
-            borderRadius: role === null ? 12 : 0,
-            transition: 'background 0.2s, border-color 0.2s',
-          }}>
-            <label style={{
-              fontSize: 12, fontWeight: 700,
-              color: role === null ? T.warn : T.neutral[600],
-              display: 'block', marginBottom: 8,
-              letterSpacing: 0.2,
-            }}>
-              {role === null ? '⚠ Escoge el rol primero' : '¿Qué rol va a tener?'}
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <RoleCard
-                selected={role === 'cashier'}
-                onClick={() => !busy && setRole('cashier')}
-                disabled={busy}
-                title="Cajera"
-                subtitle="Vende y maneja caja"
-                icon={
-                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                    <rect x="3" y="6" width="16" height="12" rx="2" stroke="currentColor" strokeWidth="1.6" fill="none"/>
-                    <path d="M3 10 H19" stroke="currentColor" strokeWidth="1.6"/>
-                    <circle cx="7" cy="14" r="1.2" fill="currentColor"/>
-                  </svg>
-                }
-              />
-              <RoleCard
-                selected={role === 'cook'}
-                onClick={() => !busy && setRole('cook')}
-                disabled={busy}
-                title="Cocinera"
-                subtitle="Producción y cocina"
-                icon={
-                  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                    <path d="M6 11 V18 H16 V11" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
-                    <path d="M5 11 Q3 11 3 9 Q3 6 6 6 Q7 4 11 4 Q15 4 16 6 Q19 6 19 9 Q19 11 17 11" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
-                  </svg>
-                }
-              />
-            </div>
-          </div>
-
           <ModalField label="Nombre" value={nombre} onChange={setNombre} placeholder="Ej. María" disabled={busy} autoFocus />
           <ModalField label="Apellido" value={apellido} onChange={setApellido} placeholder="Ej. González" disabled={busy} />
-          <ModalField label="Cargo" value={cargo} onChange={setCargo} placeholder={role === 'cook' ? 'Ej. Panadera de turno noche' : 'Ej. Cajera Panadería Iglesia'} disabled={busy} />
-
-          {/* Día de descanso */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
-              Día de descanso
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-              {REST_DAY_LABELS.map((label, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => !busy && setRestDay(idx)}
-                  disabled={busy}
-                  style={{
-                    padding: '8px 0', borderRadius: 8, border: 'none',
-                    cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-                    background: restDay === idx ? T.neutral[800] : T.neutral[100],
-                    color: restDay === idx ? '#fff' : T.neutral[600],
-                    fontSize: 11, fontWeight: 600,
-                    opacity: busy ? 0.6 : 1,
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <ModalField label="Teléfono / WhatsApp" value={telefono} onChange={setTelefono} placeholder="Ej. 3001234567" type="tel" disabled={busy} />
-          <ModalField label="Valor día ($)" value={salario} onChange={setSalario} placeholder="Ej. 65000" type="number" disabled={busy} />
 
           {error && (
             <div style={{
@@ -541,43 +445,3 @@ function ModalOverlay({ onClose, children }) {
   )
 }
 
-// ─── Card de selección de rol (cajera/cocinera) ──────────────────────
-function RoleCard({ selected, onClick, disabled, title, subtitle, icon }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: '14px 12px', borderRadius: 14,
-        background: selected ? T.copper[50] : '#fff',
-        border: `1.5px solid ${selected ? T.copper[400] : T.neutral[200]}`,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'inherit', textAlign: 'left',
-        display: 'flex', alignItems: 'center', gap: 10,
-        opacity: disabled ? 0.6 : 1,
-        transition: 'background 0.15s, border-color 0.15s',
-      }}
-    >
-      <div style={{
-        width: 38, height: 38, borderRadius: 10, flexShrink: 0,
-        background: selected ? T.copper[100] : T.neutral[100],
-        color: selected ? T.copper[700] : T.neutral[600],
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'background 0.15s, color 0.15s',
-      }}>
-        {icon}
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 13.5, fontWeight: 700,
-          color: selected ? T.copper[700] : T.neutral[800],
-        }}>
-          {title}
-        </div>
-        <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2, lineHeight: 1.35 }}>
-          {subtitle}
-        </div>
-      </div>
-    </button>
-  )
-}

@@ -97,11 +97,12 @@ export async function getLatestClosedSessionForBranch(branchId) {
 /**
  * Abre un nuevo turno. La llama el ADMIN desde el panel central.
  *
- * - openingFloat: monto físicamente en caja al abrir (default = base $200k).
- * - openingSource: { type: 'empty' | 'handover', fromSessionId?, fromCashierName? }
- *     'empty'    → caja arranca con la base sola ($200k). openingFloat = 0.
- *     'handover' → arranca con dinero ya presente (relevo en cadena por admin).
- *                  openingFloat = lo físicamente recibido (incluye base).
+ * - shiftType: 'cash' | 'kitchen' | 'waitress'  (default 'cash' por compat).
+ *     'cash'     → turno de caja (POS, base $200k, cierre con cuadre).
+ *     'kitchen'  → turno de cocina (cola de pedidos). No maneja dinero.
+ *     'waitress' → turno de domiciliaria/mesera. Pantalla por definir.
+ * - openingFloat: monto físicamente en caja al abrir (solo aplica si cash).
+ * - openingSource: { type: 'empty' | 'handover', ... }. Solo aplica si cash.
  */
 export async function openSession({
   branchId,
@@ -110,20 +111,38 @@ export async function openSession({
   cashierName,
   openingFloat,
   openingSource,
+  shiftType,
 }) {
+  const type = shiftType === 'kitchen' || shiftType === 'waitress' ? shiftType : 'cash'
   const data = {
     branchId,
     branchName: branchName || null,
     cashierUid,
     cashierName,
-    openingFloat: Number(openingFloat) || 0,
-    openingSource: openingSource || { type: 'empty' },
+    type,
+    openingFloat: type === 'cash' ? (Number(openingFloat) || 0) : 0,
+    openingSource: type === 'cash' ? (openingSource || { type: 'empty' }) : { type: 'empty' },
     openedAt: serverTimestamp(),
     openedAtClient: getClientTimestamp(),
     status: 'open',
   }
   const ref = await addDoc(sessionsCol(), data)
   return ref.id
+}
+
+/**
+ * Cierra un turno NO-caja (cocina / domiciliaria). Simple: solo marca como
+ * cerrado, sin cuadre ni cashFloor ni discrepancia. Se llama desde el panel
+ * central cuando el admin cierra un turno de cocinera/mesera.
+ */
+export async function adminCloseNonCashSession(sessionId, { reviewedBy } = {}) {
+  await updateDoc(sessionRef(sessionId), {
+    status: 'closed',
+    closedAt: serverTimestamp(),
+    closedAtClient: getClientTimestamp(),
+    closeApprovedAt: serverTimestamp(),
+    closeApprovedBy: reviewedBy || null,
+  })
 }
 
 /**

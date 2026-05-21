@@ -31,8 +31,7 @@ import {
   Deactivated,
   BootstrappingAdmin,
 } from './screens/AccountStates'
-import CashierApp from './screens/CashierApp'
-import CookApp from './screens/CookApp'
+import StaffApp from './screens/StaffApp'
 import PublicMenu from './screens/PublicMenu'
 import OrderConfirm from './screens/OrderConfirm'
 
@@ -99,7 +98,7 @@ export default function App() {
 }
 
 function AuthGate() {
-  const { authUser, userDoc: ctxUserDoc, loading, isAdmin: ctxIsAdmin, isCashier: ctxIsCashier, isCook: ctxIsCook } = useAuth()
+  const { authUser, userDoc: ctxUserDoc, loading, isAdmin: ctxIsAdmin } = useAuth()
   const online = useOnlineStatus()
 
   // Fallback al caché de localStorage cuando AuthCtx aún no nos dio userDoc.
@@ -108,8 +107,12 @@ function AuthGate() {
   const cachedDoc = !ctxUserDoc && authUser ? readUserDocCache(authUser.uid) : null
   const userDoc = ctxUserDoc || cachedDoc
   const isAdmin = ctxIsAdmin || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
-  const isCashier = ctxIsCashier || (!!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved')
-  const isCook = ctxIsCook || (!!userDoc && userDoc.role === 'cook' && userDoc.status === 'approved')
+  // Cualquier miembro del equipo que no sea admin. Acepta el rol nuevo 'staff'
+  // y también los roles viejos 'cashier'/'cook' por compat (data legacy).
+  const isStaff = !!userDoc
+    && userDoc.status === 'approved'
+    && userDoc.role !== 'admin'
+    && ['staff', 'cashier', 'cook'].includes(userDoc.role)
 
   if (loading) return <LoadingScreen label="Verificando sesión..." />
 
@@ -139,11 +142,10 @@ function AuthGate() {
   if (userDoc.status === 'pending') return <PendingApproval authUser={authUser} userDoc={userDoc} />
   if (userDoc.status === 'inactive') return <Deactivated authUser={authUser} userDoc={userDoc} />
 
-  if (isAdmin || isCashier || isCook) {
-    let approvedApp
-    if (isAdmin) approvedApp = <AppShell />
-    else if (isCashier) approvedApp = <CashierApp authUser={authUser} userDoc={userDoc} />
-    else approvedApp = <CookApp authUser={authUser} userDoc={userDoc} />
+  if (isAdmin || isStaff) {
+    const approvedApp = isAdmin
+      ? <AppShell />
+      : <StaffApp authUser={authUser} userDoc={userDoc} />
     return <ApprovedAppLoader>{approvedApp}</ApprovedAppLoader>
   }
 
@@ -266,8 +268,6 @@ function AppShell() {
   } else if (tab === 'team') {
     content = (
       <Team
-        filter={filter}
-        setFilter={setFilter}
         employees={data.employees}
         onRefresh={refresh}
         initialEmpId={pendingEmpId}

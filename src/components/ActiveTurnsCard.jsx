@@ -7,6 +7,7 @@ import {
   watchOpenSessions,
   openSession,
   adminCloseSession,
+  adminCloseNonCashSession,
   getLatestClosedSessionForBranch,
 } from '../cashSessions'
 import { watchSessionSales } from '../sales'
@@ -106,7 +107,9 @@ export default function ActiveTurnsCard() {
   // shape: null | { id, lunchCommanda: [...] }
   const [pendingCustomerOrder, setPendingCustomerOrder] = useState(null)
   const [openingBranch, setOpeningBranch] = useState(null)
+  const [openingNonCash, setOpeningNonCash] = useState(false)
   const [closingSession, setClosingSession] = useState(null)
+  const [closingNonCashSession, setClosingNonCashSession] = useState(null)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
   useEffect(() => watchAllUsers(setAllUsers), [])
@@ -169,13 +172,18 @@ export default function ActiveTurnsCard() {
 
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Admin'
 
-  // Por cada panadería, determinar su estado actual
+  // Por cada panadería, determinar su estado actual de CAJA (solo sessions tipo
+  // 'cash' o legacy sin type). Las sessions de cocina/mesera viven en la lista
+  // de "Otros turnos" más abajo.
   const branchRows = branches.map(b => {
-    const session = openSessions.find(s => s.branchId === b.id)
+    const session = openSessions.find(s => s.branchId === b.id && (!s.type || s.type === 'cash'))
     return { branch: b, session }
   })
 
   const occupiedCount = branchRows.filter(r => r.session).length
+
+  // Sessions de cocina / domiciliaria activas (cualquier panadería).
+  const nonCashSessions = openSessions.filter(s => s.type === 'kitchen' || s.type === 'waitress')
 
   return (
     <>
@@ -195,9 +203,23 @@ export default function ActiveTurnsCard() {
               background: occupiedCount > 0 ? T.ok : T.neutral[300],
               boxShadow: occupiedCount > 0 ? `0 0 0 4px ${T.ok}22` : 'none',
             }}/>
-            <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
+            <div style={{ flex: 1, fontSize: 12, fontWeight: 700, color: T.neutral[700], letterSpacing: 0.4, textTransform: 'uppercase' }}>
               Caja · {occupiedCount}/{branches.length} con turno
             </div>
+            <button
+              onClick={() => setOpeningNonCash(true)}
+              title="Abrir turno de cocina o domiciliaria/mesera"
+              style={{
+                padding: '5px 10px', borderRadius: 999,
+                background: T.copper[50], color: T.copper[700],
+                border: `1px solid ${T.copper[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 11, fontWeight: 700, letterSpacing: 0.2,
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}
+            >
+              + Cocina / Mesera
+            </button>
           </div>
 
           {branchRows.map((row, i) => (
@@ -217,6 +239,33 @@ export default function ActiveTurnsCard() {
             />
           ))}
         </Card>
+
+        {/* Sección: Turnos de cocina / mesera activos */}
+        {nonCashSessions.length > 0 && (
+          <Card padding={0} style={{
+            marginTop: 12,
+            background: '#fff',
+            border: `1px solid ${T.neutral[100]}`,
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '10px 16px',
+              fontSize: 11.5, fontWeight: 700, color: T.neutral[600],
+              letterSpacing: 0.4, textTransform: 'uppercase',
+              borderBottom: `1px solid ${T.neutral[100]}`,
+            }}>
+              Otros turnos activos · {nonCashSessions.length}
+            </div>
+            {nonCashSessions.map((s, i) => (
+              <NonCashShiftRow
+                key={s.id}
+                session={s}
+                isLast={i === nonCashSessions.length - 1}
+                onClose={() => setClosingNonCashSession(s)}
+              />
+            ))}
+          </Card>
+        )}
       </div>
 
       {/* Modal: abrir turno (admin elige cajera + monto inicial) */}
@@ -227,6 +276,26 @@ export default function ActiveTurnsCard() {
           adminUid={authUser.uid}
           onCancel={() => setOpeningBranch(null)}
           onOpened={() => setOpeningBranch(null)}
+        />
+      )}
+
+      {/* Modal: abrir turno de cocina o domiciliaria/mesera */}
+      {openingNonCash && (
+        <OpenNonCashShiftModal
+          branches={branches}
+          allUsers={allUsers}
+          onCancel={() => setOpeningNonCash(false)}
+          onOpened={() => setOpeningNonCash(false)}
+        />
+      )}
+
+      {/* Modal: cerrar un turno de cocina o domiciliaria/mesera (sin cuadre) */}
+      {closingNonCashSession && (
+        <CloseNonCashShiftModal
+          session={closingNonCashSession}
+          adminUid={authUser.uid}
+          onCancel={() => setClosingNonCashSession(null)}
+          onClosed={() => setClosingNonCashSession(null)}
         />
       )}
 
@@ -454,8 +523,11 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
     return () => { cancelled = true }
   }, [branch.id, cashFloor])
 
+  // Cualquier miembro del equipo aprobado puede recibir un turno de caja.
+  // (Antes filtrábamos por role==='cashier', pero ahora el rol funcional se
+  // asigna por turno, no es permanente.)
   const cashiers = useMemo(
-    () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
+    () => allUsers.filter(u => u.status === 'approved' && u.role !== 'admin'),
     [allUsers]
   )
 
@@ -480,6 +552,7 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
         cashierName,
         openingFloat: isJustBase ? 0 : amount,
         openingSource: isJustBase ? { type: 'empty' } : { type: 'handover' },
+        shiftType: 'cash',
       })
 
       // Heredar tabs huérfanas: si el cierre anterior dejó mesas pendientes
@@ -680,7 +753,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   // por decisiones de un día específico.
 
   const cashiers = useMemo(
-    () => allUsers.filter(u => u.role === 'cashier' && u.status === 'approved'),
+    () => allUsers.filter(u => u.status === 'approved' && u.role !== 'admin'),
     [allUsers]
   )
 
@@ -1900,5 +1973,217 @@ function LastSaleNotice({ lastSaleAt, salesCount }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Fila de la lista "Otros turnos activos" (cocina / mesera)
+// ──────────────────────────────────────────────────────────────
+function NonCashShiftRow({ session, isLast, onClose }) {
+  const typeLabel = session.type === 'kitchen' ? 'Cocina' : 'Domiciliaria / Mesera'
+  const typeColor = session.type === 'kitchen' ? '#7A5C00' : T.copper[700]
+  const typeBg = session.type === 'kitchen' ? '#FFF7E6' : T.copper[50]
+  const opened = session.openedAt?.toDate?.()
+  const fmtTime = (d) => d
+    ? d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+    : '—'
+
+  return (
+    <div style={{
+      padding: '12px 16px',
+      display: 'flex', alignItems: 'center', gap: 12,
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{
+        padding: '3px 9px', borderRadius: 999,
+        background: typeBg, color: typeColor,
+        fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        {typeLabel}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900] }}>
+          {session.cashierName || 'Sin nombre'}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+          {session.branchName || 'Sin panadería'} · desde {fmtTime(opened)}
+        </div>
+      </div>
+      <button
+        onClick={onClose}
+        style={{
+          padding: '7px 12px', borderRadius: 10,
+          background: T.neutral[900], color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 12, fontWeight: 700,
+          flexShrink: 0,
+        }}
+      >
+        Cerrar
+      </button>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Abrir turno de cocina / domiciliaria-mesera
+// ──────────────────────────────────────────────────────────────
+function OpenNonCashShiftModal({ branches, allUsers, onCancel, onOpened }) {
+  const [shiftType, setShiftType] = useState('kitchen') // 'kitchen' | 'waitress'
+  const [branchId, setBranchId] = useState(branches[0]?.id || '')
+  const [personUid, setPersonUid] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  // Cualquier miembro del equipo aprobado puede recibir el turno.
+  const people = useMemo(
+    () => allUsers.filter(u => u.status === 'approved' && u.role !== 'admin'),
+    [allUsers]
+  )
+
+  const selectedPerson = people.find(p => p.uid === personUid)
+  const selectedBranch = branches.find(b => b.id === branchId)
+  const canConfirm = !busy && shiftType && branchId && personUid
+
+  async function handleOpen() {
+    if (!canConfirm) return
+    setBusy(true); setError(null)
+    try {
+      const cashierName = `${selectedPerson.nombre || ''} ${selectedPerson.apellido || ''}`.trim() || selectedPerson.email
+      await openSession({
+        branchId: selectedBranch.id,
+        branchName: selectedBranch.name,
+        cashierUid: selectedPerson.uid,
+        cashierName,
+        shiftType,
+      })
+      onOpened()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos abrir el turno. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell onClose={busy ? undefined : onCancel}>
+      <ModalTitle title="Abrir turno" subtitle="Cocina o domiciliaria/mesera" />
+
+      <Field label="Tipo de turno">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          {[
+            { id: 'kitchen', label: 'Cocina', sub: 'Cola de pedidos' },
+            { id: 'waitress', label: 'Domiciliaria / Mesera', sub: 'Apoyo en piso' },
+          ].map(opt => {
+            const active = shiftType === opt.id
+            return (
+              <button
+                key={opt.id}
+                onClick={() => !busy && setShiftType(opt.id)}
+                disabled={busy}
+                style={{
+                  padding: '12px', borderRadius: 12, textAlign: 'left',
+                  background: active ? T.copper[50] : '#fff',
+                  border: `1.5px solid ${active ? T.copper[400] : T.neutral[200]}`,
+                  cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                  opacity: busy ? 0.6 : 1,
+                }}
+              >
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: active ? T.copper[700] : T.neutral[800] }}>
+                  {opt.label}
+                </div>
+                <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2 }}>{opt.sub}</div>
+              </button>
+            )
+          })}
+        </div>
+      </Field>
+
+      <Field label="Panadería">
+        <select
+          value={branchId}
+          onChange={e => setBranchId(Number(e.target.value))}
+          disabled={busy}
+          style={selectStyle}
+        >
+          {branches.map(b => (
+            <option key={b.id} value={b.id}>{b.name}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Persona">
+        <select
+          value={personUid}
+          onChange={e => setPersonUid(e.target.value)}
+          disabled={busy}
+          style={selectStyle}
+        >
+          <option value="">Selecciona del equipo...</option>
+          {people.map(p => (
+            <option key={p.uid} value={p.uid}>
+              {p.nombre} {p.apellido}
+            </option>
+          ))}
+        </select>
+        {people.length === 0 && (
+          <div style={{ fontSize: 11.5, color: T.bad, marginTop: 6 }}>
+            No hay miembros del equipo aprobados.
+          </div>
+        )}
+      </Field>
+
+      {error && <ErrorBox text={error} />}
+
+      <ModalFooter>
+        <ModalBtnSecondary onClick={onCancel} disabled={busy}>Cancelar</ModalBtnSecondary>
+        <ModalBtnPrimary
+          onClick={handleOpen}
+          disabled={!canConfirm}
+          color={T.copper[500]}
+        >
+          {busy ? 'Abriendo...' : 'Abrir turno'}
+        </ModalBtnPrimary>
+      </ModalFooter>
+    </ModalShell>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Cerrar turno de cocina / domiciliaria-mesera (sin cuadre)
+// ──────────────────────────────────────────────────────────────
+function CloseNonCashShiftModal({ session, adminUid, onCancel, onClosed }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  const typeLabel = session.type === 'kitchen' ? 'cocina' : 'domiciliaria/mesera'
+
+  async function handleClose() {
+    setBusy(true); setError(null)
+    try {
+      await adminCloseNonCashSession(session.id, { reviewedBy: adminUid })
+      onClosed()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos cerrar el turno. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell onClose={busy ? undefined : onCancel}>
+      <ModalTitle title="Cerrar turno" subtitle={`${session.cashierName} · ${session.branchName || 'Sin panadería'}`} />
+      <div style={{ fontSize: 13.5, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5 }}>
+        Cerrar el turno de <b>{typeLabel}</b> de <b>{session.cashierName}</b>. No hay cuadre de caja para este tipo de turno.
+      </div>
+      {error && <ErrorBox text={error} />}
+      <ModalFooter>
+        <ModalBtnSecondary onClick={onCancel} disabled={busy}>Cancelar</ModalBtnSecondary>
+        <ModalBtnPrimary onClick={handleClose} disabled={busy} color={T.neutral[900]}>
+          {busy ? 'Cerrando...' : 'Cerrar turno'}
+        </ModalBtnPrimary>
+      </ModalFooter>
+    </ModalShell>
   )
 }

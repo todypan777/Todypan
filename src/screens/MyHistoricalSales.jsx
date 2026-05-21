@@ -57,7 +57,7 @@ function fmtFecha(dateStr) {
  * padre monta su propio ReportSaleModal encima. Asi evitamos un ciclo
  * de imports entre pantallas.
  */
-export default function MyHistoricalSales({ authUser, userDoc, onClose, onReport }) {
+export default function MyHistoricalSales({ authUser, userDoc, onClose, onReport, cashierUid }) {
   const today = bogotaToday()
   const [date, setDate] = useState(today)
   const [sales, setSales] = useState([])
@@ -66,10 +66,14 @@ export default function MyHistoricalSales({ authUser, userDoc, onClose, onReport
   // si llega una nota nueva mientras esta abierto, la UI se actualice.
   const [selectedSaleId, setSelectedSaleId] = useState(null)
 
+  // En modo asistir, el admin ve las ventas de la cajera (cashierUid), no las
+  // suyas. Sin asistir, cae al uid del usuario actual (la cajera).
+  const scopeUid = cashierUid || authUser?.uid
+
   useEffect(() => {
-    if (!authUser?.uid || !date) return
-    return watchCashierSalesByDate(authUser.uid, date, setSales)
-  }, [authUser?.uid, date])
+    if (!scopeUid || !date) return
+    return watchCashierSalesByDate(scopeUid, date, setSales)
+  }, [scopeUid, date])
 
   const filtered = useMemo(() => {
     if (!methodFilter) return sales

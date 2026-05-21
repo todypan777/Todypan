@@ -6,9 +6,14 @@ import { signOut } from '../auth'
 /**
  * Placeholder de app para Domiciliaria / Mesera.
  * Por definir qué funcionalidad va a tener.
+ *
+ * assistMode (opt) → { onExit } cuando el admin entra a asistir desde el
+ * dashboard. En ese caso se muestra una barra "Salir de asistir" y se OCULTA
+ * el botón "Cerrar sesión" (para no desloguear al admin por accidente).
  */
-export default function WaitressApp({ authUser, userDoc, session }) {
+export default function WaitressApp({ authUser, userDoc, session, assistMode }) {
   const [busy, setBusy] = useState(false)
+  const isAssist = !!assistMode
 
   async function handleSignOut() {
     setBusy(true)
@@ -28,6 +33,39 @@ export default function WaitressApp({ authUser, userDoc, session }) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       padding: 24, fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
     }}>
+      {isAssist && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 30,
+          background: T.copper[700], color: '#fff',
+          padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 10,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.22)',
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', opacity: 0.85 }}>
+              Estás asistiendo
+            </div>
+            <div style={{
+              fontSize: 14.5, fontWeight: 800, letterSpacing: -0.2,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {session?.cashierName || 'Mesera'}{session?.branchName ? ` · ${session.branchName}` : ''}
+            </div>
+          </div>
+          <button
+            onClick={() => assistMode.onExit?.()}
+            style={{
+              padding: '9px 16px', borderRadius: 999,
+              background: '#fff', color: T.copper[700],
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 13, fontWeight: 800, flexShrink: 0,
+              boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+            }}
+          >
+            Salir de asistir
+          </button>
+        </div>
+      )}
       <div style={{
         width: '100%', maxWidth: 360,
         background: '#fff', borderRadius: 22,
@@ -60,19 +98,21 @@ export default function WaitressApp({ authUser, userDoc, session }) {
           La app para este turno todavía está en construcción. Por ahora, coordina con el admin cómo registrar tu trabajo.
         </div>
 
-        <button
-          onClick={handleSignOut}
-          disabled={busy}
-          style={{
-            width: '100%', marginTop: 18, padding: '11px',
-            borderRadius: 12, border: `1px solid ${T.neutral[200]}`,
-            background: 'transparent', color: T.neutral[600],
-            fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-            cursor: busy ? 'wait' : 'pointer',
-          }}
-        >
-          {busy ? 'Saliendo...' : 'Cerrar sesión'}
-        </button>
+        {!isAssist && (
+          <button
+            onClick={handleSignOut}
+            disabled={busy}
+            style={{
+              width: '100%', marginTop: 18, padding: '11px',
+              borderRadius: 12, border: `1px solid ${T.neutral[200]}`,
+              background: 'transparent', color: T.neutral[600],
+              fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+              cursor: busy ? 'wait' : 'pointer',
+            }}
+          >
+            {busy ? 'Saliendo...' : 'Cerrar sesión'}
+          </button>
+        )}
       </div>
     </div>
   )

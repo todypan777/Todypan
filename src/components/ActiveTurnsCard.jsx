@@ -35,11 +35,18 @@ import {
   claimOrdersForTab,
   cancelOrdersForTab,
 } from '../kitchenOrders'
-import NewSale from '../screens/NewSale'
-import OpenTabsBubbles from './OpenTabsBubbles'
+import { ActiveSession } from '../screens/CashierApp'
+import CookApp from '../screens/CookApp'
+import WaitressApp from '../screens/WaitressApp'
+import ErrorBoundary from './ErrorBoundary'
 
 // Panadería destino de los pedidos web (debe coincidir con OrderConfirm.jsx).
 const WEB_ORDER_BRANCH_NAME = 'Panadería B'
+
+// Clave en localStorage para recordar a qué turno está asistiendo el admin.
+// Permite que, al recargar la página, el admin vuelva directo al modo asistir
+// (si la cajera sigue con turno abierto) en vez de quedar en el panel.
+const ASSIST_STORAGE_KEY = 'todypan_assist_session_id'
 
 // Convierte un item del cart de customerOrder al shape que usa el state
 // `lunchCommanda` de NewSale (mismo que producen CashierLunchWizard /
@@ -91,15 +98,16 @@ export default function ActiveTurnsCard() {
   const { authUser, userDoc } = useAuth()
   const [openSessions, setOpenSessions] = useState([])
   const [allUsers, setAllUsers] = useState([])
+  // Turno que el admin está asistiendo. Cuando está poblado se monta la
+  // pantalla COMPLETA de la cajera (ActiveSession) en modo asistir — idéntica
+  // a la que ella ve. La navegación interna (nueva venta, mesas, gastos) la
+  // maneja ActiveSession; aquí solo controlamos entrar/salir del modo.
   const [assistingSession, setAssistingSession] = useState(null)
-  // Tab abierta DENTRO del modo asistir — cuando el admin clicka una burbuja
-  // de mesa abierta, se carga aquí y se renderiza un NewSale tab edit encima.
-  const [editingAssistTab, setEditingAssistTab] = useState(null)
-  // Contador que se incrementa tras cada venta hecha en el NewSale base del
-  // modo asistir. Se usa como `key` para forzar un remontaje limpio del
-  // NewSale (carrito vacío) SIN salir del modo asistir — así el admin sigue
-  // vendiendo de corrido cuando hay voleo, en vez de ser devuelto al inicio.
-  const [assistSaleNonce, setAssistSaleNonce] = useState(0)
+  // Turno de cocina/mesera que el admin está asistiendo. Se monta CookApp o
+  // WaitressApp en modo asistir (su pantalla real). Independiente del asistir
+  // de caja de arriba: estos turnos no tienen el problema de "salir al crear
+  // una mesa", así que no persisten tras recarga (parità con el flujo previo).
+  const [assistingNonCash, setAssistingNonCash] = useState(null)
   // Pedido web pendiente que el admin entró a atender desde /comanda/{id}.
   // Cuando está poblado, el NewSale del modo asistir recibe sus almuerzos
   // pre-cargados en lunchCommanda y, al enviar la comanda, se marca el
@@ -113,6 +121,38 @@ export default function ActiveTurnsCard() {
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
   useEffect(() => watchAllUsers(setAllUsers), [])
+
+  // Entrar al modo asistir: monta ActiveSession y persiste el id para que la
+  // recarga vuelva al mismo turno. Salir: desmonta y limpia la persistencia
+  // (es la ÚNICA forma de salir — ningún flujo interno saca al admin).
+  function enterAssist(sess) {
+    if (!sess) return
+    setAssistingSession(sess)
+    try { localStorage.setItem(ASSIST_STORAGE_KEY, sess.id) } catch {}
+  }
+  function exitAssist() {
+    setAssistingSession(null)
+    setPendingCustomerOrder(null)
+    try { localStorage.removeItem(ASSIST_STORAGE_KEY) } catch {}
+  }
+
+  // Restaurar tras recarga: si había un turno en asistencia guardado y sigue
+  // abierto (tipo caja), volvemos directo al modo asistir. Solo intentamos una
+  // vez por montaje. Si el turno ya se cerró, no restauramos (queda inerte).
+  const restoredAssistRef = useRef(false)
+  useEffect(() => {
+    if (restoredAssistRef.current || assistingSession) return
+    let stored = null
+    try { stored = localStorage.getItem(ASSIST_STORAGE_KEY) } catch {}
+    if (!stored) return
+    const sess = openSessions.find(
+      s => s.id === stored && (!s.type || s.type === 'cash')
+    )
+    if (sess) {
+      restoredAssistRef.current = true
+      setAssistingSession(sess)
+    }
+  }, [openSessions, assistingSession])
 
   // Pedido web pendiente de atender: se captura del query param ?assistOrder
   // al montar y se procesa cuando openSessions ya tiene la sesión de
@@ -156,10 +196,8 @@ export default function ActiveTurnsCard() {
         }
         const lunchCommanda = customerCartToLunchCommanda(order.cart || [])
         pendingOrderIdRef.current = null
-        setAssistSaleNonce(0)
-        setEditingAssistTab(null)
         setPendingCustomerOrder({ id: orderId, lunchCommanda })
-        setAssistingSession(targetSession)
+        enterAssist(targetSession)
       } catch (err) {
         console.warn('[ActiveTurnsCard] no se pudo cargar el pedido web:', err)
       }
@@ -230,12 +268,7 @@ export default function ActiveTurnsCard() {
               isLast={i === branchRows.length - 1}
               onOpen={() => setOpeningBranch(row.branch)}
               onClose={() => setClosingSession(row.session)}
-              onAssist={() => {
-                // Nonce limpio al entrar — el NewSale base arranca vacío.
-                setAssistSaleNonce(0)
-                setEditingAssistTab(null)
-                setAssistingSession(row.session)
-              }}
+              onAssist={() => enterAssist(row.session)}
             />
           ))}
         </Card>
@@ -261,6 +294,7 @@ export default function ActiveTurnsCard() {
                 key={s.id}
                 session={s}
                 isLast={i === nonCashSessions.length - 1}
+                onAssist={() => setAssistingNonCash(s)}
                 onClose={() => setClosingNonCashSession(s)}
               />
             ))}
@@ -315,25 +349,19 @@ export default function ActiveTurnsCard() {
         />
       )}
 
-      {/* Modal: asistir (POS de la cajera).
-          Antes solo renderizaba NewSale, lo que dejaba al admin SIN poder
-          ver las mesas abiertas de la cajera (burbujas flotantes). Ahora
-          el admin tiene el mismo POS que la cajera: NewSale base para nueva
-          venta + burbujas a los lados para abrir mesas existentes. */}
+      {/* Modo asistir: el admin ve la pantalla COMPLETA de la cajera
+          (ActiveSession), idéntica a la que ella usa — nueva venta, mesas,
+          gastos, tareas, mis ventas, descuentos y llamadas de cocina. La
+          única salida es la barra "Salir de asistir" (no se sale al crear
+          una mesa ni al recargar). Si veníamos de /comanda/{id}, el pedido
+          web se pre-carga en NewSale vía initialLunchCommanda. */}
       {assistingSession && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 80, background: T.neutral[50],
+          overflowY: 'auto', WebkitOverflowScrolling: 'touch',
           animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
         }}>
-          {/* Capa 1 (base): NewSale para nueva venta a la cajera asistida.
-              `key` con el nonce: tras cada venta lo incrementamos para que
-              React remonte un NewSale limpio (carrito vacío) sin sacar al
-              admin del modo asistir.
-              Si veniamos de /comanda/{id}, `initialLunchCommanda` trae los
-              almuerzos del pedido web pre-cargados y `customerOrderId` deja
-              que NewSale marque el pedido como confirmado al enviar. */}
-          <NewSale
-            key={`assist-base-${assistSaleNonce}`}
+          <ActiveSession
             session={assistingSession}
             authUser={authUser}
             userDoc={userDoc}
@@ -343,50 +371,39 @@ export default function ActiveTurnsCard() {
               customerOrderId: pendingCustomerOrder?.id || null,
             }}
             initialLunchCommanda={pendingCustomerOrder?.lunchCommanda || null}
-            onCancel={() => {
-              // Al salir del NewSale base se cierra todo el modo asistir.
-              setAssistingSession(null)
-              setEditingAssistTab(null)
-              setPendingCustomerOrder(null)
-            }}
-            onSaved={() => {
-              // NO cerramos el modo asistir — solo reseteamos el NewSale base
-              // para la siguiente venta. El admin se queda asistiendo.
-              // El pedido web (si había) ya fue consumido por NewSale.
-              setAssistSaleNonce(n => n + 1)
-              setEditingAssistTab(null)
-              setPendingCustomerOrder(null)
-            }}
+            onConsumedCustomerOrder={() => setPendingCustomerOrder(null)}
+            onExitAssist={exitAssist}
           />
+        </div>
+      )}
 
-          {/* Burbujas de mesas abiertas — montadas dentro del wrapper así
-              comparten su stacking context. NewSale base no usa position
-              fija, así que las burbujas (position:fixed, z-index 50)
-              aparecen encima visualmente. */}
-          <OpenTabsBubbles
-            sessionId={assistingSession.id}
-            onSelect={tab => setEditingAssistTab(tab)}
-          />
-
-          {/* Capa 2 (encima): NewSale en modo tab edit cuando el admin
-              clicka una burbuja. z-index 90 cubre las burbujas y el
-              NewSale base; al cerrarlo, el admin vuelve al base. */}
-          {editingAssistTab && (
-            <div style={{
-              position: 'fixed', inset: 0, zIndex: 90, background: T.neutral[50],
-              animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
-            }}>
-              <NewSale
-                session={assistingSession}
+      {/* Modo asistir cocina/mesera: monta la pantalla real del turno
+          (CookApp para cocina, WaitressApp para mesera) en modo asistir.
+          La cola de cocina es global, así que el admin ve lo mismo que la
+          cocinera. La mesera aún es placeholder (su app está en construcción).
+          Salida única vía la barra de cada vista. */}
+      {assistingNonCash && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 80, background: T.neutral[50],
+          overflowY: 'auto', WebkitOverflowScrolling: 'touch',
+          animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+        }}>
+          <ErrorBoundary label="la vista del turno">
+            {assistingNonCash.type === 'kitchen' ? (
+              <CookApp
                 authUser={authUser}
                 userDoc={userDoc}
-                tab={editingAssistTab}
-                assistMode={{ adminUid: authUser.uid, adminName }}
-                onCancel={() => setEditingAssistTab(null)}
-                onSaved={() => setEditingAssistTab(null)}
+                assistMode={{ onExit: () => setAssistingNonCash(null) }}
               />
-            </div>
-          )}
+            ) : (
+              <WaitressApp
+                authUser={authUser}
+                userDoc={userDoc}
+                session={assistingNonCash}
+                assistMode={{ onExit: () => setAssistingNonCash(null) }}
+              />
+            )}
+          </ErrorBoundary>
         </div>
       )}
     </>
@@ -1944,7 +1961,7 @@ function LastSaleNotice({ lastSaleAt, salesCount }) {
 // ──────────────────────────────────────────────────────────────
 // Fila de la lista "Otros turnos activos" (cocina / mesera)
 // ──────────────────────────────────────────────────────────────
-function NonCashShiftRow({ session, isLast, onClose }) {
+function NonCashShiftRow({ session, isLast, onAssist, onClose }) {
   const typeLabel = session.type === 'kitchen' ? 'Cocina' : 'Domiciliaria / Mesera'
   const typeColor = session.type === 'kitchen' ? '#7A5C00' : T.copper[700]
   const typeBg = session.type === 'kitchen' ? '#FFF7E6' : T.copper[50]
@@ -1975,18 +1992,32 @@ function NonCashShiftRow({ session, isLast, onClose }) {
           {session.branchName || 'Sin panadería'} · desde {fmtTime(opened)}
         </div>
       </div>
-      <button
-        onClick={onClose}
-        style={{
-          padding: '7px 12px', borderRadius: 10,
-          background: T.neutral[900], color: '#fff',
-          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-          fontSize: 12, fontWeight: 700,
-          flexShrink: 0,
-        }}
-      >
-        Cerrar
-      </button>
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        <button
+          onClick={onAssist}
+          title="Asistir (ver la pantalla de este turno)"
+          style={{
+            padding: '7px 10px', borderRadius: 10,
+            background: '#fff', color: T.neutral[700],
+            border: `1px solid ${T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 700,
+          }}
+        >
+          Asistir
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            padding: '7px 12px', borderRadius: 10,
+            background: T.neutral[900], color: '#fff',
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 700,
+          }}
+        >
+          Cerrar
+        </button>
+      </div>
     </div>
   )
 }

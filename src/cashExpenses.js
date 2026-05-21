@@ -49,6 +49,14 @@ export async function createCashExpense(payload) {
     data.photoStatus = 'pending'
     data.photoLocalId = payload.photoLocalId
   }
+  // Modo asistir: el admin registra el gasto en el turno de la cajera. El
+  // gasto sigue siendo del turno (cashierUid/Name = la cajera) pero dejamos
+  // traza de que lo hizo el admin — igual que las ventas asistidas.
+  if (payload.recordedByUid) {
+    data.recordedByUid = payload.recordedByUid
+    data.recordedByName = payload.recordedByName || null
+    data.recordedByRole = payload.recordedByRole || 'admin'
+  }
   // Fire-and-forget para modo ahorro / offline (ver firestoreOffline.js).
   const ref = addDocOffline(expensesCol(), data)
   return ref.id

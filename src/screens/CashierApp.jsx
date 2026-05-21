@@ -774,7 +774,26 @@ function ErrorBox({ text }) {
 // ──────────────────────────────────────────────────────────────
 // PANTALLA: Turno activo (header + cerrar turno)
 // ──────────────────────────────────────────────────────────────
-function ActiveSession({ session, userDoc, authUser }) {
+export function ActiveSession({
+  session, userDoc, authUser,
+  // Modo asistir (admin vendiendo por la cajera). Cuando viene poblado, la
+  // pantalla es IDÉNTICA a la de la cajera pero: (1) los watchers personales
+  // (tareas, descuentos, llamadas de cocina) apuntan a la cajera dueña del
+  // turno (session.cashierUid), no al admin; (2) ventas/gastos se graban con
+  // traza de admin vía assistMode; (3) se muestra una barra "Salir de asistir".
+  // null/undefined = la cajera usa su propia pantalla, sin cambio alguno.
+  assistMode = null,
+  // Pedido web (/comanda/{id}) que el admin entró a atender: abre NewSale con
+  // los almuerzos pre-cargados al montar. Solo aplica en modo asistir.
+  initialLunchCommanda = null,
+  onConsumedCustomerOrder,
+  onExitAssist,
+}) {
+  const isAssist = !!assistMode
+  // uid al que se atan los datos PERSONALES de la pantalla. Asistiendo = la
+  // cajera del turno; normal = el usuario logueado (la cajera misma).
+  const scopeUid = isAssist ? (session.cashierUid || authUser.uid) : authUser.uid
+
   const [newSaleOpen, setNewSaleOpen] = useState(false)
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
@@ -787,7 +806,31 @@ function ActiveSession({ session, userDoc, authUser }) {
   const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const [myTasks, setMyTasks] = useState([])
+  // Pedido web pendiente (solo asistir): se consume al abrir/cerrar el primer
+  // NewSale. Después de eso, las ventas nuevas arrancan con carrito vacío.
+  const [pendingOrderCommanda, setPendingOrderCommanda] = useState(
+    isAssist ? (initialLunchCommanda || null) : null
+  )
+  const [pendingOrderId, setPendingOrderId] = useState(
+    isAssist ? (assistMode?.customerOrderId || null) : null
+  )
   const branches = getData().branches || []
+
+  // Asistiendo con un pedido web: abrir NewSale pre-cargado al montar.
+  useEffect(() => {
+    if (isAssist && initialLunchCommanda && initialLunchCommanda.length > 0) {
+      setNewSaleOpen(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function clearPendingOrder() {
+    if (pendingOrderCommanda || pendingOrderId) {
+      setPendingOrderCommanda(null)
+      setPendingOrderId(null)
+      onConsumedCustomerOrder?.()
+    }
+  }
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
@@ -809,22 +852,22 @@ function ActiveSession({ session, userDoc, authUser }) {
   }, [session.id])
 
   useEffect(() => {
-    const unsub = watchAllDeductionsForCashier(authUser.uid, setMyDeductions)
+    const unsub = watchAllDeductionsForCashier(scopeUid, setMyDeductions)
     return unsub
-  }, [authUser.uid])
+  }, [scopeUid])
 
   useEffect(() => {
-    const unsub = watchTasksForCashier(authUser.uid, setMyTasks)
+    const unsub = watchTasksForCashier(scopeUid, setMyTasks)
     return unsub
-  }, [authUser.uid])
+  }, [scopeUid])
 
   // Llamadas pendientes de cocina dirigidas a esta cajera.
   // Si hay alguna, se monta el overlay bloqueante encima de toda la UI.
   const [pendingCalls, setPendingCalls] = useState([])
   useEffect(() => {
-    const unsub = watchPendingCallsForCashier(authUser.uid, setPendingCalls)
+    const unsub = watchPendingCallsForCashier(scopeUid, setPendingCalls)
     return unsub
-  }, [authUser.uid])
+  }, [scopeUid])
   const activeCall = pendingCalls[0] || null
 
   // Notificación SONORA (sin nada visual) cuando cocina marca un almuerzo
@@ -874,6 +917,14 @@ function ActiveSession({ session, userDoc, authUser }) {
   const openedDay = openedAt.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })
 
   return (
+    <>
+    {isAssist && (
+      <AssistBar
+        cashierName={session.cashierName}
+        branchName={branch.name}
+        onExit={onExitAssist}
+      />
+    )}
     <div style={{ padding: '24px 18px 40px', maxWidth: 540, margin: '0 auto' }}>
       <div style={{
         fontSize: 13, fontWeight: 700, color: palette[500] || T.copper[500],
@@ -1142,8 +1193,14 @@ function ActiveSession({ session, userDoc, authUser }) {
               session={session}
               authUser={authUser}
               userDoc={userDoc}
-              onCancel={() => setNewSaleOpen(false)}
-              onSaved={() => setNewSaleOpen(false)}
+              assistMode={isAssist ? {
+                adminUid: assistMode.adminUid,
+                adminName: assistMode.adminName,
+                customerOrderId: pendingOrderId || null,
+              } : undefined}
+              initialLunchCommanda={isAssist ? pendingOrderCommanda : null}
+              onCancel={() => { setNewSaleOpen(false); clearPendingOrder() }}
+              onSaved={() => { setNewSaleOpen(false); clearPendingOrder() }}
             />
           </ErrorBoundary>
         </div>
@@ -1153,6 +1210,7 @@ function ActiveSession({ session, userDoc, authUser }) {
         <MyHistoricalSales
           authUser={authUser}
           userDoc={userDoc}
+          cashierUid={isAssist ? scopeUid : undefined}
           onClose={() => setHistoryOpen(false)}
           onReport={(sale) => setReportSale(sale)}
         />
@@ -1169,6 +1227,10 @@ function ActiveSession({ session, userDoc, authUser }) {
               authUser={authUser}
               userDoc={userDoc}
               tab={editingTab}
+              assistMode={isAssist ? {
+                adminUid: assistMode.adminUid,
+                adminName: assistMode.adminName,
+              } : undefined}
               onCancel={() => setEditingTab(null)}
               onSaved={() => setEditingTab(null)}
             />
@@ -1207,6 +1269,7 @@ function ActiveSession({ session, userDoc, authUser }) {
           session={session}
           authUser={authUser}
           userDoc={userDoc}
+          assistMode={assistMode}
           onCancel={() => setExpenseOpen(false)}
           onSaved={() => setExpenseOpen(false)}
         />
@@ -1221,6 +1284,49 @@ function ActiveSession({ session, userDoc, authUser }) {
           userDoc={userDoc}
         />
       )}
+    </div>
+    </>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Barra superior del modo asistir. Solo se ve cuando el admin está
+// asistiendo. Es la ÚNICA salida del modo (D: salida directa, sin
+// confirmación). Queda sticky arriba; los overlays de venta (NewSale,
+// burbujas) se montan encima cuando aplica.
+// ──────────────────────────────────────────────────────────────
+function AssistBar({ cashierName, branchName, onExit }) {
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 30,
+      background: T.copper[700], color: '#fff',
+      padding: '10px 16px',
+      display: 'flex', alignItems: 'center', gap: 10,
+      boxShadow: '0 2px 10px rgba(0,0,0,0.22)',
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.6, textTransform: 'uppercase', opacity: 0.85 }}>
+          Estás asistiendo
+        </div>
+        <div style={{
+          fontSize: 14.5, fontWeight: 800, letterSpacing: -0.2,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {cashierName || 'Cajera'}{branchName ? ` · ${branchName}` : ''}
+        </div>
+      </div>
+      <button
+        onClick={onExit}
+        style={{
+          padding: '9px 16px', borderRadius: 999,
+          background: '#fff', color: T.copper[700],
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 13, fontWeight: 800, flexShrink: 0,
+          boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+        }}
+      >
+        Salir de asistir
+      </button>
     </div>
   )
 }
@@ -1483,6 +1589,16 @@ function ExpenseRow({ expense, isLast }) {
         }}>
           {statusLabel}
         </span>
+        {expense.recordedByRole === 'admin' && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: '#7A5C00',
+            background: '#FFF7E6', border: '1px solid #F4E0BC',
+            padding: '2px 7px', borderRadius: 999,
+            letterSpacing: 0.3, textTransform: 'uppercase',
+          }}>
+            👤 admin{expense.recordedByName ? ` · ${expense.recordedByName}` : ''}
+          </span>
+        )}
         {expense.status === 'rejected' && expense.reviewNote && (
           <span style={{
             fontSize: 11.5, color: T.bad, fontStyle: 'italic',
@@ -1509,7 +1625,8 @@ function ExpenseRow({ expense, isLast }) {
 // ──────────────────────────────────────────────────────────────
 // Modal: Registrar gasto de caja
 // ──────────────────────────────────────────────────────────────
-function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
+function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, onSaved }) {
+  const isAssist = !!assistMode
   const [description, setDescription] = useState('')
   const [amountStr, setAmountStr] = useState('')
   const [photoUrl, setPhotoUrl] = useState(null)
@@ -1580,7 +1697,14 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
     if (!valid || busy) return
     setBusy(true); setError(null)
     try {
-      const cashierName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email
+      // Asistiendo: el gasto pertenece al turno de la CAJERA (su caja es la que
+      // se reduce), por eso cashierUid/Name = la cajera dueña del turno. La
+      // traza de que lo hizo el admin va aparte (recordedBy*). Sin asistir, es
+      // la cajera misma.
+      const cashierUid = isAssist ? (session.cashierUid || authUser.uid) : authUser.uid
+      const cashierName = isAssist
+        ? (session.cashierName || 'Cajera')
+        : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
 
       // Caso B (foto offline): pre-generar localId para que el doc nazca con
       // photoLocalId + photoStatus='pending' desde la creacion. Esto evita
@@ -1599,12 +1723,17 @@ function CashExpenseModal({ session, authUser, userDoc, onCancel, onSaved }) {
         sessionId: session.id,
         branchId: session.branchId,
         branchName: session.branchName,
-        cashierUid: authUser.uid,
+        cashierUid,
         cashierName,
         description,
         amount,
         photoUrl: photoUrl || undefined,
         photoLocalId: photoLocalId || undefined,
+        ...(isAssist ? {
+          recordedByUid: authUser.uid,
+          recordedByName: assistMode.adminName,
+          recordedByRole: 'admin',
+        } : {}),
       })
 
       if (photoLocalId && photoBlob && expenseId) {

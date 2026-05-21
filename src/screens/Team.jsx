@@ -134,31 +134,32 @@ function ShiftsView({ employees, onOpenPersonal }) {
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <ScreenHeader
-        title="Equipo"
-        right={(
-          <button
-            onClick={onOpenPersonal}
-            title="Administrar personal"
-            style={{
-              padding: '8px 12px', borderRadius: 999,
-              background: '#fff', color: T.neutral[700],
-              border: `1px solid ${T.neutral[200]}`,
-              cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 12, fontWeight: 700,
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 22 22" fill="none">
-              <circle cx="8" cy="8" r="3" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
-              <path d="M2 18 Q2 12 8 12 Q14 12 14 18" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
-              <circle cx="15" cy="7" r="2.3" stroke={T.neutral[600]} strokeWidth="1.5" fill="none"/>
-              <path d="M13 13 Q15 11.5 17 12.5 Q20 13.5 20 17" stroke={T.neutral[600]} strokeWidth="1.5" fill="none"/>
-            </svg>
-            Personal
-          </button>
-        )}
-      />
+      <ScreenHeader title="Equipo" />
+
+      {/* Acceso a la sub-vista de administración de personal.
+          Va en una fila propia para no chocar con la campanita global. */}
+      <div style={{ padding: '0 16px 10px', display: 'flex', justifyContent: 'flex-end' }}>
+        <button
+          onClick={onOpenPersonal}
+          title="Administrar personal"
+          style={{
+            padding: '7px 12px', borderRadius: 999,
+            background: '#fff', color: T.neutral[700],
+            border: `1px solid ${T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 22 22" fill="none">
+            <circle cx="8" cy="8" r="3" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
+            <path d="M2 18 Q2 12 8 12 Q14 12 14 18" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
+            <circle cx="15" cy="7" r="2.3" stroke={T.neutral[600]} strokeWidth="1.5" fill="none"/>
+            <path d="M13 13 Q15 11.5 17 12.5 Q20 13.5 20 17" stroke={T.neutral[600]} strokeWidth="1.5" fill="none"/>
+          </svg>
+          Administrar personal
+        </button>
+      </div>
 
       {/* Navegador de fecha */}
       <div style={{ padding: '0 16px 12px' }}>

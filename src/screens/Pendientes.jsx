@@ -12,7 +12,7 @@ import {
 } from '../cashSessions'
 import { watchAllSales } from '../sales'
 import { createDeduction } from '../cashierDeductions'
-import { watchCashierProducts, deleteCashierProduct, patchCashierProduct } from '../products'
+import { patchCashierProduct } from '../products'
 import {
   watchPendingChangeRequests,
   approveChangeRequest,
@@ -29,7 +29,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [allUsers, setAllUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [allSales, setAllSales] = useState([])
-  const [cashierProducts, setCashierProducts] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
   useEffect(() => watchAllUsers(list => {
@@ -38,7 +37,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   }), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchAllSales(setAllSales), [])
-  useEffect(() => watchCashierProducts(setCashierProducts), [])
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   // Reminders vencidos — recalcula al cambiar dataTick
@@ -72,7 +70,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     pendingUsers.length +
     orphanShortages.length +
     flaggedSales.length +
-    cashierProducts.length +
     changeRequests.length +
     overdueReminders.length
 
@@ -175,123 +172,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
         <FlaggedSalesSection sales={flaggedSales} adminUid={authUser.uid} />
       )}
 
-      {cashierProducts.length > 0 && (
-        <CashierProductsSection
-          products={cashierProducts}
-          onOpenProducts={onOpenProducts}
-        />
-      )}
-
       {changeRequests.length > 0 && (
         <ChangeRequestsSection requests={changeRequests} adminUid={authUser.uid} />
       )}
     </div>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────
-// Productos creados por cajera (con acción inline)
-// ──────────────────────────────────────────────────────────────
-function CashierProductsSection({ products, onOpenProducts }) {
-  const [confirmDel, setConfirmDel] = useState(null)
-  const [busy, setBusy] = useState(false)
-
-  async function handleDelete() {
-    if (!confirmDel || busy) return
-    setBusy(true)
-    try {
-      await deleteCashierProduct(confirmDel.id)
-      setConfirmDel(null)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <>
-      <Section
-        title="Productos sin costo"
-        count={products.length}
-        tone="copper"
-      >
-        {products.slice(0, 5).map((p, i) => (
-          <div key={p.id} style={{
-            padding: '12px 14px',
-            display: 'flex', alignItems: 'center', gap: 10,
-            borderBottom: i < Math.min(products.length, 5) - 1
-              ? `0.5px solid ${T.neutral[100]}`
-              : 'none',
-          }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 13.5, fontWeight: 700, color: T.neutral[900],
-                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-              }}>
-                {p.name}
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                {(() => {
-                  const branches = getData().branches || []
-                  const items = branches
-                    .map(b => {
-                      const v = p.pricesByBranch?.[String(b.id)]
-                      return v && Number(v) > 0
-                        ? `${b.name}: ${fmtCOP(Number(v))}`
-                        : null
-                    })
-                    .filter(Boolean)
-                  return items.length > 0
-                    ? items.join(' · ')
-                    : <span style={{ fontStyle: 'italic' }}>sin precios todavía</span>
-                })()}
-                {p.createdByName && ` · por ${p.createdByName}`}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-              <button onClick={() => onOpenProducts?.()} style={btnSmall(T.copper[500])}>
-                Aceptar
-              </button>
-              <button
-                onClick={() => setConfirmDel(p)}
-                style={{
-                  padding: '7px 12px', borderRadius: 10,
-                  background: 'transparent', color: T.bad,
-                  border: `1px solid ${T.bad}33`,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 12.5, fontWeight: 600,
-                }}
-              >
-                Eliminar
-              </button>
-            </div>
-          </div>
-        ))}
-        {products.length > 5 && (
-          <div style={{ padding: '8px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
-            + {products.length - 5} más en la pestaña Productos
-          </div>
-        )}
-      </Section>
-
-      {confirmDel && (
-        <ModalOverlay onClose={busy ? undefined : () => setConfirmDel(null)}>
-          <ModalCard>
-            <ModalTitle>¿Eliminar producto?</ModalTitle>
-            <ModalSub>{confirmDel.name}</ModalSub>
-            <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 18, lineHeight: 1.5 }}>
-              Se eliminará del catálogo. Las ventas que ya lo usaron no se afectan.
-            </div>
-            <ModalActions
-              onCancel={() => setConfirmDel(null)}
-              onConfirm={handleDelete}
-              confirmLabel={busy ? 'Eliminando...' : 'Eliminar'}
-              confirmDisabled={busy}
-              confirmColor={T.bad}
-            />
-          </ModalCard>
-        </ModalOverlay>
-      )}
-    </>
   )
 }
 

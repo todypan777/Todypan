@@ -4,7 +4,6 @@ import { UserAvatar } from './Atoms'
 import { watchAllUsers, rejectPendingUser } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchAllSales } from '../sales'
-import { watchCashierProducts } from '../products'
 import { watchPendingChangeRequests } from '../productChangeRequests'
 import { getData, getBogotaDateStr } from '../db'
 import { useAuth } from '../context/AuthCtx'
@@ -25,7 +24,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [allSales, setAllSales] = useState([])
-  const [cashierProducts, setCashierProducts] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
   // Para popups automáticos (solo usuarios pendientes — los cierres ya no
@@ -36,7 +34,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
   useEffect(() => watchAllSales(setAllSales), [])
-  useEffect(() => watchCashierProducts(setCashierProducts), [])
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   const flaggedSales = useMemo(() => allSales.filter(s => s.status === 'flagged'), [allSales])
@@ -66,7 +63,6 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     pendingUsers.length +
     orphanShortages.length +
     flaggedSales.length +
-    cashierProducts.length +
     changeRequests.length +
     overdueReminders.length
 

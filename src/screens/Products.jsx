@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { Card, Modal, InputField, PrimaryButton, BackButton } from '../components/Atoms'
+import { Card, Modal, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { addProduct, updateProduct, deleteProduct, getData } from '../db'
 import { useIsDesktop } from '../context/DesktopCtx'
@@ -12,18 +12,15 @@ function calcProduct(p) {
   const costPerUnit = p.byPackage
     ? (p.unitsPerPackage > 0 ? p.packageCost / p.unitsPerPackage : 0)
     : p.packageCost
-  // Precios por panadería: tomamos los valores definidos
   const prices = Object.values(p.pricesByBranch || {}).map(Number).filter(n => n > 0)
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0
   const maxPrice = prices.length > 0 ? Math.max(...prices) : 0
   const avgPrice = prices.length > 0 ? prices.reduce((s, n) => s + n, 0) / prices.length : 0
-  // Margen y ganancia se calculan sobre el promedio (referencial)
   const profit = avgPrice - costPerUnit
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
   return { costPerUnit, profit, margin, minPrice, maxPrice, avgPrice, prices }
 }
 
-// Lista de "Iglesia: $5.000 · Esquina: $5.500" — solo branches con precio
 function priceBreakdown(p) {
   const branches = getData().branches || []
   return branches
@@ -34,22 +31,23 @@ function priceBreakdown(p) {
     .filter(Boolean)
 }
 
-// Lista de panaderías que SÍ tienen precio
-function branchesWithPrice(p) {
-  const branches = getData().branches || []
-  return branches.filter(b => {
-    const v = p.pricesByBranch?.[String(b.id)]
-    return v && Number(v) > 0
-  })
-}
-
-// Lista de panaderías que NO tienen precio aún
 function branchesMissingPrice(p) {
   const branches = getData().branches || []
   return branches.filter(b => {
     const v = p.pricesByBranch?.[String(b.id)]
     return !v || Number(v) <= 0
   })
+}
+
+// "Sin configurar" si: producto creado por cajera sin revisar, o sin costo,
+// o sin precio en alguna panadería. Excepción: ventas libres y almuerzos.
+function needsSetup(p) {
+  if (p.freeAmount) return false
+  if (p.isLunch) return false
+  if (p.source === 'cashier') return true
+  if (!p.packageCost || Number(p.packageCost) <= 0) return true
+  if (branchesMissingPrice(p).length > 0) return true
+  return false
 }
 
 function marginColor(m) {
@@ -64,7 +62,6 @@ function marginBg(m) {
   return '#FAE8E6'
 }
 
-// ── Ícono producto ─────────────────────────────────────────────
 function ProductIcon({ color = T.copper[400] }) {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20" fill="none">
@@ -75,7 +72,6 @@ function ProductIcon({ color = T.copper[400] }) {
   )
 }
 
-// ── Badge de margen ────────────────────────────────────────────
 function MarginBadge({ margin }) {
   const c = marginColor(margin)
   const bg = marginBg(margin)
@@ -90,7 +86,19 @@ function MarginBadge({ margin }) {
   )
 }
 
-// ── Precios por panadería (compacto inline para tabla desktop) ─
+function SetupBadge() {
+  return (
+    <span style={{
+      display: 'inline-block', padding: '3px 9px', borderRadius: 999,
+      background: '#FAE8E6', color: T.bad,
+      fontSize: 11, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+      whiteSpace: 'nowrap',
+    }}>
+      Sin configurar
+    </span>
+  )
+}
+
 function PricesByBranchInline({ product }) {
   if (product.isLunch) {
     return (
@@ -133,7 +141,7 @@ function PricesByBranchInline({ product }) {
   if (breakdown.length === 0) {
     return (
       <span style={{ fontSize: 12, color: T.copper[700], fontStyle: 'italic' }}>
-        Sin precios — la cajera los pondrá al usar
+        Sin precios todavía
       </span>
     )
   }
@@ -156,7 +164,6 @@ function PricesByBranchInline({ product }) {
   )
 }
 
-// ── Precios por panadería (bloque para card móvil) ──────────────
 function PricesByBranchBlock({ product }) {
   if (product.isLunch) {
     return (
@@ -197,7 +204,7 @@ function PricesByBranchBlock({ product }) {
   if (breakdown.length === 0) {
     return (
       <div style={{ fontSize: 12, color: T.copper[700], textAlign: 'center', fontStyle: 'italic' }}>
-        Sin precios — la cajera los pondrá al usar
+        Sin precios todavía
       </div>
     )
   }
@@ -220,80 +227,59 @@ function PricesByBranchBlock({ product }) {
   )
 }
 
-// ── Badge de sucursal ──────────────────────────────────────────
-function BranchTag({ branch }) {
-  const colors = {
-    both: { bg: T.neutral[100], text: T.neutral[500] },
-    1:    { bg: T.copper[100],  text: T.copper[700]  },
-    2:    { bg: '#E6EBE0',      text: '#4A5840'       },
-  }
-  const labels = { both: 'Ambas', 1: 'Iglesia', 2: 'Esquina' }
-  const s = colors[branch] || colors.both
-  return (
-    <span style={{
-      padding: '2px 8px', borderRadius: 999,
-      background: s.bg, color: s.text,
-      fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
-    }}>
-      {labels[branch] || branch}
-    </span>
-  )
-}
-
 // ── Componente principal ───────────────────────────────────────
-export default function Products({ products, onBack, onRefresh }) {
+export default function Products({ products, onRefresh }) {
   const isDesktop = useIsDesktop()
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
-  const [editId, setEditId] = useState(null)
+  const [editTarget, setEditTarget] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
-  const [sortBy, setSortBy] = useState('margin') // 'margin' | 'name' | 'profit'
   const [cashierProducts, setCashierProducts] = useState([])
-  const [confirmDelCashier, setConfirmDelCashier] = useState(null)
-  const [acceptingCashier, setAcceptingCashier] = useState(null)
-  const [cleanupOpen, setCleanupOpen] = useState(false)
 
-  useEffect(() => {
-    const unsub = watchCashierProducts(setCashierProducts)
-    return unsub
-  }, [])
+  useEffect(() => watchCashierProducts(setCashierProducts), [])
 
-  const enriched = useMemo(() =>
-    products.map(p => ({ ...p, ...calcProduct(p) })),
-    [products]
-  )
+  // Lista unificada: admins + cashier (sin duplicados por nombre).
+  const all = useMemo(() => {
+    const adminEnriched = (products || []).map(p => ({
+      ...p,
+      ...calcProduct(p),
+      source: 'admin',
+    }))
+    const adminNames = new Set(adminEnriched.map(p => p.name.toLowerCase().trim()))
+    const cashierEnriched = (cashierProducts || [])
+      .filter(p => !adminNames.has((p.name || '').toLowerCase().trim()))
+      .map(p => ({
+        ...p,
+        ...calcProduct(p),
+        source: 'cashier',
+      }))
+    return [...adminEnriched, ...cashierEnriched]
+  }, [products, cashierProducts])
 
+  // Filtrar por búsqueda + ordenar A–Z.
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-    const list = q ? enriched.filter(p => p.name.toLowerCase().includes(q)) : enriched
-    return [...list].sort((a, b) => {
-      if (sortBy === 'name') return a.name.localeCompare(b.name)
-      if (sortBy === 'profit') return b.profit - a.profit
-      return b.margin - a.margin
-    })
-  }, [enriched, search, sortBy])
+    const list = q ? all.filter(p => (p.name || '').toLowerCase().includes(q)) : all
+    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+  }, [all, search])
 
-  // Resumen global
-  const avgMargin = enriched.length
-    ? enriched.reduce((s, p) => s + p.margin, 0) / enriched.length
-    : 0
-  const bestProduct = enriched.length
-    ? enriched.reduce((best, p) => p.margin > best.margin ? p : best, enriched[0])
-    : null
+  const missingCount = all.filter(needsSetup).length
 
-  function handleDelete(id) {
-    deleteProduct(id)
+  async function handleDelete(p) {
+    if (!p) return
+    if (p.source === 'cashier') {
+      await deleteCashierProduct(p.id)
+    } else {
+      deleteProduct(p.id)
+    }
     setConfirmDel(null)
-    onRefresh()
+    onRefresh?.()
   }
-
-  const editTarget = editId ? products.find(p => p.id === editId) : null
 
   return (
     <div style={{ paddingBottom: 110 }}>
       <ScreenHeader
         title="Productos"
-        subtitle={isDesktop ? undefined : undefined}
         right={
           <button onClick={() => setShowAdd(true)} style={{
             display: 'flex', alignItems: 'center', gap: 7,
@@ -311,161 +297,22 @@ export default function Products({ products, onBack, onRefresh }) {
         }
       />
 
-      {/* Resumen de métricas */}
-      {enriched.length > 0 && (
-        <div style={{ padding: '0 16px 16px', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{
-            flex: 1, minWidth: 130, padding: '14px 16px', borderRadius: 14,
-            background: T.neutral[900], color: '#fff',
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: T.copper[300], textTransform: 'uppercase' }}>
-              Productos
-            </div>
-            <div style={{ fontSize: 26, fontWeight: 800, marginTop: 4, letterSpacing: -0.8 }}>
-              {enriched.length}
-            </div>
-          </div>
-          <div style={{
-            flex: 1, minWidth: 130, padding: '14px 16px', borderRadius: 14,
-            background: marginBg(avgMargin), border: `1px solid ${marginColor(avgMargin)}22`,
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: T.neutral[500], textTransform: 'uppercase' }}>
-              Margen prom.
-            </div>
-            <div style={{ fontSize: 26, fontWeight: 800, marginTop: 4, letterSpacing: -0.8, color: marginColor(avgMargin) }}>
-              {avgMargin.toFixed(1)}%
-            </div>
-          </div>
-          {bestProduct && (
-            <div style={{
-              flex: 2, minWidth: 160, padding: '14px 16px', borderRadius: 14,
-              background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: T.copper[600], textTransform: 'uppercase' }}>
-                Más rentable
-              </div>
-              <div style={{ fontSize: 16, fontWeight: 700, marginTop: 4, color: T.neutral[800], letterSpacing: -0.3 }}>
-                {bestProduct.name}
-              </div>
-              <div style={{ fontSize: 12, color: T.copper[600], fontWeight: 600 }}>
-                {bestProduct.margin.toFixed(1)}% · {fmtCOP(bestProduct.profit)}/u
-              </div>
-            </div>
+      {/* Resumen mínimo en una línea */}
+      {all.length > 0 && (
+        <div style={{ padding: '0 16px 10px', fontSize: 12, color: T.neutral[500], display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <span><b style={{ color: T.neutral[800] }}>{all.length}</b> productos</span>
+          {missingCount > 0 && (
+            <span>· <b style={{ color: T.bad }}>{missingCount}</b> sin configurar</span>
           )}
         </div>
       )}
 
-      {/* Productos creados por cajera (pendientes de revisión) */}
-      {cashierProducts.length > 0 && (
-        <div style={{ padding: '0 16px 16px' }}>
-          <Card padding={0} style={{
-            border: `1px solid ${T.warn}33`,
-            background: '#FFF7E6',
-          }}>
-            <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: 999, flexShrink: 0,
-                background: T.warn, display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M7 3 V8 M7 10.5 V11" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: T.warn }}>
-                  Pendientes de revisión ({cashierProducts.length})
-                </div>
-                <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 1 }}>
-                  Productos creados por cajeras. Asígnales costo o elimínalos.
-                </div>
-              </div>
-              {cashierProducts.some(p => isPanWithAmount(p.name)) && (
-                <button
-                  onClick={() => setCleanupOpen(true)}
-                  title="Limpiar productos duplicados con la palabra 'Pan'"
-                  style={{
-                    padding: '6px 11px', borderRadius: 8,
-                    background: 'transparent', color: T.bad,
-                    border: `1px solid ${T.bad}55`,
-                    cursor: 'pointer', fontFamily: 'inherit',
-                    fontSize: 11.5, fontWeight: 700,
-                    flexShrink: 0,
-                  }}
-                >
-                  🧹 Limpiar Pan
-                </button>
-              )}
-            </div>
-            <div style={{ borderTop: `1px solid ${T.warn}22` }}>
-              {cashierProducts.map((p, i) => (
-                <div key={p.id} style={{
-                  padding: '12px 14px',
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  borderBottom: i < cashierProducts.length - 1 ? `1px solid ${T.warn}22` : 'none',
-                  background: '#fff',
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 14, fontWeight: 700, color: T.neutral[900],
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
-                      {p.name}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-                      {priceBreakdown(p).map(b => (
-                        <span key={b.name} style={{ marginRight: 8 }}>
-                          {b.name}: <b style={{ color: T.neutral[700] }}>{fmtCOP(b.price)}</b>
-                        </span>
-                      ))}
-                      {priceBreakdown(p).length === 0 && (
-                        <span style={{ fontStyle: 'italic' }}>sin precios todavía</span>
-                      )}
-                      {p.createdByName && (
-                        <div style={{ marginTop: 1 }}>por {p.createdByName}</div>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                    <button
-                      onClick={() => setAcceptingCashier(p)}
-                      style={{
-                        padding: '7px 12px', borderRadius: 10,
-                        background: T.copper[500], color: '#fff',
-                        border: 'none',
-                        cursor: 'pointer', fontFamily: 'inherit',
-                        fontSize: 12.5, fontWeight: 700,
-                        boxShadow: '0 2px 6px rgba(184,122,86,0.3)',
-                      }}
-                    >
-                      Aceptar
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelCashier(p)}
-                      style={{
-                        padding: '7px 12px', borderRadius: 10,
-                        background: 'transparent', color: T.bad,
-                        border: `1px solid ${T.bad}33`,
-                        cursor: 'pointer', fontFamily: 'inherit',
-                        fontSize: 12.5, fontWeight: 600,
-                      }}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      )}
-
-      {/* Barra de búsqueda y ordenación */}
-      <div style={{ padding: '0 16px 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        {/* Search */}
+      {/* Buscador */}
+      <div style={{ padding: '0 16px 14px' }}>
         <div style={{
-          flex: 1, minWidth: 180, display: 'flex', alignItems: 'center', gap: 8,
+          display: 'flex', alignItems: 'center', gap: 8,
           background: '#fff', border: `1px solid ${T.neutral[200]}`,
-          borderRadius: 12, padding: '10px 14px',
+          borderRadius: 12, padding: '11px 14px',
         }}>
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <circle cx="7" cy="7" r="4.5" stroke={T.neutral[400]} strokeWidth="1.5"/>
@@ -474,42 +321,23 @@ export default function Products({ products, onBack, onRefresh }) {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar producto..."
+            placeholder="Buscar producto por nombre..."
             style={{
               border: 'none', outline: 'none', background: 'transparent',
-              fontSize: 14, color: T.neutral[800], fontFamily: 'inherit', width: '100%',
+              fontSize: 14.5, color: T.neutral[800], fontFamily: 'inherit', width: '100%',
             }}
           />
           {search && (
             <button onClick={() => setSearch('')} style={{
               border: 'none', background: 'none', cursor: 'pointer', padding: 0,
-              color: T.neutral[400], fontSize: 16, lineHeight: 1,
+              color: T.neutral[400], fontSize: 18, lineHeight: 1,
             }}>×</button>
           )}
-        </div>
-
-        {/* Sort pills */}
-        <div style={{ display: 'flex', gap: 5 }}>
-          {[
-            { id: 'margin', label: 'Margen' },
-            { id: 'profit', label: 'Ganancia' },
-            { id: 'name',   label: 'A–Z' },
-          ].map(s => (
-            <button key={s.id} onClick={() => setSortBy(s.id)} style={{
-              padding: '8px 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
-              background: sortBy === s.id ? T.copper[500] : T.neutral[100],
-              color: sortBy === s.id ? '#fff' : T.neutral[600],
-              transition: 'background 0.15s',
-            }}>
-              {s.label}
-            </button>
-          ))}
         </div>
       </div>
 
       {/* Estado vacío */}
-      {products.length === 0 && (
+      {all.length === 0 && (
         <div style={{ padding: '64px 24px', textAlign: 'center' }}>
           <div style={{
             width: 64, height: 64, borderRadius: 20, background: T.copper[50],
@@ -533,7 +361,7 @@ export default function Products({ products, onBack, onRefresh }) {
       )}
 
       {/* Sin resultados de búsqueda */}
-      {products.length > 0 && filtered.length === 0 && (
+      {all.length > 0 && filtered.length === 0 && (
         <div style={{ padding: '40px 24px', textAlign: 'center' }}>
           <div style={{ fontSize: 13, color: T.neutral[400] }}>
             No se encontró ningún producto con "{search}"
@@ -544,33 +372,38 @@ export default function Products({ products, onBack, onRefresh }) {
       {/* Tabla / Lista */}
       {filtered.length > 0 && (
         isDesktop
-          ? <ProductTable products={filtered} onEdit={setEditId} onDelete={setConfirmDel}/>
-          : <ProductCards products={filtered} onEdit={setEditId} onDelete={setConfirmDel}/>
+          ? <ProductTable products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel}/>
+          : <ProductCards products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel}/>
       )}
 
-      {/* Modal agregar */}
+      {/* Modal agregar / editar */}
       {showAdd && (
         <ProductForm
           onClose={() => setShowAdd(false)}
-          onSave={() => { setShowAdd(false); onRefresh() }}
+          onSave={() => { setShowAdd(false); onRefresh?.() }}
         />
       )}
 
-      {/* Modal editar */}
       {editTarget && (
         <ProductForm
           initial={editTarget}
           isEdit
-          onClose={() => setEditId(null)}
-          onSave={() => { setEditId(null); onRefresh() }}
+          source={editTarget.source}
+          onClose={() => setEditTarget(null)}
+          onSave={() => { setEditTarget(null); onRefresh?.() }}
         />
       )}
 
       {/* Confirmar eliminar */}
       {confirmDel && (
         <Modal onClose={() => setConfirmDel(null)} title="¿Eliminar producto?">
-          <div style={{ fontSize: 14, color: T.neutral[500], marginBottom: 20 }}>
-            Esta acción no se puede deshacer.
+          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8 }}>
+            <b>{confirmDel.name}</b>
+          </div>
+          <div style={{ fontSize: 13, color: T.neutral[500], marginBottom: 20, lineHeight: 1.5 }}>
+            {confirmDel.source === 'cashier'
+              ? 'Este producto fue creado por una cajera. Se eliminará del catálogo. Las ventas que ya lo usaron no se afectan.'
+              : 'Esta acción no se puede deshacer.'}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={() => setConfirmDel(null)} style={{
@@ -583,56 +416,6 @@ export default function Products({ products, onBack, onRefresh }) {
               background: T.bad, color: '#fff',
               fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
             }}>Eliminar</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Aceptar producto cajera (asignar costo y promover al catálogo) */}
-      {acceptingCashier && (
-        <AcceptCashierProductModal
-          product={acceptingCashier}
-          onCancel={() => setAcceptingCashier(null)}
-          onDone={() => { setAcceptingCashier(null); onRefresh() }}
-        />
-      )}
-
-      {/* Modal: limpiar duplicados con la palabra "Pan" */}
-      {cleanupOpen && (
-        <CleanupPanProductsModal
-          cashierProducts={cashierProducts}
-          onCancel={() => setCleanupOpen(false)}
-          onDone={() => setCleanupOpen(false)}
-        />
-      )}
-
-      {/* Confirmar eliminar producto cajera */}
-      {confirmDelCashier && (
-        <Modal onClose={() => setConfirmDelCashier(null)} title="¿Eliminar producto?">
-          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8 }}>
-            <b>{confirmDelCashier.name}</b>
-          </div>
-          <div style={{ fontSize: 13, color: T.neutral[500], marginBottom: 20, lineHeight: 1.5 }}>
-            Este producto fue creado por una cajera. Se eliminará del catálogo y ya no aparecerá en futuras búsquedas. Las ventas que ya lo usaron no se ven afectadas.
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={() => setConfirmDelCashier(null)} style={{
-              flex: 1, padding: 13, borderRadius: 12, border: 'none',
-              background: T.neutral[100], color: T.neutral[700],
-              fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-            }}>Cancelar</button>
-            <button
-              onClick={async () => {
-                await deleteCashierProduct(confirmDelCashier.id)
-                setConfirmDelCashier(null)
-              }}
-              style={{
-                flex: 1, padding: 13, borderRadius: 12, border: 'none',
-                background: T.bad, color: '#fff',
-                fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              }}
-            >
-              Eliminar
-            </button>
           </div>
         </Modal>
       )}
@@ -654,7 +437,6 @@ function ProductTable({ products, onEdit, onDelete }) {
   return (
     <div style={{ padding: '0 16px' }}>
       <Card padding={0}>
-        {/* Header tabla */}
         <div style={{
           display: 'flex', padding: '10px 16px',
           borderBottom: `1px solid ${T.neutral[100]}`,
@@ -673,89 +455,90 @@ function ProductTable({ products, onEdit, onDelete }) {
           ))}
         </div>
 
-        {/* Filas */}
-        {products.map((p, i) => (
-          <div key={p.id} style={{
-            display: 'flex', alignItems: 'center',
-            padding: '13px 16px',
-            borderBottom: i < products.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-            transition: 'background 0.1s',
-          }}
-            onMouseEnter={e => e.currentTarget.style.background = T.neutral[25]}
-            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-          >
-            {/* Nombre */}
-            <div style={{ flex: 2.5, display: 'flex', alignItems: 'center', gap: 10, paddingRight: 8 }}>
-              <div style={{
-                width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                background: T.copper[50],
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <ProductIcon color={T.copper[500]}/>
-              </div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: T.neutral[800] }}>{p.name}</div>
-                {p.byPackage && (
-                  <div style={{ fontSize: 11, color: T.neutral[400] }}>
-                    Paquete × {p.unitsPerPackage}u · {fmtCOP(p.packageCost)}
+        {products.map((p, i) => {
+          const setup = needsSetup(p)
+          return (
+            <div key={p.id} style={{
+              display: 'flex', alignItems: 'center',
+              padding: '13px 16px',
+              borderBottom: i < products.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+              transition: 'background 0.1s',
+              cursor: 'pointer',
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = T.neutral[25]}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              onClick={() => onEdit(p)}
+            >
+              <div style={{ flex: 2.5, display: 'flex', alignItems: 'center', gap: 10, paddingRight: 8, minWidth: 0 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                  background: T.copper[50],
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <ProductIcon color={T.copper[500]}/>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: T.neutral[800] }}>{p.name}</span>
+                    {setup && <SetupBadge/>}
                   </div>
-                )}
-                {p.notes && (
-                  <div style={{ fontSize: 11, color: T.neutral[400], fontStyle: 'italic' }}>{p.notes}</div>
+                  {p.byPackage && (
+                    <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 2 }}>
+                      Paquete × {p.unitsPerPackage}u · {fmtCOP(p.packageCost)}
+                    </div>
+                  )}
+                  {p.source === 'cashier' && p.createdByName && (
+                    <div style={{ fontSize: 11, color: T.copper[700], fontStyle: 'italic', marginTop: 2 }}>
+                      Creado por {p.createdByName}
+                    </div>
+                  )}
+                  {p.notes && (
+                    <div style={{ fontSize: 11, color: T.neutral[400], fontStyle: 'italic', marginTop: 2 }}>{p.notes}</div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
+                  {p.costPerUnit > 0 ? fmtCOP(p.costPerUnit) : <span style={{ color: T.neutral[300] }}>—</span>}
+                </span>
+              </div>
+
+              <div style={{ flex: 2.2, textAlign: 'right', paddingRight: 8 }}>
+                <PricesByBranchInline product={p}/>
+              </div>
+
+              <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
+                {p.costPerUnit > 0 && p.avgPrice > 0 ? (
+                  <span style={{
+                    fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                    color: p.profit >= 0 ? T.ok : T.bad,
+                  }}>
+                    {p.profit >= 0 ? '+' : ''}{fmtCOP(p.profit)}
+                  </span>
+                ) : (
+                  <span style={{ color: T.neutral[300] }}>—</span>
                 )}
               </div>
-            </div>
 
-            {/* Costo/u */}
-            <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
-                {fmtCOP(p.costPerUnit)}
-              </span>
-            </div>
+              <div style={{ flex: 1, textAlign: 'right', paddingRight: 8 }}>
+                {p.costPerUnit > 0 && p.avgPrice > 0 ? <MarginBadge margin={p.margin}/> : <span style={{ color: T.neutral[300] }}>—</span>}
+              </div>
 
-            {/* Precios por panaderia */}
-            <div style={{ flex: 2.2, textAlign: 'right', paddingRight: 8 }}>
-              <PricesByBranchInline product={p}/>
+              <div style={{ flex: 0.7, display: 'flex', justifyContent: 'flex-end' }}>
+                <button onClick={(e) => { e.stopPropagation(); onDelete(p) }} style={{
+                  width: 30, height: 30, borderRadius: 8, border: 'none',
+                  background: '#FAE8E6', color: T.bad,
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }} title="Eliminar">
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 3 H10 M4.5 3 V1.5 H7.5 V3 M4 5 V9.5 M8 5 V9.5 M2.5 3 L3 10 Q3 11 4 11 H8 Q9 11 9 10 L9.5 3" stroke={T.bad} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+                  </svg>
+                </button>
+              </div>
             </div>
-
-            {/* Ganancia/u */}
-            <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
-              <span style={{
-                fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                color: p.profit >= 0 ? T.ok : T.bad,
-              }}>
-                {p.profit >= 0 ? '+' : ''}{fmtCOP(p.profit)}
-              </span>
-            </div>
-
-            {/* Margen */}
-            <div style={{ flex: 1, textAlign: 'right', paddingRight: 8 }}>
-              <MarginBadge margin={p.margin}/>
-            </div>
-
-            {/* Acciones */}
-            <div style={{ flex: 0.7, display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-              <button onClick={() => onEdit(p.id)} style={{
-                width: 30, height: 30, borderRadius: 8, border: 'none',
-                background: T.neutral[100], color: T.neutral[600],
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <svg width="13" height="13" viewBox="0 0 13 13" fill="none">
-                  <path d="M1.5 11 L4 10 L11.5 2.5 Q12.5 1.5 11.5 0.5 Q10.5 -0.5 9.5 0.5 L2 8 Z" stroke={T.neutral[500]} strokeWidth="1.2" fill="none" strokeLinejoin="round"/>
-                </svg>
-              </button>
-              <button onClick={() => onDelete(p.id)} style={{
-                width: 30, height: 30, borderRadius: 8, border: 'none',
-                background: '#FAE8E6', color: T.bad,
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2 3 H10 M4.5 3 V1.5 H7.5 V3 M4 5 V9.5 M8 5 V9.5 M2.5 3 L3 10 Q3 11 4 11 H8 Q9 11 9 10 L9.5 3" stroke={T.bad} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </Card>
     </div>
   )
@@ -765,85 +548,100 @@ function ProductTable({ products, onEdit, onDelete }) {
 function ProductCards({ products, onEdit, onDelete }) {
   return (
     <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {products.map(p => (
-        <Card key={p.id} padding={0}>
-          <div style={{ padding: '14px 16px' }}>
-            {/* Fila 1: nombre + badge margen */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                  background: T.copper[50],
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <ProductIcon color={T.copper[500]}/>
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: T.neutral[800], overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {p.name}
+      {products.map(p => {
+        const setup = needsSetup(p)
+        const hasMetrics = p.costPerUnit > 0 && p.avgPrice > 0
+        return (
+          <Card key={p.id} padding={0}>
+            <div
+              onClick={() => onEdit(p)}
+              style={{ padding: '14px 16px', cursor: 'pointer' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                  <div style={{
+                    width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                    background: T.copper[50],
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <ProductIcon color={T.copper[500]}/>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center' }}>
-                    {p.byPackage && (
-                      <span style={{ fontSize: 11, color: T.neutral[400] }}>
-                        Paq × {p.unitsPerPackage}u
-                      </span>
-                    )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{
+                      fontSize: 15, fontWeight: 700, color: T.neutral[800],
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {p.name}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center', flexWrap: 'wrap' }}>
+                      {setup && <SetupBadge/>}
+                      {p.byPackage && (
+                        <span style={{ fontSize: 11, color: T.neutral[400] }}>
+                          Paq × {p.unitsPerPackage}u
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
+                {hasMetrics && <MarginBadge margin={p.margin}/>}
               </div>
-              <MarginBadge margin={p.margin}/>
+
+              {p.source === 'cashier' && p.createdByName && (
+                <div style={{ fontSize: 11, color: T.copper[700], fontStyle: 'italic', marginBottom: 8 }}>
+                  Creado por {p.createdByName}
+                </div>
+              )}
+
+              <div style={{
+                background: T.neutral[50], borderRadius: 10, padding: '10px 12px',
+              }}>
+                {hasMetrics && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 6 }}>
+                    <MetricCell label="Costo/u" value={fmtCOP(p.costPerUnit)} color={T.neutral[600]}/>
+                    <MetricCell
+                      label="Ganancia/u"
+                      value={(p.profit >= 0 ? '+' : '') + fmtCOP(p.profit)}
+                      color={p.profit >= 0 ? T.ok : T.bad}
+                    />
+                  </div>
+                )}
+                <div style={{ borderTop: hasMetrics ? `0.5px solid ${T.neutral[200]}` : 'none', paddingTop: hasMetrics ? 8 : 0 }}>
+                  <PricesByBranchBlock product={p}/>
+                </div>
+              </div>
+
+              {p.notes && (
+                <div style={{ marginTop: 6, fontSize: 11, color: T.neutral[400], fontStyle: 'italic' }}>
+                  {p.notes}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onEdit(p) }}
+                  style={{
+                    flex: 1, padding: '8px', borderRadius: 10, border: 'none',
+                    background: T.copper[500], color: '#fff',
+                    fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {setup ? 'Configurar' : 'Editar'}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(p) }}
+                  style={{
+                    flex: 1, padding: '8px', borderRadius: 10, border: 'none',
+                    background: '#FAE8E6', color: T.bad,
+                    fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  Eliminar
+                </button>
+              </div>
             </div>
-
-            {/* Fila 2: métricas + precios por panadería */}
-            <div style={{
-              background: T.neutral[50], borderRadius: 10, padding: '10px 12px',
-            }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 6 }}>
-                <MetricCell label="Costo/u" value={fmtCOP(p.costPerUnit)} color={T.neutral[600]}/>
-                <MetricCell
-                  label="Ganancia/u"
-                  value={(p.profit >= 0 ? '+' : '') + fmtCOP(p.profit)}
-                  color={p.profit >= 0 ? T.ok : T.bad}
-                />
-              </div>
-              <div style={{ borderTop: `0.5px solid ${T.neutral[200]}`, paddingTop: 8 }}>
-                <PricesByBranchBlock product={p}/>
-              </div>
-            </div>
-
-            {/* Fila 3: si viene en paquete */}
-            {p.byPackage && (
-              <div style={{ marginTop: 8, fontSize: 11, color: T.neutral[400] }}>
-                Paquete: {fmtCOP(p.packageCost)} · {p.unitsPerPackage} unidades
-                {' · '}Ganancia por paquete:{' '}
-                <span style={{ fontWeight: 700, color: p.profit >= 0 ? T.ok : T.bad }}>
-                  {fmtCOP(p.profit * p.unitsPerPackage)}
-                </span>
-              </div>
-            )}
-
-            {p.notes && (
-              <div style={{ marginTop: 6, fontSize: 11, color: T.neutral[400], fontStyle: 'italic' }}>
-                {p.notes}
-              </div>
-            )}
-
-            {/* Acciones */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-              <button onClick={() => onEdit(p.id)} style={{
-                flex: 1, padding: '8px', borderRadius: 10, border: 'none',
-                background: T.neutral[100], color: T.neutral[600],
-                fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              }}>Editar</button>
-              <button onClick={() => onDelete(p.id)} style={{
-                flex: 1, padding: '8px', borderRadius: 10, border: 'none',
-                background: '#FAE8E6', color: T.bad,
-                fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              }}>Eliminar</button>
-            </div>
-          </div>
-        </Card>
-      ))}
+          </Card>
+        )
+      })}
     </div>
   )
 }
@@ -861,16 +659,20 @@ function MetricCell({ label, value, color }) {
   )
 }
 
-// ── Formulario agregar / editar ────────────────────────────────
-function ProductForm({ initial, isEdit, onClose, onSave }) {
+// ── Formulario agregar / editar / promover ─────────────────────
+// Si `source === 'cashier'` y `isEdit`, al guardar PROMUEVE: crea producto admin
+// y borra el cashier (deja el catálogo unificado en data.products).
+function ProductForm({ initial, isEdit, source, onClose, onSave }) {
   const branches = getData().branches || []
+  const isPromoting = isEdit && source === 'cashier'
+
   const [name,            setName]            = useState(initial?.name || '')
   const [freeAmount,      setFreeAmount]      = useState(initial?.freeAmount === true)
-  const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? true)
-  const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null ? String(initial.packageCost) : '')
-  const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null ? String(initial.unitsPerPackage) : '')
+  const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? false)
+  const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null && Number(initial.packageCost) > 0 ? String(initial.packageCost) : '')
+  const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null && Number(initial.unitsPerPackage) > 0 ? String(initial.unitsPerPackage) : '')
   const [notes,           setNotes]            = useState(initial?.notes || '')
-  // Precios por panadería: estado como mapa { [branchId]: stringValue }
+  const [busy,            setBusy]             = useState(false)
   const [priceInputs, setPriceInputs] = useState(() => {
     const init = {}
     branches.forEach(b => {
@@ -888,7 +690,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
   const up = Number(unitsPerPackage) || 1
   const costPerUnit = byPackage ? (up > 0 ? pc / up : 0) : pc
 
-  // Precios numéricos válidos
   const definedPrices = Object.values(priceInputs).map(Number).filter(n => n > 0)
   const avgPrice = definedPrices.length > 0
     ? definedPrices.reduce((s, n) => s + n, 0) / definedPrices.length
@@ -896,65 +697,84 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
   const profit = avgPrice - costPerUnit
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
 
-  // Solo requiere nombre + costo. Los precios son opcionales (cajera los pone al usar).
-  // Si es venta libre: NO requiere costo (el costo lo decide la cajera al venderlo).
   const canSave = name.trim() && (freeAmount || (pc > 0 && (!byPackage || up > 0)))
 
-  function handleSave() {
-    if (!canSave) return
-    // Si es venta libre: NO se guardan precios ni costo (el monto lo elige la cajera).
-    if (freeAmount) {
-      const data = {
-        name: name.trim(),
-        freeAmount: true,
-        pricesByBranch: {},
-        packageCost: 0,
-        unitsPerPackage: 1,
-        byPackage: false,
-        notes: notes.trim(),
-      }
-      if (isEdit) {
-        updateProduct(initial.id, data)
+  async function handleSave() {
+    if (!canSave || busy) return
+    setBusy(true)
+    try {
+      const baseData = freeAmount
+        ? {
+            name: name.trim(),
+            freeAmount: true,
+            pricesByBranch: {},
+            packageCost: 0,
+            unitsPerPackage: 1,
+            byPackage: false,
+            notes: notes.trim(),
+          }
+        : (() => {
+            const pricesByBranch = {}
+            Object.entries(priceInputs).forEach(([bid, val]) => {
+              const num = Number(val)
+              if (num > 0) pricesByBranch[bid] = num
+            })
+            return {
+              name: name.trim(),
+              freeAmount: false,
+              byPackage,
+              packageCost: pc,
+              unitsPerPackage: byPackage ? up : 1,
+              pricesByBranch,
+              notes: notes.trim(),
+            }
+          })()
+
+      if (isPromoting) {
+        // Promover: crear como admin y borrar el cashier.
+        addProduct(baseData)
+        try { await deleteCashierProduct(initial.id) } catch (e) { console.warn('No se pudo borrar el cashier:', e) }
+      } else if (isEdit) {
+        updateProduct(initial.id, baseData)
       } else {
-        addProduct(data)
+        addProduct(baseData)
       }
       onSave()
-      return
+    } catch (err) {
+      console.error(err)
+      setBusy(false)
     }
-    // Construir pricesByBranch limpio (solo entradas con valor > 0)
-    const pricesByBranch = {}
-    Object.entries(priceInputs).forEach(([bid, val]) => {
-      const num = Number(val)
-      if (num > 0) pricesByBranch[bid] = num
-    })
-    const data = {
-      name: name.trim(),
-      freeAmount: false,
-      byPackage,
-      packageCost: pc,
-      unitsPerPackage: byPackage ? up : 1,
-      pricesByBranch,
-      notes: notes.trim(),
-    }
-    if (isEdit) {
-      updateProduct(initial.id, data)
-    } else {
-      addProduct(data)
-    }
-    onSave()
   }
 
-  return (
-    <Modal onClose={onClose} title={isEdit ? 'Editar producto' : 'Nuevo producto'}>
-      {/* Nombre */}
-      <InputField
-        label="Nombre del producto"
-        value={name}
-        onChange={setName}
-        placeholder="Ej: Pan tajado, Croissant..."
-      />
+  const title = isPromoting
+    ? 'Configurar producto'
+    : isEdit
+      ? 'Editar producto'
+      : 'Nuevo producto'
 
-      {/* Toggle Venta libre */}
+  return (
+    <Modal onClose={busy ? undefined : onClose} title={title}>
+      {isPromoting && (
+        <div style={{
+          padding: '10px 12px', borderRadius: 10,
+          background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+          marginBottom: 14, fontSize: 12.5, color: T.copper[800], lineHeight: 1.4,
+        }}>
+          Este producto fue creado por <b>{initial?.createdByName || 'una cajera'}</b>. Asígnale costo y precios para configurarlo.
+        </div>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={labelStyle}>Nombre del producto</div>
+        <input
+          type="text"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          placeholder="Ej: Pan tajado, Croissant..."
+          style={inputStyle}
+        />
+      </div>
+
       <div style={{ marginBottom: 14 }}>
         <button
           onClick={() => setFreeAmount(v => !v)}
@@ -989,23 +809,18 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </button>
       </div>
 
-      {/* Si es venta libre, NO mostrar costo ni precios — saltamos directo a notas */}
       {freeAmount ? (
         <div style={{
           padding: '12px 14px', borderRadius: 12,
           background: T.copper[50], border: `1px solid ${T.copper[100]}`,
           fontSize: 12.5, color: T.copper[700], lineHeight: 1.5, marginBottom: 14,
         }}>
-          ✓ Producto de venta libre. La cajera escribirá el monto al vender (mínimo $400).
-          No requiere precio ni costo.
+          ✓ Producto de venta libre. La cajera escribirá el monto al vender (mínimo $400). No requiere precio ni costo.
         </div>
       ) : (
       <>
-      {/* Toggle paquete */}
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-          ¿Cómo lo compras?
-        </div>
+        <div style={labelStyle}>¿Cómo lo compras?</div>
         <div style={{ display: 'flex', gap: 6 }}>
           {[
             { val: true,  label: 'Por paquete / bulto' },
@@ -1016,7 +831,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
               cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
               background: byPackage === o.val ? T.copper[500] : T.neutral[100],
               color: byPackage === o.val ? '#fff' : T.neutral[600],
-              transition: 'background 0.15s',
             }}>
               {o.label}
             </button>
@@ -1024,13 +838,10 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       </div>
 
-      {/* Costo */}
       {byPackage ? (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-              Costo del paquete ($)
-            </div>
+            <div style={labelStyle}>Costo del paquete ($)</div>
             <input
               type="number" min="0" value={packageCost}
               onChange={e => setPackageCost(e.target.value)}
@@ -1039,9 +850,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
             />
           </div>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-              Unidades por paquete
-            </div>
+            <div style={labelStyle}>Unidades por paquete</div>
             <input
               type="number" min="1" value={unitsPerPackage}
               onChange={e => setUnitsPerPackage(e.target.value)}
@@ -1052,9 +861,7 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       ) : (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-            Costo por unidad ($)
-          </div>
+          <div style={labelStyle}>Costo por unidad ($)</div>
           <input
             type="number" min="0" value={packageCost}
             onChange={e => setPackageCost(e.target.value)}
@@ -1064,11 +871,8 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       )}
 
-      {/* Precios por panadería */}
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-          Precio de venta por panadería ($)
-        </div>
+        <div style={labelStyle}>Precio de venta por panadería ($)</div>
         <div style={{ fontSize: 11.5, color: T.neutral[500], marginBottom: 8, lineHeight: 1.4 }}>
           Si dejas alguno vacío, la cajera de esa panadería pondrá el precio la primera vez que lo venda.
         </div>
@@ -1093,7 +897,6 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
         </div>
       </div>
 
-      {/* Preview de ganancia en tiempo real */}
       {pc > 0 && avgPrice > 0 && (
         <div style={{
           marginBottom: 16, padding: '12px 14px', borderRadius: 12,
@@ -1118,25 +921,13 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
               </div>
             </div>
           </div>
-          {byPackage && up > 0 && (
-            <div style={{ marginTop: 8, textAlign: 'center', fontSize: 12, color: T.neutral[500] }}>
-              Ganancia por paquete completo:
-              {' '}
-              <strong style={{ color: marginColor(margin) }}>
-                {profit >= 0 ? '+' : ''}{fmtCOP(profit * up)}
-              </strong>
-            </div>
-          )}
         </div>
       )}
       </>
       )}
 
-      {/* Notas opcionales */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
-          Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span>
-        </div>
+        <div style={labelStyle}>Notas <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>(opcional)</span></div>
         <input
           type="text" value={notes}
           onChange={e => setNotes(e.target.value)}
@@ -1146,9 +937,9 @@ function ProductForm({ initial, isEdit, onClose, onSave }) {
       </div>
 
       <PrimaryButton
-        label={isEdit ? 'Guardar cambios' : 'Agregar producto'}
+        label={busy ? 'Guardando...' : (isPromoting ? 'Configurar y guardar' : isEdit ? 'Guardar cambios' : 'Agregar producto')}
         onClick={handleSave}
-        disabled={!canSave}
+        disabled={!canSave || busy}
       />
     </Modal>
   )
@@ -1161,488 +952,7 @@ const inputStyle = {
   outline: 'none', boxSizing: 'border-box',
 }
 
-// ── Modal: Aceptar producto creado por cajera ─────────────────
-function AcceptCashierProductModal({ product, onCancel, onDone }) {
-  const branches = getData().branches || []
-  // Pre-llenar precios con lo que ya tenga el producto cajera
-  const [priceInputs, setPriceInputs] = useState(() => {
-    const init = {}
-    branches.forEach(b => {
-      const v = product?.pricesByBranch?.[String(b.id)]
-      init[String(b.id)] = v && Number(v) > 0 ? String(v) : ''
-    })
-    return init
-  })
-  const [byPackage, setByPackage] = useState(false)
-  const [packageCost, setPackageCost] = useState('')
-  const [unitsPerPackage, setUnitsPerPackage] = useState('')
-  const [unitCost, setUnitCost] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
-
-  function setPriceFor(bid, val) {
-    setPriceInputs(prev => ({ ...prev, [String(bid)]: val.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '') }))
-  }
-
-  // Costo unitario
-  const cost = byPackage
-    ? (Number(unitsPerPackage) > 0 ? (Number(packageCost) || 0) / Number(unitsPerPackage) : 0)
-    : (Number(unitCost) || 0)
-
-  const definedPrices = Object.values(priceInputs).map(Number).filter(n => n > 0)
-  const avgPrice = definedPrices.length > 0
-    ? definedPrices.reduce((s, n) => s + n, 0) / definedPrices.length
-    : 0
-  const profit = avgPrice - cost
-  const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
-
-  // Solo requiere costo. Los precios son opcionales (pueden quedar para que cajera los ponga).
-  const valid = byPackage
-    ? (Number(packageCost) > 0 && Number(unitsPerPackage) > 0)
-    : Number(unitCost) > 0
-
-  async function handleAccept() {
-    if (!valid || busy) return
-    setBusy(true); setError(null)
-    try {
-      const pricesByBranch = {}
-      Object.entries(priceInputs).forEach(([bid, val]) => {
-        const num = Number(val)
-        if (num > 0) pricesByBranch[bid] = num
-      })
-      // 1. Crear el producto en /todypan/data.products (catálogo del admin)
-      addProduct({
-        name: product.name,
-        pricesByBranch,
-        packageCost: byPackage ? Number(packageCost) : Number(unitCost),
-        byPackage,
-        unitsPerPackage: byPackage ? Number(unitsPerPackage) : 0,
-      })
-      // 2. Eliminar el producto cajera (se "promovió")
-      await deleteCashierProduct(product.id)
-      onDone()
-    } catch (err) {
-      console.error(err)
-      setError('No pudimos aceptar el producto. Intenta de nuevo.')
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal onClose={busy ? undefined : onCancel} title="Aceptar producto">
-      <div style={{
-        padding: '10px 12px', borderRadius: 10,
-        background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-        marginBottom: 14,
-      }}>
-        <div style={{ fontSize: 11.5, fontWeight: 700, color: T.copper[700], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 4 }}>
-          Producto creado por
-        </div>
-        <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
-          {product.name}
-        </div>
-        <div style={{ fontSize: 12, color: T.neutral[600], marginTop: 2 }}>
-          {product.createdByName || 'Cajera'}
-        </div>
-      </div>
-
-      {/* Precios por panadería */}
-      <label style={fieldLabel()}>Precios por panadería</label>
-      <div style={{ fontSize: 11.5, color: T.neutral[500], marginBottom: 8, lineHeight: 1.4 }}>
-        Si dejas alguno vacío, la cajera de esa panadería pondrá el precio la primera vez que lo venda.
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-        {branches.map(b => (
-          <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{
-              flex: 1, fontSize: 13, fontWeight: 600, color: T.neutral[700],
-              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-            }}>
-              {b.name}
-            </div>
-            <div style={{ ...moneyInputWrap(), flex: 1, maxWidth: 180, marginBottom: 0 }}>
-              <span style={moneyPrefix()}>$</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={priceInputs[String(b.id)] || ''}
-                onChange={e => setPriceFor(b.id, e.target.value)}
-                placeholder="0"
-                disabled={busy}
-                style={moneyInput()}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Toggle modo de costo */}
-      <label style={fieldLabel()}>¿Cómo lo compras?</label>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <button
-          onClick={() => setByPackage(false)}
-          disabled={busy}
-          style={toggleBtn(!byPackage)}
-        >
-          Por unidad
-        </button>
-        <button
-          onClick={() => setByPackage(true)}
-          disabled={busy}
-          style={toggleBtn(byPackage)}
-        >
-          Por paquete
-        </button>
-      </div>
-
-      {byPackage ? (
-        <>
-          <label style={fieldLabel()}>Unidades por paquete</label>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={unitsPerPackage}
-            onChange={e => setUnitsPerPackage(e.target.value.replace(/[^0-9]/g, ''))}
-            placeholder="Ej. 24"
-            disabled={busy}
-            style={{ ...inputStyle, marginBottom: 12 }}
-          />
-          <label style={fieldLabel()}>Costo del paquete</label>
-          <div style={moneyInputWrap()}>
-            <span style={moneyPrefix()}>$</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={packageCost === '0' ? '' : packageCost}
-              onChange={e => setPackageCost(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
-              placeholder="0"
-              disabled={busy}
-              style={moneyInput()}
-            />
-          </div>
-        </>
-      ) : (
-        <>
-          <label style={fieldLabel()}>Costo por unidad</label>
-          <div style={moneyInputWrap()}>
-            <span style={moneyPrefix()}>$</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={unitCost === '0' ? '' : unitCost}
-              onChange={e => setUnitCost(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
-              placeholder="0"
-              disabled={busy}
-              style={moneyInput()}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Resumen de margen */}
-      {valid && avgPrice > 0 && (
-        <div style={{
-          padding: '10px 12px', borderRadius: 10,
-          background: T.neutral[50], marginBottom: 14,
-          display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-              Ganancia / unidad
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: profit >= 0 ? T.ok : T.bad, fontVariantNumeric: 'tabular-nums' }}>
-              {fmtCOP(profit)}
-            </div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
-              Margen
-            </div>
-            <div style={{
-              fontSize: 16, fontWeight: 800,
-              color: margin >= 40 ? T.ok : margin >= 20 ? T.warn : T.bad,
-              fontVariantNumeric: 'tabular-nums',
-            }}>
-              {margin.toFixed(1)}%
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div style={{
-          marginBottom: 10, padding: '10px 12px', borderRadius: 10,
-          background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-          fontSize: 12.5, fontWeight: 500, textAlign: 'center',
-        }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 10 }}>
-        <button onClick={onCancel} disabled={busy} style={{
-          flex: 1, padding: 13, borderRadius: 12, border: 'none',
-          background: T.neutral[100], color: T.neutral[700],
-          fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-        }}>Cancelar</button>
-        <button
-          onClick={handleAccept}
-          disabled={!valid || busy}
-          style={{
-            flex: 1.4, padding: 13, borderRadius: 12, border: 'none',
-            background: valid && !busy ? T.copper[500] : T.neutral[200],
-            color: valid && !busy ? '#fff' : T.neutral[400],
-            fontSize: 15, fontWeight: 700,
-            cursor: valid && !busy ? 'pointer' : 'not-allowed',
-            fontFamily: 'inherit',
-            boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
-          }}
-        >
-          {busy ? 'Aceptando...' : 'Aceptar y agregar al catálogo'}
-        </button>
-      </div>
-    </Modal>
-  )
-}
-
-function fieldLabel() {
-  return {
-    display: 'block',
-    fontSize: 12, fontWeight: 700, color: T.neutral[600],
-    letterSpacing: 0.3, textTransform: 'uppercase',
-    marginBottom: 6,
-  }
-}
-function moneyInputWrap() {
-  return {
-    display: 'flex', alignItems: 'center',
-    border: `1px solid ${T.neutral[200]}`, borderRadius: 12,
-    background: '#fff', marginBottom: 12,
-  }
-}
-function moneyPrefix() {
-  return {
-    paddingLeft: 14, color: T.neutral[500], fontSize: 15, fontWeight: 600,
-  }
-}
-function moneyInput() {
-  return {
-    width: '100%', padding: '12px 14px 12px 8px',
-    border: 'none', outline: 'none',
-    fontFamily: 'inherit', fontSize: 16, fontWeight: 600,
-    color: T.neutral[900], background: 'transparent',
-    fontVariantNumeric: 'tabular-nums',
-  }
-}
-function toggleBtn(active) {
-  return {
-    flex: 1, padding: '10px', borderRadius: 12,
-    background: active ? T.copper[500] : T.neutral[100],
-    color: active ? '#fff' : T.neutral[700],
-    border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-    fontSize: 13, fontWeight: 700,
-  }
-}
-function chipBtn(active) {
-  return {
-    padding: '8px 14px', borderRadius: 999,
-    background: active ? T.copper[50] : '#fff',
-    color: active ? T.copper[700] : T.neutral[600],
-    border: `1px solid ${active ? T.copper[400] : T.neutral[200]}`,
-    cursor: 'pointer', fontFamily: 'inherit',
-    fontSize: 12.5, fontWeight: 700,
-  }
-}
-
-// ── Detección segura de duplicados de "Pan + monto" ────────────
-// Matchea solo nombres que tienen la palabra "pan" como palabra independiente
-// (NO matchea "empanada", "panela") Y que contienen un número de 3+ dígitos
-// (precio típico: 400, 1000, 2000…).
-function isPanWithAmount(name) {
-  if (!name) return false
-  const hasPanWord = /\bpan\b/i.test(name)
-  const hasNumber = /\d{3,}/.test(name)
-  return hasPanWord && hasNumber
-}
-
-// ── Modal: limpiar duplicados "Pan + monto" con checkboxes ──────
-function CleanupPanProductsModal({ cashierProducts, onCancel, onDone }) {
-  const matches = (cashierProducts || []).filter(p => isPanWithAmount(p.name))
-  // Por defecto todos seleccionados; el admin puede desmarcar falsos positivos
-  const [selectedIds, setSelectedIds] = useState(() => new Set(matches.map(p => p.id)))
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
-  const [doneCount, setDoneCount] = useState(0)
-
-  function toggle(id) {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-  function selectAll() { setSelectedIds(new Set(matches.map(p => p.id))) }
-  function selectNone() { setSelectedIds(new Set()) }
-
-  const toDelete = matches.filter(p => selectedIds.has(p.id))
-
-  async function handleConfirm() {
-    if (busy || toDelete.length === 0) return
-    setBusy(true); setError(null)
-    let n = 0
-    try {
-      for (const p of toDelete) {
-        await deleteCashierProduct(p.id)
-        n++
-        setDoneCount(n)
-      }
-      onDone()
-    } catch (err) {
-      console.error('[cleanup] failed at item', n, err)
-      setError(`Se borraron ${n} de ${toDelete.length}. Reintenta para terminar.`)
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Modal onClose={busy ? undefined : onCancel} title="Limpiar duplicados de Pan">
-      <div style={{ fontSize: 13, color: T.neutral[600], marginBottom: 12, lineHeight: 1.5 }}>
-        Detecté <b>{matches.length} producto{matches.length === 1 ? '' : 's'}</b> tipo "Pan + monto" creado{matches.length === 1 ? '' : 's'} por cajeras.
-        Desmarca los que NO quieras borrar. Las ventas pasadas <b>no se afectan</b>.
-      </div>
-
-      {matches.length > 0 && (
-        <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, fontSize: 12 }}>
-            <span style={{ color: T.neutral[600], fontWeight: 600 }}>
-              {selectedIds.size} de {matches.length} seleccionados
-            </span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={selectAll} disabled={busy} style={{
-                padding: '4px 10px', borderRadius: 8, border: 'none',
-                background: T.neutral[100], color: T.neutral[700],
-                fontSize: 11.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-              }}>
-                Todos
-              </button>
-              <button onClick={selectNone} disabled={busy} style={{
-                padding: '4px 10px', borderRadius: 8, border: 'none',
-                background: T.neutral[100], color: T.neutral[700],
-                fontSize: 11.5, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-              }}>
-                Ninguno
-              </button>
-            </div>
-          </div>
-
-          <div style={{
-            maxHeight: 280, overflowY: 'auto',
-            padding: '6px 0', borderRadius: 12,
-            background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-            marginBottom: 14,
-          }}>
-            {matches.map(p => {
-              const checked = selectedIds.has(p.id)
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => !busy && toggle(p.id)}
-                  disabled={busy}
-                  style={{
-                    width: '100%', padding: '10px 12px',
-                    background: 'transparent', border: 'none',
-                    cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    textAlign: 'left',
-                  }}
-                >
-                  {/* Checkbox */}
-                  <div style={{
-                    width: 20, height: 20, borderRadius: 6, flexShrink: 0,
-                    background: checked ? T.bad : '#fff',
-                    border: `1.5px solid ${checked ? T.bad : T.neutral[300]}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {checked && (
-                      <svg width="13" height="13" viewBox="0 0 13 13">
-                        <path d="M3 6.5 L5.5 9 L10 4" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    )}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: 13, color: T.neutral[900], fontWeight: 600,
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                      textDecoration: checked ? 'line-through' : 'none',
-                      opacity: checked ? 0.85 : 1,
-                    }}>
-                      {p.name}
-                    </div>
-                    {p.createdByName && (
-                      <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 1 }}>
-                        {p.createdByName}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              )
-            })}
-          </div>
-        </>
-      )}
-
-      {matches.length === 0 && (
-        <div style={{
-          marginBottom: 14, padding: '20px',
-          background: '#E8F4E8', border: `1px solid #C2DDC1`, borderRadius: 12,
-          textAlign: 'center', color: T.ok, fontSize: 13, fontWeight: 600,
-        }}>
-          ✓ No hay duplicados que limpiar
-        </div>
-      )}
-
-      {busy && (
-        <div style={{ fontSize: 12.5, color: T.copper[600], textAlign: 'center', marginBottom: 12 }}>
-          Borrando {doneCount} de {toDelete.length}...
-        </div>
-      )}
-
-      {error && (
-        <div style={{
-          marginBottom: 12, padding: '10px 12px', borderRadius: 10,
-          background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-          fontSize: 12.5, fontWeight: 500, textAlign: 'center',
-        }}>
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 10 }}>
-        <button onClick={onCancel} disabled={busy} style={{
-          flex: 1, padding: 13, borderRadius: 12, border: 'none',
-          background: T.neutral[100], color: T.neutral[700],
-          fontSize: 14, fontWeight: 700, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
-        }}>Cancelar</button>
-        <button
-          onClick={handleConfirm}
-          disabled={busy || toDelete.length === 0}
-          style={{
-            flex: 1.4, padding: 13, borderRadius: 12, border: 'none',
-            background: toDelete.length > 0 && !busy ? T.bad : T.neutral[200],
-            color: toDelete.length > 0 && !busy ? '#fff' : T.neutral[400],
-            fontSize: 14, fontWeight: 700, cursor: toDelete.length > 0 && !busy ? 'pointer' : 'not-allowed',
-            fontFamily: 'inherit',
-            boxShadow: toDelete.length > 0 && !busy ? `0 3px 10px ${T.bad}44` : 'none',
-          }}
-        >
-          {busy
-            ? 'Borrando...'
-            : toDelete.length === 0
-              ? 'Selecciona alguno'
-              : `Borrar ${toDelete.length}`}
-        </button>
-      </div>
-    </Modal>
-  )
+const labelStyle = {
+  fontSize: 11, fontWeight: 700, color: T.neutral[500],
+  textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
 }

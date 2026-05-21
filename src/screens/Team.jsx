@@ -75,6 +75,15 @@ function fmt12h(time24) {
   return `${h12}:${m.toString().padStart(2, '0')} ${period}`
 }
 
+// Fecha completa en español para el mensaje de WhatsApp.
+// Ej: "miércoles 20 de mayo de 2026"
+function fmtDateLong(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00')
+  const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
+  const months = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+  return `${days[d.getDay()]} ${d.getDate()} de ${months[d.getMonth()]} de ${d.getFullYear()}`
+}
+
 function ShiftsView({ employees, onOpenPersonal }) {
   const today = todayStr()
   const [date, setDate] = useState(today)
@@ -109,8 +118,8 @@ function ShiftsView({ employees, onOpenPersonal }) {
 
   function handleShare() {
     if (shifts.length === 0) return
-    const dateLabel = fmtDate(date, { weekday: true })
-    let msg = `📋 *Turnos del ${dateLabel}*\n`
+    const dateLabel = fmtDateLong(date)
+    let msg = `*Turnos del ${dateLabel}*\n`
     for (const group of byBranch) {
       msg += `\n*${group.branchName}*\n`
       for (const s of group.items) {

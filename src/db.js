@@ -25,7 +25,6 @@ const defaultExpenseCats = {
     { id: 'otros_prov', label: 'Otros insumos' },
   ],
   operacion: [
-    { id: 'nomina',     label: 'Nómina' },
     { id: 'arriendo',   label: 'Arriendo' },
     { id: 'energia',    label: 'Energía' },
     { id: 'agua',       label: 'Agua' },
@@ -79,9 +78,9 @@ function migrate(d) {
     d.incomeCats = [...d.incomeCats, { id: 'sobra_caja', label: 'Sobra de cierre' }]
   }
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
-  // Migrar: agregar 'nomina' a operacion si falta
-  if (d.expenseCats?.operacion && !d.expenseCats.operacion.some(c => c.id === 'nomina')) {
-    d.expenseCats.operacion = [{ id: 'nomina', label: 'Nómina' }, ...d.expenseCats.operacion]
+  // Migración legacy: si quedó la categoría 'nomina', la quitamos
+  if (d.expenseCats?.operacion) {
+    d.expenseCats.operacion = d.expenseCats.operacion.filter(c => c.id !== 'nomina')
   }
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
@@ -157,14 +156,6 @@ export function getBogotaHour() {
   return getBogotaDate().getHours()
 }
 
-// ─── Cálculo de horas ─────────────────────────────────────────
-export function calcHourRate(empRate, workHours = 9) {
-  return Math.round((empRate / workHours) / 50) * 50
-}
-export function calcExtraPay(hourRate, extraHours) {
-  return Math.round((hourRate * extraHours) / 50) * 50
-}
-
 // ─── Movimientos ─────────────────────────────────────────────
 export function getMovements() { return _data.movements }
 
@@ -176,17 +167,6 @@ export function addMovement(mov) {
 }
 
 export function deleteMovement(id) {
-  const mov = _data.movements.find(m => m.id === id)
-  // Si es un movimiento de nomina, sincronizar: despagar el dia para no
-  // dejar attendance.paid=true sin gasto registrado.
-  if (mov?.payrollRef) {
-    const { empId, workedDate } = mov.payrollRef
-    const a = _data.attendance[empId]?.[workedDate]
-    if (a) {
-      a.paid = false
-      delete a.payrollMovementId
-    }
-  }
   _data.movements = _data.movements.filter(m => m.id !== id)
   persist()
 }
@@ -196,8 +176,7 @@ export function getEmployees() { return _data.employees }
 
 export function addEmployee(emp) {
   const id = 'e' + Date.now()
-  _data.employees = [..._data.employees, { workHours: 9, type: 'regular', ...emp, id }]
-  _data.attendance[id] = {}
+  _data.employees = [..._data.employees, { type: 'regular', ...emp, id }]
   persist()
   return id
 }
@@ -209,173 +188,7 @@ export function updateEmployee(id, updates) {
 
 export function deleteEmployee(id) {
   _data.employees = _data.employees.filter(e => e.id !== id)
-  delete _data.attendance[id]
   persist()
-}
-
-// ─── Asistencia ───────────────────────────────────────────────
-export function getAttendance() { return _data.attendance }
-
-export function toggleWorked(empId, date) {
-  if (!_data.attendance[empId]) _data.attendance[empId] = {}
-  const att = _data.attendance[empId]
-  if (att[date]) {
-    delete att[date]
-  } else {
-    att[date] = { worked: true, extras: 0, extraHours: 0, paid: false }
-  }
-  persist()
-}
-
-export function setAttendanceEntry(empId, date, data) {
-  if (!_data.attendance[empId]) _data.attendance[empId] = {}
-  if (data === null) {
-    delete _data.attendance[empId][date]
-  } else {
-    _data.attendance[empId][date] = { ..._data.attendance[empId][date], ...data }
-  }
-  persist()
-}
-
-// ─── Helpers: pago de nómina como movimiento de gasto ─────────
-// Cada día pagado de un empleado crea un movimiento expense (cat: 'nomina')
-// con fecha del día del pago (Bogotá). Despagar borra ese movimiento.
-function _shortDate(dateStr) {
-  try {
-    return new Date(dateStr + 'T00:00:00').toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
-  } catch {
-    return dateStr
-  }
-}
-
-function _buildPayrollMovement(empId, workedDate) {
-  const emp = _data.employees.find(e => e.id === empId)
-  if (!emp) return null
-  const a = _data.attendance[empId]?.[workedDate]
-  if (!a) return null
-  const amount = (Number(emp.rate) || 0) + (Number(a.extras) || 0)
-  if (amount <= 0) return null
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
-  const firstName = (emp.name || 'empleado').split(' ')[0]
-  return {
-    type: 'expense',
-    amount,
-    date: today,
-    cat: 'nomina',
-    group: 'operacion',
-    branch: emp.branch || 'both',
-    note: `Pago nómina · ${firstName} · ${_shortDate(workedDate)}`,
-    payrollRef: { empId, workedDate },
-    origin: 'nomina',
-  }
-}
-
-function _addPayrollMovementForDay(empId, workedDate) {
-  const a = _data.attendance[empId]?.[workedDate]
-  if (!a || a.paid) return
-  const mov = _buildPayrollMovement(empId, workedDate)
-  if (!mov) { a.paid = true; return }
-  const id = 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
-  _data.movements = [{ id, ...mov }, ..._data.movements]
-  a.paid = true
-  a.payrollMovementId = id
-}
-
-function _removePayrollMovementForDay(empId, workedDate) {
-  const a = _data.attendance[empId]?.[workedDate]
-  if (!a) return
-  const movId = a.payrollMovementId
-    || _data.movements.find(m => m.payrollRef?.empId === empId && m.payrollRef?.workedDate === workedDate)?.id
-  if (movId) {
-    _data.movements = _data.movements.filter(m => m.id !== movId)
-  }
-  a.paid = false
-  delete a.payrollMovementId
-}
-
-export function togglePaid(empId, date) {
-  const a = _data.attendance[empId]?.[date]
-  if (!a) return
-  if (a.paid) {
-    _removePayrollMovementForDay(empId, date)
-  } else {
-    _addPayrollMovementForDay(empId, date)
-  }
-  persist()
-}
-
-export function payAllPending(empId, month) {
-  const att = _data.attendance[empId] || {}
-  Object.keys(att).forEach(d => {
-    const a = att[d]
-    if (d.startsWith(month) && a.worked && !a.paid) {
-      _addPayrollMovementForDay(empId, d)
-    }
-  })
-  persist()
-}
-
-export function setExtras(empId, date, amount) {
-  const a = _data.attendance[empId]?.[date]
-  if (a) { a.extras = amount; persist() }
-}
-
-// ─── Confirmación diaria ──────────────────────────────────────
-export function isDayConfirmed(date) {
-  return !!_data.dailyConfirmations[date]
-}
-
-export function confirmDay(date, entries) {
-  entries.forEach(entry => {
-    if (!_data.attendance[entry.empId]) _data.attendance[entry.empId] = {}
-    const emp = _data.employees.find(e => e.id === entry.empId)
-    if (!emp) return
-
-    if (entry.worked) {
-      const hourRate = calcHourRate(emp.rate, emp.workHours || 9)
-      const extras = entry.extraHours !== 0 ? calcExtraPay(hourRate, entry.extraHours) : 0
-      _data.attendance[entry.empId][date] = {
-        worked: true,
-        extras,
-        extraHours: entry.extraHours || 0,
-        paid: false,
-        confirmedAt: Date.now(),
-      }
-    } else {
-      delete _data.attendance[entry.empId][date]
-    }
-  })
-
-  entries.forEach(entry => {
-    if (!entry.worked && entry.replacedBy) {
-      const replacerEmp = _data.employees.find(e => e.id === entry.replacedBy)
-      if (replacerEmp) {
-        if (!_data.attendance[entry.replacedBy]) _data.attendance[entry.replacedBy] = {}
-        const hourRate = calcHourRate(replacerEmp.rate, replacerEmp.workHours || 9)
-        const extras = entry.replacerExtraHours ? calcExtraPay(hourRate, entry.replacerExtraHours) : 0
-        _data.attendance[entry.replacedBy][date] = {
-          worked: true,
-          extras,
-          extraHours: entry.replacerExtraHours || 0,
-          paid: false,
-          replacedFor: entry.empId,
-          confirmedAt: Date.now(),
-        }
-      }
-    }
-  })
-
-  _data.dailyConfirmations[date] = true
-  persist()
-}
-
-export function getScheduledEmployees(date) {
-  const d = new Date(date + 'T00:00:00')
-  const dayOfWeek = d.getDay()
-  return _data.employees.filter(e => {
-    if (e.type === 'occasional') return false
-    return e.restDay !== dayOfWeek
-  })
 }
 
 // ─── Recordatorios ────────────────────────────────────────────

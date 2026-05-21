@@ -2,7 +2,7 @@ import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
 import InstallPrompt from './components/UI/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
-import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, initDB } from './db'
+import { getData, initDB } from './db'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
@@ -18,7 +18,6 @@ import Reports from './screens/Reports'
 import Reminders from './screens/Reminders'
 import More from './screens/More'
 import Branches from './screens/Branches'
-import DailyConfirmation, { DayEditModal } from './screens/DailyConfirmation'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
 import Pendientes from './screens/Pendientes'
@@ -176,8 +175,6 @@ function AppShell() {
   const [moreSub, setMoreSub] = useState(null)
   const [pendingEmpId, setPendingEmpId] = useState(null)
 
-  const [confirmingDate, setConfirmingDate] = useState(null)
-  const [editingDate, setEditingDate] = useState(null)
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 1024)
 
   useEffect(() => {
@@ -247,10 +244,7 @@ function AppShell() {
         filter={filter}
         setFilter={setFilter}
         movements={data.movements}
-        employees={data.employees}
-        attendance={data.attendance}
         reminders={data.reminders}
-        onConfirmDay={() => setConfirmingDate(getBogotaDateStr())}
       />
     )
   } else if (tab === 'movements') {
@@ -267,13 +261,7 @@ function AppShell() {
     )
   } else if (tab === 'registro') {
     content = (
-      <Registro
-        employees={data.employees}
-        attendance={data.attendance}
-        onRefresh={refresh}
-        onConfirmDay={date => setConfirmingDate(date)}
-        onEditDay={date => setEditingDate(date)}
-      />
+      <Registro onRefresh={refresh} />
     )
   } else if (tab === 'team') {
     content = (
@@ -281,7 +269,6 @@ function AppShell() {
         filter={filter}
         setFilter={setFilter}
         employees={data.employees}
-        attendance={data.attendance}
         onRefresh={refresh}
         initialEmpId={pendingEmpId}
         onClearEmpId={() => setPendingEmpId(null)}
@@ -306,8 +293,6 @@ function AppShell() {
           filter={filter}
           setFilter={setFilter}
           movements={data.movements}
-          employees={data.employees}
-          attendance={data.attendance}
           incomeCats={data.incomeCats}
           expenseCats={data.expenseCats}
           onBack={() => setMoreSub(null)}
@@ -344,7 +329,6 @@ function AppShell() {
           onOpenUsers={() => { setMoreSub(null); setTab('team') }}
           onOpenProducts={() => setMoreSub('products')}
           onOpenReminders={() => setMoreSub('reminders')}
-          onConfirmAttendance={() => setConfirmingDate(getBogotaDateStr())}
           dataTick={dataTick}
         />
       )
@@ -440,28 +424,6 @@ function AppShell() {
             </div>
             <TabBar active={activeTab} onChange={handleTabChange} />
           </>
-        )}
-
-        {/* Confirmación de día */}
-        {confirmingDate && (
-          <DailyConfirmation
-            date={confirmingDate}
-            employees={data.employees}
-            attendance={data.attendance}
-            onDone={() => { setConfirmingDate(null); refresh() }}
-            onRefresh={refresh}
-          />
-        )}
-
-        {/* Edición de día confirmado */}
-        {editingDate && (
-          <DayEditModal
-            date={editingDate}
-            employees={data.employees}
-            attendance={data.attendance}
-            onDone={() => { setEditingDate(null); refresh() }}
-            onRefresh={refresh}
-          />
         )}
 
         {addMovementOverlay}

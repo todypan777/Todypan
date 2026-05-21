@@ -6,7 +6,7 @@ import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchAllSales } from '../sales'
 import { watchCashierProducts } from '../products'
 import { watchPendingChangeRequests } from '../productChangeRequests'
-import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed } from '../db'
+import { getData, getBogotaDateStr } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import { ApprovalModal } from '../screens/Users'
 
@@ -48,24 +48,18 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     s.closingDiscrepancy?.type === 'shortage'
   )
 
-  // Reminders vencidos y confirmación de asistencia (legacy del admin)
-  // dataTick fuerza recálculo cuando AppShell hace refresh
-  const { overdueReminders, needsAttendanceConfirm } = useMemo(() => {
+  // Reminders vencidos — dataTick fuerza recálculo cuando AppShell hace refresh
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const overdueReminders = useMemo(() => {
     const data = getData()
     const today = getBogotaDateStr()
     const reminders = data.reminders || []
-    const overdue = reminders.filter(r => {
+    return reminders.filter(r => {
       if (r.paid) return false
       if (!r.due) return false
       const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
       return daysLeft <= 0
     })
-    const employees = data.employees || []
-    const needsAttend = getBogotaHour() >= 20
-      && !isDayConfirmed(today)
-      && employees.some(e => e.type !== 'occasional')
-    return { overdueReminders: overdue, needsAttendanceConfirm: needsAttend }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataTick])
 
   const totalCount =
@@ -74,8 +68,7 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
     flaggedSales.length +
     cashierProducts.length +
     changeRequests.length +
-    overdueReminders.length +
-    (needsAttendanceConfirm ? 1 : 0)
+    overdueReminders.length
 
   // Detectar usuarios nuevos para popup
   useEffect(() => {

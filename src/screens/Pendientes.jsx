@@ -18,11 +18,11 @@ import {
   approveChangeRequest,
   rejectChangeRequest,
 } from '../productChangeRequests'
-import { getData, getBogotaHour, getBogotaDateStr, isDayConfirmed, toggleReminderPaid } from '../db'
+import { getData, getBogotaDateStr, toggleReminderPaid } from '../db'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
 
-export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminders, onConfirmAttendance, dataTick }) {
+export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminders, dataTick }) {
   const { authUser } = useAuth()
 
   const [pendingUsers, setPendingUsers] = useState([])
@@ -41,23 +41,18 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   useEffect(() => watchCashierProducts(setCashierProducts), [])
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
-  // Reminders y asistencia (legacy del admin) — recalcula al cambiar dataTick
+  // Reminders vencidos — recalcula al cambiar dataTick
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const { overdueReminders, needsAttendanceConfirm } = useMemo(() => {
+  const overdueReminders = useMemo(() => {
     const data = getData()
     const today = getBogotaDateStr()
     const reminders = data.reminders || []
-    const overdue = reminders.filter(r => {
+    return reminders.filter(r => {
       if (r.paid) return false
       if (!r.due) return false
       const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
       return daysLeft <= 0
     }).sort((a, b) => a.due.localeCompare(b.due))
-    const employees = data.employees || []
-    const needs = getBogotaHour() >= 20
-      && !isDayConfirmed(today)
-      && employees.some(e => e.type !== 'occasional')
-    return { overdueReminders: overdue, needsAttendanceConfirm: needs }
   }, [dataTick])
 
   // (D25) En el modelo nuevo el cierre y la apertura los hace el admin desde el panel
@@ -79,8 +74,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
     flaggedSales.length +
     cashierProducts.length +
     changeRequests.length +
-    overdueReminders.length +
-    (needsAttendanceConfirm ? 1 : 0)
+    overdueReminders.length
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -99,24 +93,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
             Cuando haya solicitudes de cuenta, gastos por aprobar o algo más por revisar, aparecerán aquí.
           </div>
         </div>
-      )}
-
-      {needsAttendanceConfirm && (
-        <Section title="Asistencia del día" count={1} tone="copper" defaultOpen>
-          <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900] }}>
-                Confirmar asistencia de hoy
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
-                Registra los empleados que trabajaron hoy.
-              </div>
-            </div>
-            <button onClick={() => onConfirmAttendance?.()} style={btnSmall(T.copper[500])}>
-              Confirmar
-            </button>
-          </div>
-        </Section>
       )}
 
       {overdueReminders.length > 0 && (

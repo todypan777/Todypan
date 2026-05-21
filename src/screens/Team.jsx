@@ -1,17 +1,12 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { T } from '../tokens'
-import { fmtCOP, fmtDate, fmtMonthLabel, currentMonth } from '../utils/format'
-import { Card, SectionHeader, Chip, BranchChip, Amount, IconButton, BackButton, Modal, InputField, PrimaryButton, EmptyState, UserAvatar } from '../components/Atoms'
+import { Card, BranchChip, BackButton, Modal, InputField, PrimaryButton, EmptyState, UserAvatar } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { addEmployee, updateEmployee, deleteEmployee, togglePaid, payAllPending, getData } from '../db'
-import { generatePayrollPDF } from '../utils/pdf'
-import { watchPendingDeductionsForEmployee, applyDeductions } from '../cashierDeductions'
+import { addEmployee, updateEmployee, deleteEmployee, getData } from '../db'
 import { watchAllUsers, deactivateUser, reactivateUser, rejectPendingUser, changeUserRole } from '../users'
 import { useAuth } from '../context/AuthCtx'
 import { ApprovalModal, ConfirmUserModal } from './Users'
 
-// Etiqueta visible del rol del usuario. Mantiene "Empleado" como fallback
-// cuando no hay rol definido (datos viejos).
 function roleBadge(role) {
   if (role === 'admin') return 'Admin'
   if (role === 'cook') return 'Cocinera'
@@ -19,7 +14,7 @@ function roleBadge(role) {
   return 'Empleado'
 }
 
-export default function Team({ filter, setFilter, employees, attendance, onRefresh, initialEmpId, onClearEmpId }) {
+export default function Team({ filter, setFilter, employees, onRefresh, initialEmpId, onClearEmpId }) {
   const { authUser } = useAuth()
   const [empOpen, setEmpOpen] = useState(initialEmpId || null)
   const [showAddEmp, setShowAddEmp] = useState(false)
@@ -36,33 +31,22 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
   if (empOpen) {
     const emp = employees.find(e => e.id === empOpen)
     if (!emp) { setEmpOpen(null); return null }
-    return <EmployeeDetail emp={emp} attendance={attendance} users={users} onBack={closeEmp} onRefresh={onRefresh} />
+    return <EmployeeDetail emp={emp} users={users} onBack={closeEmp} onRefresh={onRefresh} />
   }
 
-  // Categorías de personas
   const pendingUsers = users.filter(u => u.status === 'pending')
   const inactiveUsers = users.filter(u => u.status === 'inactive')
 
-  // Activos: empleados (con su user vinculado si existe)
   const filtered = employees.filter(e => filter === 'all' || e.branch === filter)
-  const stats = filtered.map(e => {
-    const att = attendance[e.id] || {}
-    const month = currentMonth()
-    const entries = Object.entries(att).filter(([d]) => d.startsWith(month))
-    const worked = entries.filter(([, a]) => a.worked).length
-    const unpaid = entries.filter(([, a]) => a.worked && !a.paid)
-    const owed = unpaid.reduce((s, [, a]) => s + e.rate + (a.extras || 0), 0)
+  const rows = filtered.map(e => {
     const linkedUser = users.find(u => u.linkedEmployeeId === e.id)
-    return { emp: e, worked, owed, unpaidDays: unpaid.length, linkedUser }
+    return { emp: e, linkedUser }
   })
-
-  const totalOwed = stats.reduce((s, x) => s + x.owed, 0)
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <ScreenHeader title="Equipo" subtitle={fmtMonthLabel(currentMonth())} />
+      <ScreenHeader title="Equipo" />
 
-      {/* Tabs estilo segmented control */}
       <div style={{ padding: '0 16px 12px' }}>
         <div style={{
           display: 'flex',
@@ -116,7 +100,6 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
         </div>
       </div>
 
-      {/* Filtro de panadería + botón agregar (solo en activos) */}
       {tab === 'active' && (
         <div style={{ padding: '0 16px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <select
@@ -160,84 +143,55 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
         </div>
       )}
 
-      {/* TAB ACTIVOS — empleados con asistencia/nómina */}
       {tab === 'active' && (
-        <>
-          {totalOwed > 0 && (
-            <div style={{ padding: '0 16px 12px' }}>
-              <Card padding={14} style={{ background: T.copper[50], border: `0.5px solid ${T.copper[100]}` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: T.copper[700], letterSpacing: 0.5, textTransform: 'uppercase' }}>Por pagar</div>
-                    <div style={{ marginTop: 4, fontSize: 22, fontWeight: 700, color: T.copper[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
-                      {fmtCOP(totalOwed)}
-                    </div>
+        employees.length === 0 ? (
+          <EmptyState icon="👥" title="Sin empleados" subtitle="Agrega tu primer empleado con el botón +" />
+        ) : (
+          <div style={{ padding: '0 16px' }}>
+            <Card padding={0}>
+              {rows.map((x, i) => (
+                <div key={x.emp.id} onClick={() => openEmp(x.emp.id)}
+                  style={{
+                    padding: '14px 16px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    borderBottom: i < rows.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                  }}>
+                  <div style={{
+                    width: 40, height: 40, borderRadius: 999,
+                    background: T.branch[x.emp.branch]?.tagBg || T.neutral[100],
+                    color: T.branch[x.emp.branch]?.tag || T.neutral[600],
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontWeight: 700, fontSize: 14, flexShrink: 0,
+                  }}>
+                    {x.emp.name.split(' ').map(p => p[0]).slice(0, 2).join('')}
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontSize: 11, color: T.copper[700] }}>{stats.filter(x => x.owed > 0).length} empleados</div>
-                    <div style={{ fontSize: 11, color: T.copper[700], marginTop: 2 }}>{stats.reduce((s, x) => s + x.unpaidDays, 0)} días pendientes</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 15, fontWeight: 600, color: T.neutral[800],
+                      display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                      {x.emp.name.split(' ').slice(0, 2).join(' ')}
+                      {x.linkedUser && (
+                        <span title={`Cuenta: ${x.linkedUser.email}`} style={{
+                          fontSize: 9.5, fontWeight: 700, color: T.copper[700],
+                          background: T.copper[50], padding: '2px 6px', borderRadius: 999,
+                          letterSpacing: 0.4, textTransform: 'uppercase',
+                        }}>
+                          {roleBadge(x.linkedUser.role)}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {x.emp.role || (x.linkedUser ? roleBadge(x.linkedUser.role) : 'Empleado')} · <BranchChip branch={x.emp.branch} size="sm"/>
+                    </div>
                   </div>
                 </div>
-              </Card>
-            </div>
-          )}
-
-          {employees.length === 0 ? (
-            <EmptyState icon="👥" title="Sin empleados" subtitle="Agrega tu primer empleado con el botón +" />
-          ) : (
-            <div style={{ padding: '0 16px' }}>
-              <Card padding={0}>
-                {stats.map((x, i) => (
-                  <div key={x.emp.id} onClick={() => openEmp(x.emp.id)}
-                    style={{
-                      padding: '14px 16px', cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', gap: 12,
-                      borderBottom: i < stats.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-                    }}>
-                    <div style={{
-                      width: 40, height: 40, borderRadius: 999,
-                      background: T.branch[x.emp.branch]?.tagBg || T.neutral[100],
-                      color: T.branch[x.emp.branch]?.tag || T.neutral[600],
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontWeight: 700, fontSize: 14, flexShrink: 0,
-                    }}>
-                      {x.emp.name.split(' ').map(p => p[0]).slice(0, 2).join('')}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontSize: 15, fontWeight: 600, color: T.neutral[800],
-                        display: 'flex', alignItems: 'center', gap: 6,
-                      }}>
-                        {x.emp.name.split(' ').slice(0, 2).join(' ')}
-                        {x.linkedUser && (
-                          <span title={`Cuenta: ${x.linkedUser.email}`} style={{
-                            fontSize: 9.5, fontWeight: 700, color: T.copper[700],
-                            background: T.copper[50], padding: '2px 6px', borderRadius: 999,
-                            letterSpacing: 0.4, textTransform: 'uppercase',
-                          }}>
-                            {roleBadge(x.linkedUser.role)}
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {x.emp.role || (x.linkedUser ? roleBadge(x.linkedUser.role) : 'Empleado')} · <BranchChip branch={x.emp.branch} size="sm"/>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      {x.owed > 0
-                        ? <Amount value={x.owed} size={15} weight={700} color={T.copper[600]}/>
-                        : <span style={{ fontSize: 12, color: T.ok, fontWeight: 600 }}>Al día</span>}
-                      <div style={{ fontSize: 11, color: T.neutral[400], marginTop: 2 }}>{x.worked} días</div>
-                    </div>
-                  </div>
-                ))}
-              </Card>
-            </div>
-          )}
-        </>
+              ))}
+            </Card>
+          </div>
+        )
       )}
 
-      {/* TAB PENDIENTES — usuarios esperando aprobación */}
       {tab === 'pending' && (
         <div style={{ padding: '0 16px' }}>
           {pendingUsers.length === 0 ? (
@@ -292,7 +246,6 @@ export default function Team({ filter, setFilter, employees, attendance, onRefre
         </div>
       )}
 
-      {/* TAB INACTIVOS — usuarios desactivados */}
       {tab === 'inactive' && (
         <div style={{ padding: '0 16px' }}>
           {inactiveUsers.length === 0 ? (
@@ -385,21 +338,17 @@ function primaryBtn() {
   }
 }
 
-const REST_DAY_LABELS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
-
 function AddEmployeeModal({ onClose, onSave }) {
   const [name, setName] = useState('')
   const [role, setRole] = useState('')
   const [branch, setBranch] = useState(1)
-  const [rate, setRate] = useState('')
   const [phone, setPhone] = useState('')
-  const [restDay, setRestDay] = useState(0)
 
-  const canSave = name.trim() && rate && phone.trim()
+  const canSave = name.trim() && phone.trim()
 
   function handleSave() {
     if (!canSave) return
-    addEmployee({ name: name.trim(), role, branch, rate: Number(rate), phone: phone.trim(), restDay })
+    addEmployee({ name: name.trim(), role, branch, phone: phone.trim() })
     onSave()
   }
 
@@ -420,83 +369,20 @@ function AddEmployeeModal({ onClose, onSave }) {
           ))}
         </div>
       </div>
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Día de descanso</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-          {REST_DAY_LABELS.map((label, idx) => (
-            <button key={idx} onClick={() => setRestDay(idx)} style={{
-              padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: restDay === idx ? T.neutral[800] : T.neutral[100],
-              color: restDay === idx ? '#fff' : T.neutral[600],
-              fontSize: 11, fontWeight: 600,
-            }}>{label}</button>
-          ))}
-        </div>
-      </div>
-      <InputField label="Valor día ($)" value={rate} onChange={setRate} type="number" placeholder="Ej: 65000"/>
       <InputField label="WhatsApp *" value={phone} onChange={setPhone} type="tel" placeholder="Ej: 301 234 5678"/>
       <PrimaryButton label="Agregar empleado" onClick={handleSave} disabled={!canSave}/>
     </Modal>
   )
 }
 
-function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
-  const [month, setMonth] = useState(currentMonth())
+function EmployeeDetail({ emp, users, onBack, onRefresh }) {
   const [showDelete, setShowDelete] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
-  const [showConfirmPay, setShowConfirmPay] = useState(false)
-  const [pendingDeductions, setPendingDeductions] = useState([])
   const [confirmDeactivate, setConfirmDeactivate] = useState(false)
-  const [confirmRoleChange, setConfirmRoleChange] = useState(null) // 'cashier' | 'cook'
+  const [confirmRoleChange, setConfirmRoleChange] = useState(null)
   const [changingRole, setChangingRole] = useState(false)
-  const att = attendance[emp.id] || {}
 
-  // Buscar la cuenta vinculada (si existe)
   const linkedUser = (users || []).find(u => u.linkedEmployeeId === emp.id)
-
-  const [y, m] = month.split('-').map(Number)
-
-  const entries = Object.entries(att).filter(([d]) => d.startsWith(month))
-  const worked = entries.filter(([, a]) => a.worked).length
-  const unpaid = entries.filter(([, a]) => a.worked && !a.paid)
-  const grossOwed = unpaid.reduce((s, [, a]) => s + emp.rate + (a.extras || 0), 0)
-  const paid = entries.filter(([, a]) => a.worked && a.paid).reduce((s, [, a]) => s + emp.rate + (a.extras || 0), 0)
-
-  // Descuentos pendientes (Fase 6.5)
-  const totalDeductions = pendingDeductions.reduce((s, d) => s + (d.amount || 0), 0)
-  const owed = Math.max(0, grossOwed - totalDeductions)
-
-  useEffect(() => {
-    const unsub = watchPendingDeductionsForEmployee(emp.id, setPendingDeductions)
-    return unsub
-  }, [emp.id])
-
-  function changeMonth(delta) {
-    const d = new Date(y, m - 1 + delta, 1)
-    setMonth(d.toISOString().slice(0, 7))
-  }
-
-  function handleTogglePaid(dateStr) {
-    togglePaid(emp.id, dateStr)
-    onRefresh()
-  }
-
-  async function handlePayWithPDF() {
-    if (unpaid.length === 0) return
-    const doc = generatePayrollPDF(emp, unpaid, month)
-    const blob = doc.output('blob')
-    const file = new File([blob], `nomina-${emp.name.split(' ')[0]}-${month}.pdf`, { type: 'application/pdf' })
-    try {
-      if (navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ files: [file], title: `Nómina ${emp.name.split(' ')[0]}` })
-      } else {
-        doc.save(`nomina-${emp.name.split(' ')[0]}-${month}.pdf`)
-      }
-    } catch (e) {
-      if (e.name !== 'AbortError') doc.save(`nomina-${emp.name.split(' ')[0]}-${month}.pdf`)
-    }
-    setShowConfirmPay(true)
-  }
 
   function handleDeleteEmp() {
     deleteEmployee(emp.id)
@@ -510,7 +396,6 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
         <BackButton onBack={onBack} label="Equipo"/>
       </div>
 
-      {/* Employee card */}
       <div style={{ padding: '12px 16px 0' }}>
         <Card padding={20}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -537,32 +422,12 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
               </div>
               <div style={{ marginTop: 6, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <BranchChip branch={emp.branch}/>
-                {emp.restDay != null && (
-                  <span style={{ fontSize: 11, color: T.neutral[400], fontWeight: 500 }}>
-                    Descansa {REST_DAY_LABELS[emp.restDay]}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: `0.5px solid ${T.neutral[100]}`, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.6 }}>Tarifa</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.neutral[900], marginTop: 3, fontVariantNumeric: 'tabular-nums' }}>
-                {fmtCOP(emp.rate)}<span style={{ fontSize: 12, fontWeight: 500, color: T.neutral[500] }}> / día</span>
-              </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10.5, fontWeight: 600, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.6 }}>Días {fmtMonthLabel(month).split(' ')[0]}</div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: T.neutral[900], marginTop: 3 }}>
-                {worked}<span style={{ fontSize: 12, fontWeight: 500, color: T.neutral[500] }}> trabajados</span>
               </div>
             </div>
           </div>
         </Card>
       </div>
 
-      {/* Card Cuenta — solo si tiene linkedUser */}
       {linkedUser && (
         <div style={{ padding: '10px 16px 0' }}>
           <Card padding={14} style={{
@@ -627,7 +492,6 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
               )}
             </div>
 
-            {/* Cambio de rol — solo para cuentas activas que NO sean admin */}
             {linkedUser.role !== 'admin' && linkedUser.status === 'approved' && (
               <div style={{
                 marginTop: 10, paddingTop: 10,
@@ -656,125 +520,6 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
         </div>
       )}
 
-      {/* Balance */}
-      <div style={{ padding: '10px 16px 0', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <Card padding={14}>
-          <div style={{ fontSize: 10.5, fontWeight: 600, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.6 }}>Por pagar</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: owed > 0 ? T.copper[600] : T.ok, marginTop: 4, fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
-            {fmtCOP(owed, { compact: true })}
-          </div>
-          <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2 }}>
-            {unpaid.length} días
-            {totalDeductions > 0 && ` · −${fmtCOP(totalDeductions, { compact: true })} desc.`}
-          </div>
-        </Card>
-        <Card padding={14}>
-          <div style={{ fontSize: 10.5, fontWeight: 600, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.6 }}>Ya pagado</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: T.neutral[700], marginTop: 4, fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
-            {fmtCOP(paid, { compact: true })}
-          </div>
-          <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 2 }}>en el mes</div>
-        </Card>
-      </div>
-
-      {/* Descuentos pendientes (Fase 6.5) */}
-      {pendingDeductions.length > 0 && (
-        <div style={{ padding: '10px 16px 0' }}>
-          <Card padding={0} style={{ background: '#FBE9E5', border: `1px solid #F0C8BE`, boxShadow: 'none' }}>
-            <div style={{ padding: '12px 14px', borderBottom: `1px solid #F0C8BE` }}>
-              <div style={{ fontSize: 12.5, fontWeight: 700, color: T.bad, letterSpacing: 0.4, textTransform: 'uppercase' }}>
-                Descuentos pendientes ({pendingDeductions.length})
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
-                Se restarán automáticamente al confirmar el próximo pago.
-              </div>
-            </div>
-            {pendingDeductions.map((d, i) => (
-              <div key={d.id} style={{
-                padding: '10px 14px',
-                borderBottom: i < pendingDeductions.length - 1 ? `0.5px solid #F0C8BE` : 'none',
-                display: 'flex', alignItems: 'center', gap: 10,
-                background: '#fff',
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: T.neutral[800] }}>
-                    {d.reason === 'cash_shortage' ? 'Falta de caja' : d.reason}
-                  </div>
-                  <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
-                    {d.createdAt?.toDate?.().toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) || ''}
-                  </div>
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: T.bad, fontVariantNumeric: 'tabular-nums' }}>
-                  −{fmtCOP(d.amount)}
-                </div>
-              </div>
-            ))}
-          </Card>
-        </div>
-      )}
-
-      {/* Pay button */}
-      {unpaid.length > 0 && (
-        <div style={{ padding: '12px 16px 0' }}>
-          <button onClick={handlePayWithPDF} style={{
-            width: '100%', padding: '15px', borderRadius: 14, border: 'none',
-            background: T.neutral[900], color: '#fff',
-            fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-          }}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <path d="M2 9 L7 14 L16 4" stroke="#25D366" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            Enviar comprobante y pagar · {fmtCOP(owed)}{totalDeductions > 0 ? ` (neto)` : ''}
-          </button>
-        </div>
-      )}
-
-      {/* Month nav + day list */}
-      <div style={{ padding: '16px 16px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[700] }}>{fmtMonthLabel(month)}</div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={() => changeMonth(-1)} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: 'pointer', color: T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>‹</button>
-          <button onClick={() => changeMonth(1)} disabled={month >= currentMonth()} style={{ background: 'none', border: 'none', padding: '6px 10px', cursor: month >= currentMonth() ? 'default' : 'pointer', color: month >= currentMonth() ? T.neutral[300] : T.copper[500], fontFamily: 'inherit', fontSize: 13, fontWeight: 600 }}>›</button>
-        </div>
-      </div>
-
-      {entries.filter(([, a]) => a.worked).length > 0 ? (
-        <div style={{ padding: '8px 16px 0' }}>
-          <Card padding={0}>
-            {entries.sort((a, b) => b[0].localeCompare(a[0])).filter(([, a]) => a.worked).map(([d, a], i, arr) => (
-              <div key={d} style={{
-                padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12,
-                borderBottom: i < arr.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: T.neutral[800], textTransform: 'capitalize' }}>{fmtDate(d, { weekday: true })}</div>
-                  <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
-                    {fmtCOP(emp.rate)}{a.extras > 0 && ` + ${fmtCOP(a.extras)} extras`}
-                  </div>
-                </div>
-                <Amount value={emp.rate + (a.extras || 0)} size={14} weight={700}/>
-                <button onClick={() => handleTogglePaid(d)} style={{
-                  padding: '6px 11px', borderRadius: 999, border: 'none',
-                  background: a.paid ? T.neutral[100] : T.copper[500],
-                  color: a.paid ? T.neutral[600] : '#fff',
-                  fontSize: 11.5, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', minWidth: 64,
-                }}>
-                  {a.paid ? 'Pagado' : 'Pagar'}
-                </button>
-              </div>
-            ))}
-          </Card>
-        </div>
-      ) : (
-        <div style={{ padding: '8px 16px 0' }}>
-          <Card padding={20}>
-            <div style={{ textAlign: 'center', color: T.neutral[400], fontSize: 13 }}>Sin días registrados en {fmtMonthLabel(month)}</div>
-          </Card>
-        </div>
-      )}
-
-      {/* Edit + Delete */}
       <div style={{ padding: '20px 16px 0', display: 'flex', gap: 10 }}>
         <button onClick={() => setShowEdit(true)} style={{
           flex: 1, padding: '13px', borderRadius: 14, border: `1px solid ${T.neutral[200]}`,
@@ -794,74 +539,10 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
         </button>
       </div>
 
-      {/* Confirm pay modal */}
-      {showConfirmPay && (
-        <Modal onClose={() => setShowConfirmPay(false)} title="¿Confirmar pago?">
-          <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 12 }}>
-            ¿Ya enviaste el comprobante por WhatsApp?
-          </div>
-
-          {/* Desglose */}
-          <div style={{
-            padding: '12px 14px', borderRadius: 12,
-            background: T.neutral[50], marginBottom: 16,
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13.5, color: T.neutral[700] }}>
-              <span>Días trabajados ({unpaid.length})</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{fmtCOP(grossOwed)}</span>
-            </div>
-            {totalDeductions > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13.5, color: T.bad }}>
-                <span>Descuentos ({pendingDeductions.length})</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>−{fmtCOP(totalDeductions)}</span>
-              </div>
-            )}
-            <div style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-              paddingTop: 8, marginTop: 6, borderTop: `1px solid ${T.neutral[200]}`,
-            }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.neutral[800] }}>Neto a pagar</span>
-              <span style={{ fontSize: 22, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
-                {fmtCOP(owed)}
-              </span>
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={() => setShowConfirmPay(false)} style={{
-              flex: 1, padding: 13, borderRadius: 12, border: 'none',
-              background: T.neutral[100], color: T.neutral[700],
-              fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-            }}>Cancelar</button>
-            <button
-              onClick={async () => {
-                payAllPending(emp.id, month)
-                if (pendingDeductions.length > 0) {
-                  try {
-                    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
-                    await applyDeductions(pendingDeductions.map(d => d.id), today)
-                  } catch (err) {
-                    console.error('[deductions] error aplicando:', err)
-                  }
-                }
-                setShowConfirmPay(false)
-                onRefresh()
-              }}
-              style={{
-                flex: 1, padding: 13, borderRadius: 12, border: 'none',
-                background: T.ok, color: '#fff',
-                fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-              }}>Confirmar pago</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Edit modal */}
       {showEdit && (
         <EditEmployeeModal emp={emp} onClose={() => setShowEdit(false)} onSave={() => { setShowEdit(false); onRefresh() }}/>
       )}
 
-      {/* Delete confirm */}
       {showDelete && (
         <Modal onClose={() => setShowDelete(false)} title="¿Eliminar empleado?">
           <div style={{ fontSize: 14, color: T.neutral[500], marginBottom: 24 }}>Se eliminará {emp.name} y todos sus registros. Esta acción no se puede deshacer.</div>
@@ -880,7 +561,6 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
         </Modal>
       )}
 
-      {/* Confirmar desactivar cuenta */}
       {confirmDeactivate && linkedUser && (
         <Modal onClose={() => setConfirmDeactivate(false)} title="¿Desactivar cuenta?">
           <div style={{ fontSize: 14, color: T.neutral[500], marginBottom: 24, lineHeight: 1.5 }}>
@@ -902,7 +582,6 @@ function EmployeeDetail({ emp, attendance, users, onBack, onRefresh }) {
         </Modal>
       )}
 
-      {/* Confirmar cambio de rol */}
       {confirmRoleChange && linkedUser && (
         <Modal onClose={() => !changingRole && setConfirmRoleChange(null)} title="¿Cambiar rol?">
           <div style={{ fontSize: 14, color: T.neutral[600], marginBottom: 8, lineHeight: 1.5 }}>
@@ -961,16 +640,13 @@ function EditEmployeeModal({ emp, onClose, onSave }) {
   const [name, setName] = useState(emp.name)
   const [role, setRole] = useState(emp.role || '')
   const [branch, setBranch] = useState(emp.branch)
-  const [rate, setRate] = useState(String(emp.rate))
   const [phone, setPhone] = useState(emp.phone || '')
-  const [restDay, setRestDay] = useState(emp.restDay ?? 0)
-  const [workHours, setWorkHours] = useState(String(emp.workHours || 9))
 
-  const canSave = name.trim() && rate && phone.trim()
+  const canSave = name.trim() && phone.trim()
 
   function handleSave() {
     if (!canSave) return
-    updateEmployee(emp.id, { name: name.trim(), role, branch, rate: Number(rate), phone: phone.trim(), restDay, workHours: Number(workHours) || 9 })
+    updateEmployee(emp.id, { name: name.trim(), role, branch, phone: phone.trim() })
     onSave()
   }
 
@@ -991,21 +667,6 @@ function EditEmployeeModal({ emp, onClose, onSave }) {
           ))}
         </div>
       </div>
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Día de descanso</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-          {REST_DAY_LABELS.map((label, idx) => (
-            <button key={idx} onClick={() => setRestDay(idx)} style={{
-              padding: '8px 0', borderRadius: 8, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-              background: restDay === idx ? T.neutral[800] : T.neutral[100],
-              color: restDay === idx ? '#fff' : T.neutral[600],
-              fontSize: 11, fontWeight: 600,
-            }}>{label}</button>
-          ))}
-        </div>
-      </div>
-      <InputField label="Valor día ($)" value={rate} onChange={setRate} type="number" placeholder="Ej: 65000"/>
-      <InputField label="Horas de jornada" value={workHours} onChange={setWorkHours} type="number" placeholder="Ej: 9"/>
       <InputField label="WhatsApp *" value={phone} onChange={setPhone} type="tel" placeholder="Ej: 301 234 5678"/>
       <PrimaryButton label="Guardar cambios" onClick={handleSave} disabled={!canSave}/>
     </Modal>

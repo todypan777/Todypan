@@ -12,7 +12,7 @@ const MAIN_TABS = [
       <path d="M3 11 L11 4 L19 11 V18 Q19 19 18 19 H14 V14 H8 V19 H4 Q3 19 3 18 Z" stroke={c} strokeWidth="1.7" fill="none" strokeLinejoin="round"/>
     </svg>
   )},
-  { id: 'registro', label: 'Registro', icon: (c) => (
+  { id: 'registro', label: 'Cierres', icon: (c) => (
     <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
       <rect x="4" y="3" width="14" height="16" rx="2.5" stroke={c} strokeWidth="1.7" fill="none"/>
       <path d="M8 8 H14 M8 11.5 H14 M8 15 H11" stroke={c} strokeWidth="1.5" strokeLinecap="round"/>

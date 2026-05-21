@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtMonthLabel, currentMonth } from '../utils/format'
-import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, BackButton } from '../components/Atoms'
+import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
 import { watchAllSales } from '../sales'
@@ -12,7 +12,7 @@ function catLabel(cat, incomeCats, expenseCats) {
   return all.find(c => c.id === cat)?.label || cat
 }
 
-export default function Reports({ filter, setFilter, movements, employees, attendance, incomeCats, expenseCats, onBack }) {
+export default function Reports({ filter, setFilter, movements, incomeCats, expenseCats }) {
   const [month, setMonth] = useState(currentMonth())
   const [sales, setSales] = useState([])
   useEffect(() => watchAllSales(setSales), [])
@@ -36,16 +36,6 @@ export default function Reports({ filter, setFilter, movements, employees, atten
   const salesIncome = monthSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
   const income = movIncome + salesIncome
   const expense = movs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
-
-  // Payroll
-  const monthPayroll = employees
-    .filter(e => filter === 'all' || e.branch === filter)
-    .reduce((total, e) => {
-      const att = attendance[e.id] || {}
-      return total + Object.entries(att)
-        .filter(([d, a]) => d.startsWith(month) && a.worked)
-        .reduce((s, [, a]) => s + e.rate + (a.extras || 0), 0)
-    }, 0)
 
   // Expense by group
   const byGroup = { proveedores: 0, operacion: 0, empresa: 0 }
@@ -74,7 +64,7 @@ export default function Reports({ filter, setFilter, movements, employees, atten
   if (salesIncome > 0) byIncCat['ventas_cajera'] = (byIncCat['ventas_cajera'] || 0) + salesIncome
   const topIncCats = Object.entries(byIncCat).sort((a, b) => b[1] - a[1])
 
-  const net = income - expense - monthPayroll
+  const net = income - expense
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -104,11 +94,10 @@ export default function Reports({ filter, setFilter, movements, employees, atten
           <div style={{ fontSize: 34, fontWeight: 700, marginTop: 6, fontVariantNumeric: 'tabular-nums', letterSpacing: -1, color: net >= 0 ? '#fff' : '#E8A090' }}>
             {fmtCOP(net, { sign: true })}
           </div>
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {[
               { l: 'Ingresos', v: income, c: T.ok },
               { l: 'Gastos', v: expense, c: T.copper[300] },
-              { l: 'Nómina', v: monthPayroll, c: '#A89E90' },
             ].map(({ l, v, c }) => (
               <div key={l}>
                 <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>{l}</div>

@@ -1,22 +1,17 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState } from 'react'
 import { T } from '../tokens'
-import { fmtCOP, fmtDate, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
-import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon, IconButton } from '../components/Atoms'
+import { fmtCOP, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
+import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { getBogotaHour, getBogotaDateStr, isDayConfirmed, getData } from '../db'
+import { getData } from '../db'
 import { watchAllSales } from '../sales'
 import ActiveTurnsCard from '../components/ActiveTurnsCard'
 import CookAssistCard from '../components/CookAssistCard'
 
-export default function Dashboard({ onNav, filter, setFilter, movements, employees, attendance, reminders, onConfirmDay }) {
+export default function Dashboard({ onNav, filter, setFilter, movements, reminders }) {
   const today = todayStr()
   const month = currentMonth()
 
-  // Periodo del balance hero: 'month' (default) | 'day' (solo hoy)
-  const [period, setPeriod] = useState('month')
-
-  // Ventas de cajeras (modelo devengado: cuentan como ingreso desde el día de la venta,
-  // incluso si fueron a deuda)
   const [sales, setSales] = useState([])
   useEffect(() => watchAllSales(setSales), [])
 
@@ -24,87 +19,23 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
   const matchesSaleBranch = (s) => filter === 'all' || String(s.branchId) === String(filter)
   const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
 
-  // Filtro temporal según el periodo elegido
-  const matchesPeriod = (dateStr) => period === 'day' ? dateStr === today : dateStr?.startsWith(month)
-
-  const periodMovs = movements.filter(m => matchesPeriod(m.date) && matchesBranch(m))
-  const periodSales = sales.filter(s =>
-    isActiveSale(s) && matchesPeriod(s.date) && matchesSaleBranch(s)
-  )
-
-  const movIncome = periodMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
-  const salesIncome = periodSales.reduce((s, x) => s + (Number(x.total) || 0), 0)
-  const income = movIncome + salesIncome
-  const expense = periodMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0)
-
-  const pendingByEmp = employees
-    .filter(e => filter === 'all' || e.branch === filter)
-    .map(e => {
-      const att = attendance[e.id] || {}
-      const unpaid = Object.entries(att).filter(([, a]) => a.worked && !a.paid)
-      const owed = unpaid.reduce((s, [, a]) => s + e.rate + (a.extras || 0), 0)
-      return { emp: e, days: unpaid.length, owed }
-    })
-    .filter(x => x.owed > 0)
-  const totalPayroll = pendingByEmp.reduce((s, x) => s + x.owed, 0)
-  // Modelo CAJA: el balance solo refleja la plata real (ingresos - gastos pagados,
-  // donde los pagos de nomina ya estan incluidos como movements expense con cat:'nomina').
-  // La nomina PENDIENTE se muestra aparte como obligacion futura, no resta del balance.
-  const net = income - expense
-
-  // Upcoming reminders
   const upcoming = reminders
     .filter(r => !r.paid && (filter === 'all' || r.branch === filter || r.branch === 'both'))
     .sort((a, b) => a.due.localeCompare(b.due))
     .slice(0, 3)
-
-  // Alert reminders (overdue or due today)
-  const alerts = reminders.filter(r => {
-    if (r.paid) return false
-    const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
-    return daysLeft <= 0
-  })
-  const todayReminders = reminders.filter(r => {
-    if (r.paid) return false
-    const daysLeft = Math.ceil((new Date(r.due) - new Date(today + 'T00:00:00')) / 86400000)
-    return daysLeft === 0
-  })
-
-  // Daily bars last 14 days
-  const dates = []
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(today + 'T00:00:00')
-    d.setDate(d.getDate() - i)
-    dates.push(d.toISOString().slice(0, 10))
-  }
-  const byDay = dates.map(d => {
-    const dayMovs = movements.filter(m => m.date === d && matchesBranch(m))
-    const daySales = sales.filter(s => s.date === d && isActiveSale(s) && matchesSaleBranch(s))
-    return {
-      d,
-      inc: dayMovs.filter(m => m.type === 'income').reduce((s, m) => s + m.amount, 0)
-         + daySales.reduce((s, x) => s + (Number(x.total) || 0), 0),
-      exp: dayMovs.filter(m => m.type === 'expense').reduce((s, m) => s + m.amount, 0),
-    }
-  })
-  const maxDay = Math.max(1, ...byDay.map(x => Math.max(x.inc, x.exp)))
 
   const monthLabel = fmtMonthLabel(month)
   const now = new Date()
   const greetings = ['Buen domingo', 'Buen lunes', 'Buen martes', 'Buen miércoles', 'Buen jueves', 'Buen viernes', 'Buen sábado']
   const greeting = greetings[now.getDay()]
 
-  const showConfirmBanner = getBogotaHour() >= 20 && !isDayConfirmed(getBogotaDateStr()) && employees.some(e => e.type !== 'occasional')
-
   return (
     <div style={{ paddingBottom: 110 }}>
-      {/* Banners eliminados — toda la info de pendientes vive en la campanita */}
       <ScreenHeader
         title={monthLabel}
         subtitle={greeting}
       />
 
-      {/* Branch filter */}
       <div style={{ padding: '4px 20px 16px', display: 'flex', gap: 8, overflowX: 'auto' }}>
         <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
         {getData().branches.map(br => (
@@ -112,120 +43,10 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
         ))}
       </div>
 
-      {/* Turnos activos (vivos): asistir a cajeras ausentes */}
       <ActiveTurnsCard />
 
       <CookAssistCard />
 
-      {/* Balance hero card */}
-      <div style={{ padding: '0 16px' }}>
-        <Card padding={20} style={{
-          background: `linear-gradient(145deg, ${T.neutral[800]} 0%, ${T.neutral[900]} 100%)`,
-          color: '#fff',
-        }}>
-          {/* Header con label + toggle Mes/Día */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.8, color: T.copper[300], textTransform: 'uppercase' }}>
-              Balance {period === 'day' ? 'de hoy' : 'del mes'}
-            </div>
-            <PeriodToggle value={period} onChange={setPeriod} />
-          </div>
-          <div style={{ marginTop: 8, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-            <span style={{
-              fontSize: 36, fontWeight: 700, letterSpacing: -1.2,
-              fontVariantNumeric: 'tabular-nums',
-              color: net >= 0 ? '#fff' : '#E8A090',
-            }}>{fmtCOP(net, { sign: true })}</span>
-          </div>
-          <div style={{
-            marginTop: 16, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
-            gap: 14, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)',
-          }}>
-            {[
-              { label: 'Ingresos', value: income },
-              { label: 'Gastos', value: expense },
-              { label: 'Por pagar', value: totalPayroll },
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.6, fontWeight: 600 }}>{label}</div>
-                <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, fontVariantNumeric: 'tabular-nums', color: '#fff' }}>
-                  {fmtCOP(value)}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Daily flow chart */}
-      <div style={{ padding: '12px 16px 0' }}>
-        <Card padding={16}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.neutral[600], letterSpacing: 0.3 }}>Últimos 14 días</div>
-            <div style={{ display: 'flex', gap: 12, fontSize: 11, color: T.neutral[500] }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 7, height: 7, borderRadius: 2, background: T.ok }}/>Ingreso
-              </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 7, height: 7, borderRadius: 2, background: T.copper[400] }}/>Gasto
-              </span>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 70 }}>
-            {byDay.map((x) => (
-              <div key={x.d} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5, justifyContent: 'flex-end' }}>
-                <div style={{ width: '100%', display: 'flex', gap: 1, alignItems: 'flex-end', height: 60 }}>
-                  <div style={{ flex: 1, background: T.ok, opacity: 0.85, borderRadius: '2px 2px 0 0', height: `${(x.inc / maxDay) * 100}%`, minHeight: x.inc > 0 ? 2 : 0 }}/>
-                  <div style={{ flex: 1, background: T.copper[400], opacity: 0.85, borderRadius: '2px 2px 0 0', height: `${(x.exp / maxDay) * 100}%`, minHeight: x.exp > 0 ? 2 : 0 }}/>
-                </div>
-                <div style={{ fontSize: 9, color: T.neutral[400], fontWeight: 500 }}>
-                  {new Date(x.d + 'T00:00:00').getDate()}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Pending payroll */}
-      {pendingByEmp.length > 0 && (
-        <>
-          <SectionHeader title="Nómina pendiente" action="Ver todo" onAction={() => onNav('team')} />
-          <div style={{ padding: '0 16px' }}>
-            <Card padding={0}>
-              {pendingByEmp.slice(0, 3).map((x, i) => (
-                <div key={x.emp.id} onClick={() => onNav('emp', { empId: x.emp.id })}
-                  style={{
-                    padding: '14px 16px', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    borderBottom: i < Math.min(pendingByEmp.length, 3) - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-                  }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: 999,
-                    background: T.branch[x.emp.branch]?.tagBg || T.neutral[100],
-                    color: T.branch[x.emp.branch]?.tag || T.neutral[600],
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 700, fontSize: 14,
-                  }}>
-                    {x.emp.name.split(' ').map(p => p[0]).slice(0, 2).join('')}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: T.neutral[800] }}>
-                      {x.emp.name.split(' ').slice(0, 2).join(' ')}
-                    </div>
-                    <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
-                      {x.days} {x.days === 1 ? 'día' : 'días'} pendiente{x.days !== 1 ? 's' : ''}
-                    </div>
-                  </div>
-                  <Amount value={x.owed} size={15} weight={700} color={T.neutral[900]}/>
-                </div>
-              ))}
-            </Card>
-          </div>
-        </>
-      )}
-
-      {/* Upcoming reminders */}
       {upcoming.length > 0 && (
         <>
           <SectionHeader title="Próximos pagos" action="Ver todo" onAction={() => onNav('reminders')} />
@@ -263,7 +84,6 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
         </>
       )}
 
-      {/* Quick actions */}
       <SectionHeader title="Acciones rápidas" />
       <div style={{ padding: '0 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
         <QuickAction label="Registrar ingreso" color={T.ok} onClick={() => onNav('add', { kind: 'income' })}
@@ -272,7 +92,6 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
           icon={<svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 4 V16 M5 11 L10 16 L15 11" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>}/>
       </div>
 
-      {/* Today summary */}
       {(() => {
         const todayMovs = movements.filter(m => m.date === today && matchesBranch(m))
         const todaySales = sales.filter(s => s.date === today && isActiveSale(s) && matchesSaleBranch(s))
@@ -307,42 +126,6 @@ export default function Dashboard({ onNav, filter, setFilter, movements, employe
           </>
         )
       })()}
-    </div>
-  )
-}
-
-// Toggle compacto Mes/Día para el balance hero
-function PeriodToggle({ value, onChange }) {
-  const opts = [
-    { id: 'day', label: 'Hoy' },
-    { id: 'month', label: 'Mes' },
-  ]
-  return (
-    <div style={{
-      display: 'inline-flex', padding: 3, borderRadius: 999,
-      background: 'rgba(255,255,255,0.08)',
-      border: '1px solid rgba(255,255,255,0.1)',
-    }}>
-      {opts.map(o => {
-        const active = value === o.id
-        return (
-          <button
-            key={o.id}
-            onClick={() => onChange(o.id)}
-            style={{
-              padding: '5px 12px', borderRadius: 999, border: 'none',
-              background: active ? '#fff' : 'transparent',
-              color: active ? T.neutral[900] : 'rgba(255,255,255,0.7)',
-              fontFamily: 'inherit', fontSize: 11.5, fontWeight: 700,
-              letterSpacing: 0.3,
-              cursor: 'pointer',
-              transition: 'background 0.15s, color 0.15s',
-            }}
-          >
-            {o.label}
-          </button>
-        )
-      })}
     </div>
   )
 }

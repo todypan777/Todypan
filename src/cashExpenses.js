@@ -4,6 +4,7 @@ import {
   collection,
   addDoc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
   query,
   where,
@@ -62,14 +63,27 @@ export async function createCashExpense(payload) {
   return ref.id
 }
 
-/** Suscripción a los gastos de una sesión específica (vista cajera). */
+/**
+ * Suscripción a los gastos de una sesión específica (vista cajera y cierre admin).
+ *
+ * Cada gasto trae `_pendingWrite`: true si el doc tiene cambios locales que el
+ * servidor TODAVÍA no confirmó (creado/editado offline o en modo ahorro). Es la
+ * señal que la cajera necesita para saber qué gastos aún NO han subido — si
+ * cierra el turno con alguno sin subir, el admin no lo vería. Por eso pedimos
+ * includeMetadataChanges (sin él, hasPendingWrites no se actualiza solo).
+ */
 export function watchSessionExpenses(sessionId, callback) {
   if (!sessionId) { callback([]); return () => {} }
   const q = query(expensesCol(), where('sessionId', '==', sessionId))
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const list = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+        _pendingWrite: d.metadata.hasPendingWrites,
+      }))
       list.sort((a, b) => timeOf(b) - timeOf(a))
       callback(list)
     },
@@ -78,6 +92,34 @@ export function watchSessionExpenses(sessionId, callback) {
       callback([])
     }
   )
+}
+
+/**
+ * La CAJERA edita un gasto propio que sigue 'pending' (antes de que el admin lo
+ * apruebe/rechace). Solo descripción y monto — el resto de campos los protege la
+ * regla de Firestore. Fire-and-forget: no se cuelga en modo ahorro / offline; el
+ * watcher refleja el cambio desde la caché local al instante.
+ */
+export function updateCashExpense(id, { description, amount }) {
+  const data = {
+    description: String(description || '').trim(),
+    amount: Number(amount) || 0,
+    editedAt: serverTimestamp(),
+    editedAtClient: getClientTimestamp(),
+  }
+  updateDoc(expenseRef(id), data).catch(err => {
+    console.warn('[cashExpenses] updateCashExpense deferred:', err?.message || err)
+  })
+}
+
+/**
+ * La CAJERA elimina un gasto propio que sigue 'pending' (lo subió por error).
+ * Fire-and-forget por el mismo motivo que updateCashExpense.
+ */
+export function deleteCashExpense(id) {
+  deleteDoc(expenseRef(id)).catch(err => {
+    console.warn('[cashExpenses] deleteCashExpense deferred:', err?.message || err)
+  })
 }
 
 /** Suscripción a TODOS los gastos pendientes (para admin). */

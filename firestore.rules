@@ -1,0 +1,283 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// REGLAS DE FIRESTORE — TodyPan  (FUENTE ÚNICA DE VERDAD)
+//
+// Este archivo es la copia maestra de las reglas de seguridad. NO se despliega
+// solo (no hay firebase.json): el admin las pega a mano en
+// Firebase Console → Firestore Database → Reglas → Publicar.
+//
+// Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
+// de código requiera tocar reglas, se edita ESTE archivo y se entrega una copia
+// completa lista para pegar.
+//
+// Última actualización: 2026-05-21
+// Último cambio: la cajera ahora puede EDITAR (descripción/monto) y ELIMINAR
+//   sus propios gastos de caja mientras sigan 'pending' (antes solo foto).
+// ─────────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdminBootstrap() {
+      return request.auth != null
+        && request.auth.token.email == 'todypan777@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isAdminUser() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function isAdmin() {
+      return isAdminBootstrap() || isAdminUser();
+    }
+
+    function isApprovedCashier() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function isApprovedCook() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cook'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function isApprovedAny() {
+      return isAdmin() || isApprovedCashier();
+    }
+
+    match /users/{uid} {
+      allow read: if request.auth != null
+                  && (request.auth.uid == uid || isApprovedAny());
+      allow create: if request.auth != null && request.auth.uid == uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // La cocinera puede LEER /todypan/data (necesita la lista de
+    // `branches` para saber el id de "Panadería B" antes de enviar
+    // una kitchenCall). Escrituras siguen restringidas.
+    match /todypan/{doc} {
+      allow read: if isApprovedAny() || isApprovedCook();
+      allow create, delete: if isAdmin();
+      allow update: if isApprovedAny();
+    }
+
+    // La cocinera puede LEER /cashSessions (necesita saber qué cajera
+    // está abierta en Panadería B para dirigirle la kitchenCall).
+    // NO puede crear/actualizar/borrar.
+    match /cashSessions/{sid} {
+      allow read: if isApprovedAny() || isApprovedCook();
+      allow create: if isApprovedCashier()
+                    && request.resource.data.cashierUid == request.auth.uid
+                    && request.resource.data.status == 'open';
+      allow update: if (isApprovedCashier()
+                        && resource.data.cashierUid == request.auth.uid
+                        && resource.data.status == 'open')
+                    || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /products/{pid} {
+      allow read: if isApprovedAny();
+      allow create: if isApprovedCashier()
+                    && request.resource.data.createdByCashier == true
+                    && request.resource.data.needsCostReview == true;
+      allow update: if isApprovedAny();
+      allow delete: if isAdmin();
+    }
+
+    match /sales/{sid} {
+      allow read: if isApprovedAny();
+      allow create: if (isApprovedCashier()
+                        && request.resource.data.cashierUid == request.auth.uid)
+                    || isAdmin();
+      allow update: if (isApprovedCashier()
+                        && resource.data.cashierUid == request.auth.uid)
+                    || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /debtors/{did} {
+      allow read: if isApprovedAny();
+      allow create, update: if isApprovedAny();
+      allow delete: if isAdmin();
+    }
+
+    match /cashExpenses/{eid} {
+      allow read: if isApprovedAny();
+      allow create: if isApprovedCashier()
+                    && request.resource.data.cashierUid == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      // La cajera puede editar SUS gastos mientras sigan 'pending':
+      //   - campos de foto (subida diferida offline, igual que antes)
+      //   - descripción y monto (corregir antes del cierre)
+      // status y cashierUid NO están en hasOnly → no los puede cambiar.
+      allow update: if isAdmin()
+                    || (isApprovedCashier()
+                        && resource.data.cashierUid == request.auth.uid
+                        && resource.data.status == 'pending'
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['photoUrl', 'photoStatus', 'photoLocalId',
+                                       'photoUploadedAt', 'photoFailedAt',
+                                       'photoFailedReason',
+                                       'description', 'amount',
+                                       'editedAt', 'editedAtClient']));
+
+      // La cajera puede eliminar SUS gastos mientras sigan 'pending'
+      // (subió uno por error o duplicado). Aprobado/rechazado lo bloquea el admin.
+      allow delete: if isAdmin()
+                    || (isApprovedCashier()
+                        && resource.data.cashierUid == request.auth.uid
+                        && resource.data.status == 'pending');
+    }
+
+    match /cashierDeductions/{did} {
+      allow read: if request.auth != null
+                  && (isAdmin() || resource.data.cashierUid == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    match /openTabs/{tid} {
+      allow read: if isApprovedAny();
+      allow create: if (isApprovedCashier()
+                        && request.resource.data.cashierUid == request.auth.uid)
+                    || isAdmin();
+      allow update, delete: if isAdmin()
+                            || (isApprovedCashier()
+                                && resource.data.cashierUid == request.auth.uid);
+    }
+
+    match /productChangeRequests/{rid} {
+      allow read: if isApprovedAny();
+      allow create: if isApprovedCashier()
+                    && request.resource.data.cashierUid == request.auth.uid
+                    && request.resource.data.status == 'pending';
+      allow update, delete: if isAdmin();
+    }
+
+    match /tasks/{tid} {
+      allow read: if isAdmin()
+                  || (isApprovedCashier()
+                      && resource.data.assignedToUid == request.auth.uid);
+
+      allow create: if isAdmin()
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdBy == request.auth.uid;
+
+      allow update: if isAdmin()
+                    || (isApprovedCashier()
+                        && resource.data.assignedToUid == request.auth.uid
+                        && request.resource.data.assignedToUid == resource.data.assignedToUid
+                        && request.resource.data.status in ['pending', 'done']
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['status', 'completedAt', 'completedAtClient',
+                                       'completedInSessionId', 'completedNote']));
+
+      allow delete: if isAdmin();
+    }
+
+    // Lectura PÚBLICA (sin auth) para la página /menu de clientes.
+    // No expone datos sensibles — son nombres de platos del catálogo.
+    // Las escrituras siguen reservadas a cocinera/admin.
+    match /menuItems/{id} {
+      allow read: if true;
+      allow create, update: if isAdmin() || isApprovedCook();
+      allow delete: if isAdmin();
+    }
+
+    // Lectura PÚBLICA (sin auth) para la página /menu de clientes.
+    // Cubre tanto los docs por fecha YYYY-MM-DD como `corriente_config`
+    // (precios persistentes). Las escrituras siguen reservadas.
+    match /dailyMenu/{date} {
+      allow read: if true;
+      allow write: if isAdmin() || isApprovedCook();
+    }
+
+    // Pedidos web hechos por clientes desde /menu.
+    // - read y create públicos (mismos datos que viajan en el WhatsApp;
+    //   public read es necesaria para que el admin abra el link de
+    //   confirmación, y para que el cliente vea su propio resumen).
+    // - update y delete solo admin (para confirmar el pedido).
+    match /customerOrders/{id} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    match /kitchenOrders/{id} {
+      allow read: if isApprovedAny() || isApprovedCook();
+
+      allow create: if (isApprovedCashier()
+                        && request.resource.data.cashierUid == request.auth.uid
+                        && request.resource.data.status == 'pending')
+                    || (isAdmin()
+                        && request.resource.data.status == 'pending');
+
+      allow update: if isAdmin()
+                    || (isApprovedCashier()
+                        && resource.data.cashierUid == request.auth.uid
+                        && request.resource.data.cashierUid == resource.data.cashierUid)
+                    || (isApprovedCook()
+                        && request.resource.data.status in ['pending', 'ready']
+                        && request.resource.data.cashierUid == resource.data.cashierUid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['status', 'readyAt', 'readyAtClient']));
+
+      allow delete: if isAdmin();
+    }
+
+    // Llamadas de cocina a cajera (botón "Llamar cajera" desde la
+    // cocina hacia la cajera de Panadería B). Flujo:
+    //   - Cocinera/admin crea con status='pending' y se identifica como creador.
+    //   - Cajera destino la lee (filtrada por targetCashierUid) y solo
+    //     puede marcarla 'acknowledged' (cerrar el pop-up).
+    //   - ⚠ CAMBIO: la cocinera creadora ahora también puede marcar su
+    //     propia llamada como 'cancelled' para abortarla antes de que
+    //     la cajera atienda.
+    //   - Admin tiene control total para auditoría.
+    match /kitchenCalls/{cid} {
+      allow read: if isAdmin()
+                  || (isApprovedCook()
+                      && resource.data.createdBy == request.auth.uid)
+                  || (isApprovedCashier()
+                      && resource.data.targetCashierUid == request.auth.uid);
+
+      allow create: if (isApprovedCook() || isAdmin())
+                    && request.resource.data.createdBy == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      allow update: if isAdmin()
+                    || (isApprovedCashier()
+                        && resource.data.targetCashierUid == request.auth.uid
+                        && resource.data.status == 'pending'
+                        && request.resource.data.status == 'acknowledged'
+                        && request.resource.data.targetCashierUid == resource.data.targetCashierUid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['status', 'acknowledgedAt', 'acknowledgedAtClient',
+                                       'acknowledgedBy', 'acknowledgedByName']))
+                    || (isApprovedCook()
+                        && resource.data.createdBy == request.auth.uid
+                        && resource.data.status == 'pending'
+                        && request.resource.data.status == 'cancelled'
+                        && request.resource.data.createdBy == resource.data.createdBy
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['status', 'cancelledAt', 'cancelledAtClient',
+                                       'cancelledBy', 'cancelledByName']));
+
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

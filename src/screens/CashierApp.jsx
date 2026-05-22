@@ -7,8 +7,7 @@ import { signOut } from '../auth'
 import { getData } from '../db'
 import { watchMyOpenSession, confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
 import { watchSessionSales, flagSale } from '../sales'
-import { createCashExpense, watchSessionExpenses } from '../cashExpenses'
-import { watchAllDeductionsForCashier } from '../cashierDeductions'
+import { createCashExpense, watchSessionExpenses, updateCashExpense, deleteCashExpense } from '../cashExpenses'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
 import { watchLiveOrdersForSession } from '../kitchenOrders'
@@ -797,13 +796,11 @@ export function ActiveSession({
   const [newSaleOpen, setNewSaleOpen] = useState(false)
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
-  const [showDeductions, setShowDeductions] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false) // pantalla "Mis ventas" (Fase 9)
   const [boredomOpen, setBoredomOpen] = useState(false) // panel "¿estás aburrida?"
   const [cashierProducts, setCashierProducts] = useState([])
   const [sessionSales, setSessionSales] = useState([])
   const [sessionExpenses, setSessionExpenses] = useState([])
-  const [myDeductions, setMyDeductions] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const [myTasks, setMyTasks] = useState([])
   // Pedido web pendiente (solo asistir): se consume al abrir/cerrar el primer
@@ -852,11 +849,6 @@ export function ActiveSession({
   }, [session.id])
 
   useEffect(() => {
-    const unsub = watchAllDeductionsForCashier(scopeUid, setMyDeductions)
-    return unsub
-  }, [scopeUid])
-
-  useEffect(() => {
     const unsub = watchTasksForCashier(scopeUid, setMyTasks)
     return unsub
   }, [scopeUid])
@@ -895,7 +887,6 @@ export function ActiveSession({
 
   // Mostrar últimas 15 ventas (D21: sin totales agregados)
   const recentSales = sessionSales.slice(0, 15)
-  const pendingDeductions = myDeductions.filter(d => d.status === 'pending')
 
   // Tareas relevantes para este turno:
   //   - Pendientes que aplican a esta panadería (o sin panadería específica)
@@ -1030,27 +1021,6 @@ export function ActiveSession({
         </button>
       )}
 
-      {/* Card de estado activo (sin mostrar monto — control anti-fraude D21) */}
-      <Card style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 999, flexShrink: 0,
-            background: '#E8F4E8',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <div style={{ width: 12, height: 12, borderRadius: 999, background: T.ok }}/>
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900], marginBottom: 2 }}>
-              Tu turno está activo
-            </div>
-            <div style={{ fontSize: 12, color: T.neutral[500], lineHeight: 1.45 }}>
-              Vende y registra gastos. El administrador cierra la caja al final.
-            </div>
-          </div>
-        </div>
-      </Card>
-
       {/* Tareas del turno */}
       {turnTasks.length > 0 && (
         <CashierTaskList tasks={turnTasks} sessionId={session.id} />
@@ -1108,80 +1078,6 @@ export function ActiveSession({
           </Card>
         </div>
       )}
-
-      {/* Mis descuentos (transparencia para la cajera) */}
-      {myDeductions.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <button
-            onClick={() => setShowDeductions(v => !v)}
-            style={{
-              width: '100%', padding: '12px 14px', borderRadius: 14,
-              background: pendingDeductions.length > 0 ? '#FBE9E5' : T.neutral[100],
-              border: pendingDeductions.length > 0 ? `1px solid #F0C8BE` : `1px solid ${T.neutral[200]}`,
-              cursor: 'pointer', fontFamily: 'inherit',
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            }}
-          >
-            <div style={{ textAlign: 'left' }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: pendingDeductions.length > 0 ? T.bad : T.neutral[700] }}>
-                Mis descuentos
-              </div>
-              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1 }}>
-                {pendingDeductions.length > 0
-                  ? `${pendingDeductions.length} pendiente(s) · ${myDeductions.length - pendingDeductions.length} aplicado(s)`
-                  : `${myDeductions.length} en total`}
-              </div>
-            </div>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ transform: showDeductions ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
-              <path d="M3 5 L7 9 L11 5" stroke={T.neutral[600]} strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </button>
-
-          {showDeductions && (
-            <Card padding={0} style={{ marginTop: 8, overflow: 'hidden' }}>
-              {myDeductions.map((d, i) => (
-                <div key={d.id} style={{
-                  padding: '10px 14px',
-                  borderBottom: i < myDeductions.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
-                  display: 'flex', alignItems: 'center', gap: 10,
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.neutral[800] }}>
-                      {d.reason === 'cash_shortage' ? 'Falta de caja' : d.reason}
-                    </div>
-                    <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
-                      {d.createdAt?.toDate?.().toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) || ''}
-                      {d.status === 'applied' && d.appliedToPaymentDate && ` · aplicado ${d.appliedToPaymentDate}`}
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: d.status === 'pending' ? T.bad : T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
-                      −{fmtCOP(d.amount)}
-                    </div>
-                    <span style={{
-                      fontSize: 9.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
-                      color: d.status === 'pending' ? T.bad : d.status === 'applied' ? T.neutral[500] : T.neutral[400],
-                      background: d.status === 'pending' ? '#FBE9E5' : T.neutral[100],
-                      padding: '2px 6px', borderRadius: 999,
-                    }}>
-                      {d.status === 'pending' ? 'pendiente' : d.status === 'applied' ? 'aplicado' : 'cancelado'}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </Card>
-          )}
-        </div>
-      )}
-
-      {/* Footer informativo: el admin cierra el turno (D25) */}
-      <div style={{
-        padding: '14px 16px', borderRadius: 14,
-        background: T.neutral[100], border: `1px solid ${T.neutral[200]}`,
-        fontSize: 12.5, color: T.neutral[600], textAlign: 'center', lineHeight: 1.55,
-      }}>
-        Cuando termines tu turno, el administrador cerrará la caja.
-      </div>
 
       {newSaleOpen && (
         <div style={{
@@ -1270,6 +1166,7 @@ export function ActiveSession({
           authUser={authUser}
           userDoc={userDoc}
           assistMode={assistMode}
+          expenses={sessionExpenses}
           onCancel={() => setExpenseOpen(false)}
           onSaved={() => setExpenseOpen(false)}
         />
@@ -1623,10 +1520,16 @@ function ExpenseRow({ expense, isLast }) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Modal: Registrar gasto de caja
+// Modal: Gastos de caja del turno
+// Arriba el formulario (agregar o editar). Abajo la lista de gastos de ESTE
+// turno — la misma que el admin ve al cerrar (misma query por sessionId). La
+// cajera puede editar/eliminar los que sigan 'pending', y ve cuáles aún no han
+// subido al servidor (para sincronizar antes de cerrar).
 // ──────────────────────────────────────────────────────────────
-function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, onSaved }) {
+function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [], onCancel, onSaved }) {
   const isAssist = !!assistMode
+  const [editingId, setEditingId] = useState(null) // null = modo agregar
+  const [deletingId, setDeletingId] = useState(null) // id con confirmación de borrado abierta
   const [description, setDescription] = useState('')
   const [amountStr, setAmountStr] = useState('')
   const [photoUrl, setPhotoUrl] = useState(null)
@@ -1639,6 +1542,8 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
+  const unsyncedCount = expenses.filter(e => e._pendingWrite).length
+
   useEffect(() => {
     return () => {
       if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
@@ -1647,6 +1552,38 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
 
   const amount = Number(amountStr) || 0
   const valid = description.trim().length >= 3 && amount > 0 && !photoUploading
+
+  function resetForm() {
+    setEditingId(null)
+    setDescription('')
+    setAmountStr('')
+    setPhotoUrl(null)
+    setPhotoBlob(null)
+    setPhotoOfflineQueued(false)
+    if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    setPhotoLocalPreview(null)
+    setPhotoError(null)
+    setError(null)
+    setBusy(false)
+  }
+
+  // Pasar un gasto pendiente al formulario para editarlo. Solo descripción y
+  // monto; la foto no se edita aquí (si quiere cambiarla, elimina y recrea).
+  function handleStartEdit(exp) {
+    setEditingId(exp.id)
+    setDescription(exp.description || '')
+    setAmountStr(exp.amount != null ? String(exp.amount) : '')
+    setError(null)
+    setDeletingId(null)
+    // Subir el scroll al formulario.
+    try { document.getElementById('expense-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch {}
+  }
+
+  function handleDelete(id) {
+    deleteCashExpense(id)
+    setDeletingId(null)
+    if (editingId === id) resetForm()
+  }
 
   async function handleFileSelected(event) {
     const file = event.target.files?.[0]
@@ -1695,6 +1632,21 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
 
   async function handleSave() {
     if (!valid || busy) return
+
+    // EDICIÓN de un gasto pendiente: solo descripción + monto.
+    if (editingId) {
+      setBusy(true); setError(null)
+      try {
+        updateCashExpense(editingId, { description, amount })
+        resetForm()
+      } catch (err) {
+        console.error(err)
+        setError('No pudimos guardar los cambios. Intenta de nuevo.')
+        setBusy(false)
+      }
+      return
+    }
+
     setBusy(true); setError(null)
     try {
       // Asistiendo: el gasto pertenece al turno de la CAJERA (su caja es la que
@@ -1747,7 +1699,10 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
           console.warn('[CashExpense] no se pudo encolar la foto offline:', queueErr)
         }
       }
-      onSaved()
+      // El gasto queda registrado y aparece de una vez en la lista de abajo.
+      // Limpiamos el formulario y dejamos el modal abierto para que la cajera
+      // siga agregando o verifique lo que subió.
+      resetForm()
     } catch (err) {
       console.error(err)
       setError('No pudimos guardar el gasto. Intenta de nuevo.')
@@ -1763,12 +1718,28 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
         animation: 'fadeScaleIn 0.2s ease',
         maxHeight: '92vh', overflowY: 'auto',
       }}>
-        <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
-          Registrar gasto de caja
+        <div id="expense-form-top" style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          {editingId ? 'Editar gasto' : 'Gastos de caja'}
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
-          Quedará pendiente de aprobación del administrador.
+          {editingId
+            ? 'Corrige la descripción o el monto. Sigue pendiente de aprobación.'
+            : 'Registra un gasto y revisa abajo los que ya subiste en este turno.'}
         </div>
+
+        {/* Aviso clave: gastos que aún NO han subido al servidor. Si la cajera
+            cierra el turno con alguno sin subir, el admin no lo vería. */}
+        {unsyncedCount > 0 && (
+          <div style={{
+            padding: '11px 14px', borderRadius: 12, marginBottom: 14,
+            background: '#FFF4DD', border: `1px solid #F0D699`,
+            fontSize: 12.5, color: '#8A5E12', fontWeight: 500, lineHeight: 1.5,
+          }}>
+            ⏳ Tienes {unsyncedCount} gasto(s) sin subir. Conéctate y usa
+            "Sincronizar ahora" antes de cerrar el turno para que el administrador
+            los vea en el cierre.
+          </div>
+        )}
 
         <ExpenseTextField
           label="¿Para qué fue?"
@@ -1786,7 +1757,9 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
           disabled={busy}
         />
 
-        {/* Foto opcional */}
+        {/* Foto opcional — solo al agregar. En edición no se cambia la foto
+            (si la quiere cambiar, elimina el gasto y lo vuelve a crear). */}
+        {!editingId && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
             Foto del recibo (opcional)
@@ -1900,6 +1873,7 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
             </div>
           )}
         </div>
+        )}
 
         <div style={{
           padding: '11px 14px', borderRadius: 12,
@@ -1907,13 +1881,19 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
           fontSize: 12.5, color: T.warn, fontWeight: 500, lineHeight: 1.5,
           marginBottom: 14,
         }}>
-          ⚠ Este monto reduce tu caja del turno. Cuando cierres el turno, ya estará descontado.
+          ⚠ Este monto reduce tu caja del turno. El administrador lo aprueba al cerrar.
         </div>
 
         {error && <ErrorBox text={error} />}
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={editingId ? resetForm : onCancel}
+            disabled={busy}
+            style={btnSecondary()}
+          >
+            {editingId ? 'Cancelar edición' : 'Cerrar'}
+          </button>
           <button
             onClick={handleSave}
             disabled={!valid || busy}
@@ -1925,11 +1905,162 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, onCancel, on
               boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
             }}
           >
-            {busy ? 'Guardando...' : 'Registrar gasto'}
+            {busy ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Registrar gasto'}
           </button>
         </div>
+
+        {/* Lista de gastos de ESTE turno (misma query que ve el admin al cerrar).
+            Editar/eliminar solo en los 'pending'. */}
+        {expenses.length > 0 && (
+          <div style={{ marginTop: 22 }}>
+            <div style={{
+              fontSize: 12, fontWeight: 700, color: T.neutral[500],
+              letterSpacing: 0.5, textTransform: 'uppercase', margin: '0 2px 8px',
+            }}>
+              Gastos de este turno ({expenses.length})
+            </div>
+            <Card padding={0} style={{ overflow: 'hidden' }}>
+              {expenses.map((exp, i) => (
+                <ExpenseManageRow
+                  key={exp.id}
+                  expense={exp}
+                  isLast={i === expenses.length - 1}
+                  isEditing={editingId === exp.id}
+                  confirmingDelete={deletingId === exp.id}
+                  onEdit={() => handleStartEdit(exp)}
+                  onAskDelete={() => setDeletingId(exp.id)}
+                  onCancelDelete={() => setDeletingId(null)}
+                  onConfirmDelete={() => handleDelete(exp.id)}
+                />
+              ))}
+            </Card>
+          </div>
+        )}
       </div>
     </ModalOverlay>
+  )
+}
+
+// Fila de gasto dentro del modal de gestión. Muestra estado, indicador de
+// sincronización (subido / sin subir) y, si sigue 'pending', botones de
+// editar y eliminar (con confirmación inline).
+function ExpenseManageRow({
+  expense, isLast, isEditing, confirmingDelete,
+  onEdit, onAskDelete, onCancelDelete, onConfirmDelete,
+}) {
+  const time = expense.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+
+  const statusColor = { pending: T.warn, approved: T.ok, rejected: T.bad }[expense.status] || T.neutral[500]
+  const statusLabel = { pending: 'Pendiente', approved: 'Aprobado', rejected: 'Rechazado' }[expense.status] || expense.status
+  const canManage = expense.status === 'pending'
+
+  return (
+    <div style={{
+      padding: '12px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+      background: isEditing ? T.copper[50] : 'transparent',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          fontVariantNumeric: 'tabular-nums', minWidth: 42, flexShrink: 0,
+        }}>
+          {timeStr}
+        </div>
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13.5, fontWeight: 600, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {expense.description}
+        </div>
+        <div style={{
+          fontSize: 13.5, fontWeight: 700, color: T.neutral[800],
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          {fmtCOP(expense.amount)}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 52, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: statusColor,
+          background: statusColor + '15',
+          padding: '2px 8px', borderRadius: 999,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+        }}>
+          {statusLabel}
+        </span>
+        {/* Indicador de sincronización: la señal clave para que NADA se pierda. */}
+        {expense._pendingWrite ? (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: '#8A5E12',
+            background: '#FFF4DD', border: '1px solid #F0D699',
+            padding: '2px 8px', borderRadius: 999,
+          }}>
+            ⏳ Sin subir
+          </span>
+        ) : (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: T.ok,
+            background: T.ok + '15',
+            padding: '2px 8px', borderRadius: 999,
+          }}>
+            ✓ Subido
+          </span>
+        )}
+        {expense.recordedByRole === 'admin' && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: '#7A5C00',
+            background: '#FFF7E6', border: '1px solid #F4E0BC',
+            padding: '2px 7px', borderRadius: 999,
+            letterSpacing: 0.3, textTransform: 'uppercase',
+          }}>
+            👤 admin{expense.recordedByName ? ` · ${expense.recordedByName}` : ''}
+          </span>
+        )}
+        {expense.photoUrl && (
+          <a href={expense.photoUrl} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: T.copper[600], textDecoration: 'none', fontWeight: 600 }}>
+            📎 Ver foto
+          </a>
+        )}
+      </div>
+
+      {canManage && (
+        <div style={{ marginLeft: 52, marginTop: 8 }}>
+          {confirmingDelete ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: T.bad, fontWeight: 600 }}>¿Eliminar este gasto?</span>
+              <button onClick={onConfirmDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: T.bad, color: '#fff',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+              }}>Sí, eliminar</button>
+              <button onClick={onCancelDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: T.neutral[100], color: T.neutral[700],
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+              }}>No</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={onEdit} style={{
+                padding: '5px 12px', borderRadius: 8, background: '#fff', color: T.copper[600],
+                border: `1.5px solid ${T.copper[200]}`, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}>✏️ Editar</button>
+              <button onClick={onAskDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: '#fff', color: T.bad,
+                border: `1.5px solid #F0C8BE`, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}>🗑 Eliminar</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

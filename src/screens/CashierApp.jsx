@@ -1161,14 +1161,13 @@ export function ActiveSession({
       )}
 
       {expenseOpen && (
-        <CashExpenseModal
+        <CashExpenseScreen
           session={session}
           authUser={authUser}
           userDoc={userDoc}
           assistMode={assistMode}
           expenses={sessionExpenses}
           onCancel={() => setExpenseOpen(false)}
-          onSaved={() => setExpenseOpen(false)}
         />
       )}
 
@@ -1520,18 +1519,165 @@ function ExpenseRow({ expense, isLast }) {
 }
 
 // ──────────────────────────────────────────────────────────────
-// Modal: Gastos de caja del turno
-// Arriba el formulario (agregar o editar). Abajo la lista de gastos de ESTE
-// turno — la misma que el admin ve al cerrar (misma query por sessionId). La
-// cajera puede editar/eliminar los que sigan 'pending', y ve cuáles aún no han
-// subido al servidor (para sincronizar antes de cerrar).
+// PANTALLA: Gastos de caja del turno (estilo "Mis ventas")
+// Pantalla completa: botón grande "Registrar nuevo gasto" + lista de los gastos
+// del turno (la MISMA query por sessionId que ve el admin al cerrar). La cajera
+// puede editar/eliminar los 'pending' y ve cuáles aún no han subido al servidor.
+// El formulario de alta/edición es una hoja que se desliza desde abajo.
 // ──────────────────────────────────────────────────────────────
-function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [], onCancel, onSaved }) {
+function CashExpenseScreen({ session, authUser, userDoc, assistMode, expenses = [], onCancel }) {
+  // null = solo lista | { editing: null } = nuevo | { editing: exp } = editar
+  const [form, setForm] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+
+  const unsyncedCount = expenses.filter(e => e._pendingWrite).length
+
+  function handleDelete(id) {
+    deleteCashExpense(id)
+    setDeletingId(null)
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 60,
+      background: T.neutral[50],
+      display: 'flex', flexDirection: 'column',
+      animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      {/* Header sticky con botón atrás */}
+      <div style={{
+        padding: '14px 16px', background: '#fff',
+        borderBottom: `1px solid ${T.neutral[100]}`,
+        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
+      }}>
+        <button onClick={onCancel} aria-label="Volver" style={{
+          width: 36, height: 36, borderRadius: 999, border: 'none',
+          background: T.neutral[100], cursor: 'pointer', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6 L9 12 L15 18" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+            Gastos de caja
+          </div>
+          <div style={{
+            fontSize: 11, color: T.neutral[500],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {session.branchName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()}
+          </div>
+        </div>
+      </div>
+
+      {/* Contenido scrollable */}
+      <div style={{
+        flex: 1, overflowY: 'auto', width: '100%',
+        padding: '18px 16px 40px', maxWidth: 540, margin: '0 auto',
+      }}>
+        {/* Botón grande: registrar nuevo gasto */}
+        <button
+          onClick={() => setForm({ editing: null })}
+          style={{
+            width: '100%', padding: '18px', borderRadius: 18,
+            background: T.copper[500], color: '#fff', border: 'none',
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 16, fontWeight: 800, letterSpacing: -0.2,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            boxShadow: '0 6px 18px rgba(184,122,86,0.4)', marginBottom: 16,
+          }}
+        >
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <circle cx="11" cy="11" r="9" stroke="#fff" strokeWidth="2" fill="none"/>
+            <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
+          </svg>
+          Registrar nuevo gasto
+        </button>
+
+        {/* Aviso clave: gastos que aún NO han subido al servidor. */}
+        {unsyncedCount > 0 && (
+          <div style={{
+            padding: '11px 14px', borderRadius: 12, marginBottom: 16,
+            background: '#FFF4DD', border: `1px solid #F0D699`,
+            fontSize: 12.5, color: '#8A5E12', fontWeight: 500, lineHeight: 1.5,
+          }}>
+            ⏳ Tienes {unsyncedCount} gasto(s) sin subir. Conéctate y usa
+            "Sincronizar ahora" antes de cerrar el turno para que el administrador
+            los vea en el cierre.
+          </div>
+        )}
+
+        {/* Lista de gastos del turno */}
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          letterSpacing: 0.5, textTransform: 'uppercase', margin: '0 2px 8px',
+        }}>
+          Gastos de este turno ({expenses.length})
+        </div>
+
+        {expenses.length === 0 ? (
+          <div style={{
+            padding: '40px 20px', textAlign: 'center',
+            color: T.neutral[400], fontSize: 13, lineHeight: 1.6,
+            background: '#fff', borderRadius: 14, border: `1px solid ${T.neutral[100]}`,
+          }}>
+            Aún no hay gastos en este turno.<br/>
+            Toca "Registrar nuevo gasto" para empezar.
+          </div>
+        ) : (
+          <Card padding={0} style={{ overflow: 'hidden' }}>
+            {expenses.map((exp, i) => (
+              <ExpenseManageRow
+                key={exp.id}
+                expense={exp}
+                isLast={i === expenses.length - 1}
+                isEditing={false}
+                confirmingDelete={deletingId === exp.id}
+                onEdit={() => setForm({ editing: exp })}
+                onAskDelete={() => setDeletingId(exp.id)}
+                onCancelDelete={() => setDeletingId(null)}
+                onConfirmDelete={() => handleDelete(exp.id)}
+              />
+            ))}
+          </Card>
+        )}
+      </div>
+
+      {/* Hoja deslizante: formulario de alta/edición */}
+      {form && (
+        <ExpenseFormSheet
+          session={session}
+          authUser={authUser}
+          userDoc={userDoc}
+          assistMode={assistMode}
+          editing={form.editing}
+          onClose={() => setForm(null)}
+        />
+      )}
+
+      <style>{`
+        @keyframes slideUp {
+          from { transform: translateY(100%); opacity: 0.9; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Hoja deslizante (bottom sheet) con el formulario de gasto.
+//  - Alta: descripción + monto + foto opcional.
+//  - Edición: solo descripción + monto (la foto se cambia borrando y recreando).
+// Al guardar cierra la hoja; la lista del padre se refresca sola por el watcher.
+// ──────────────────────────────────────────────────────────────
+function ExpenseFormSheet({ session, authUser, userDoc, assistMode, editing, onClose }) {
   const isAssist = !!assistMode
-  const [editingId, setEditingId] = useState(null) // null = modo agregar
-  const [deletingId, setDeletingId] = useState(null) // id con confirmación de borrado abierta
-  const [description, setDescription] = useState('')
-  const [amountStr, setAmountStr] = useState('')
+  const isEdit = !!editing
+  const [description, setDescription] = useState(editing?.description || '')
+  const [amountStr, setAmountStr] = useState(editing?.amount != null ? String(editing.amount) : '')
   const [photoUrl, setPhotoUrl] = useState(null)
   const [photoBlob, setPhotoBlob] = useState(null)
   const [photoLocalPreview, setPhotoLocalPreview] = useState(null)
@@ -1542,8 +1688,6 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  const unsyncedCount = expenses.filter(e => e._pendingWrite).length
-
   useEffect(() => {
     return () => {
       if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
@@ -1552,38 +1696,6 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
 
   const amount = Number(amountStr) || 0
   const valid = description.trim().length >= 3 && amount > 0 && !photoUploading
-
-  function resetForm() {
-    setEditingId(null)
-    setDescription('')
-    setAmountStr('')
-    setPhotoUrl(null)
-    setPhotoBlob(null)
-    setPhotoOfflineQueued(false)
-    if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
-    setPhotoLocalPreview(null)
-    setPhotoError(null)
-    setError(null)
-    setBusy(false)
-  }
-
-  // Pasar un gasto pendiente al formulario para editarlo. Solo descripción y
-  // monto; la foto no se edita aquí (si quiere cambiarla, elimina y recrea).
-  function handleStartEdit(exp) {
-    setEditingId(exp.id)
-    setDescription(exp.description || '')
-    setAmountStr(exp.amount != null ? String(exp.amount) : '')
-    setError(null)
-    setDeletingId(null)
-    // Subir el scroll al formulario.
-    try { document.getElementById('expense-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch {}
-  }
-
-  function handleDelete(id) {
-    deleteCashExpense(id)
-    setDeletingId(null)
-    if (editingId === id) resetForm()
-  }
 
   async function handleFileSelected(event) {
     const file = event.target.files?.[0]
@@ -1634,11 +1746,11 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
     if (!valid || busy) return
 
     // EDICIÓN de un gasto pendiente: solo descripción + monto.
-    if (editingId) {
+    if (isEdit) {
       setBusy(true); setError(null)
       try {
-        updateCashExpense(editingId, { description, amount })
-        resetForm()
+        updateCashExpense(editing.id, { description, amount })
+        onClose()
       } catch (err) {
         console.error(err)
         setError('No pudimos guardar los cambios. Intenta de nuevo.')
@@ -1659,13 +1771,8 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
         : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
 
       // Caso B (foto offline): pre-generar localId para que el doc nazca con
-      // photoLocalId + photoStatus='pending' desde la creacion. Esto evita
-      // un updateDoc post-create — importante porque las reglas actuales de
-      // /cashExpenses NO permiten a la cajera updatear (solo crear).
-      // OJO: aun asi, cuando la red vuelva el worker hara updateDoc para
-      // grabar photoUrl + photoStatus='uploaded' — eso requiere que la regla
-      // permita a la cajera updatear sus propios cashExpenses 'pending'
-      // restringido a campos de foto (ver doc).
+      // photoLocalId + photoStatus='pending' desde la creacion. Cuando vuelva
+      // la red el worker hara updateDoc para grabar photoUrl + photoStatus.
       let photoLocalId = null
       if (!photoUrl && photoBlob) {
         photoLocalId = makePhotoLocalId()
@@ -1699,10 +1806,8 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
           console.warn('[CashExpense] no se pudo encolar la foto offline:', queueErr)
         }
       }
-      // El gasto queda registrado y aparece de una vez en la lista de abajo.
-      // Limpiamos el formulario y dejamos el modal abierto para que la cajera
-      // siga agregando o verifique lo que subió.
-      resetForm()
+      // Listo: el gasto aparece de una vez en la lista del padre (watcher live).
+      onClose()
     } catch (err) {
       console.error(err)
       setError('No pudimos guardar el gasto. Intenta de nuevo.')
@@ -1711,35 +1816,29 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
   }
 
   return (
-    <ModalOverlay onClose={busy ? undefined : onCancel}>
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      }}
+    >
       <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 440, background: '#fff', borderRadius: 22,
-        padding: '24px 22px 22px', boxShadow: '0 16px 48px rgba(0,0,0,0.2)',
-        animation: 'fadeScaleIn 0.2s ease',
+        width: '100%', maxWidth: 480, background: '#fff',
+        borderTopLeftRadius: 22, borderTopRightRadius: 22,
         maxHeight: '92vh', overflowY: 'auto',
+        padding: '22px 20px 24px',
+        animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
       }}>
-        <div id="expense-form-top" style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
-          {editingId ? 'Editar gasto' : 'Gastos de caja'}
+        <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          {isEdit ? 'Editar gasto' : 'Registrar nuevo gasto'}
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
-          {editingId
+          {isEdit
             ? 'Corrige la descripción o el monto. Sigue pendiente de aprobación.'
-            : 'Registra un gasto y revisa abajo los que ya subiste en este turno.'}
+            : 'Quedará pendiente de aprobación del administrador.'}
         </div>
-
-        {/* Aviso clave: gastos que aún NO han subido al servidor. Si la cajera
-            cierra el turno con alguno sin subir, el admin no lo vería. */}
-        {unsyncedCount > 0 && (
-          <div style={{
-            padding: '11px 14px', borderRadius: 12, marginBottom: 14,
-            background: '#FFF4DD', border: `1px solid #F0D699`,
-            fontSize: 12.5, color: '#8A5E12', fontWeight: 500, lineHeight: 1.5,
-          }}>
-            ⏳ Tienes {unsyncedCount} gasto(s) sin subir. Conéctate y usa
-            "Sincronizar ahora" antes de cerrar el turno para que el administrador
-            los vea en el cierre.
-          </div>
-        )}
 
         <ExpenseTextField
           label="¿Para qué fue?"
@@ -1759,7 +1858,7 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
 
         {/* Foto opcional — solo al agregar. En edición no se cambia la foto
             (si la quiere cambiar, elimina el gasto y lo vuelve a crear). */}
-        {!editingId && (
+        {!isEdit && (
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
             Foto del recibo (opcional)
@@ -1887,13 +1986,7 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
         {error && <ErrorBox text={error} />}
 
         <div style={{ display: 'flex', gap: 10 }}>
-          <button
-            onClick={editingId ? resetForm : onCancel}
-            disabled={busy}
-            style={btnSecondary()}
-          >
-            {editingId ? 'Cancelar edición' : 'Cerrar'}
-          </button>
+          <button onClick={onClose} disabled={busy} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleSave}
             disabled={!valid || busy}
@@ -1905,39 +1998,11 @@ function CashExpenseModal({ session, authUser, userDoc, assistMode, expenses = [
               boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
             }}
           >
-            {busy ? 'Guardando...' : editingId ? 'Guardar cambios' : 'Registrar gasto'}
+            {busy ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Registrar gasto'}
           </button>
         </div>
-
-        {/* Lista de gastos de ESTE turno (misma query que ve el admin al cerrar).
-            Editar/eliminar solo en los 'pending'. */}
-        {expenses.length > 0 && (
-          <div style={{ marginTop: 22 }}>
-            <div style={{
-              fontSize: 12, fontWeight: 700, color: T.neutral[500],
-              letterSpacing: 0.5, textTransform: 'uppercase', margin: '0 2px 8px',
-            }}>
-              Gastos de este turno ({expenses.length})
-            </div>
-            <Card padding={0} style={{ overflow: 'hidden' }}>
-              {expenses.map((exp, i) => (
-                <ExpenseManageRow
-                  key={exp.id}
-                  expense={exp}
-                  isLast={i === expenses.length - 1}
-                  isEditing={editingId === exp.id}
-                  confirmingDelete={deletingId === exp.id}
-                  onEdit={() => handleStartEdit(exp)}
-                  onAskDelete={() => setDeletingId(exp.id)}
-                  onCancelDelete={() => setDeletingId(null)}
-                  onConfirmDelete={() => handleDelete(exp.id)}
-                />
-              ))}
-            </Card>
-          </div>
-        )}
       </div>
-    </ModalOverlay>
+    </div>
   )
 }
 

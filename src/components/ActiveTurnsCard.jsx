@@ -185,8 +185,13 @@ export default function ActiveTurnsCard() {
         const branchesNow = getData().branches || []
         const targetBranch = branchesNow.find(b => b.name === WEB_ORDER_BRANCH_NAME)
         if (!targetBranch) return
-        const targetSession = openSessions.find(s => s.branchId === targetBranch.id)
-        if (!targetSession) return  // sin turno abierto, esperamos a que abra
+        // El pedido web lo cobra la CAJA — debemos enganchar a la sesión de
+        // caja, no a una de mesera/cocina que también puede estar abierta en
+        // la misma panadería (si no, la burbuja no le llega a la cajera).
+        const targetSession = openSessions.find(
+          s => s.branchId === targetBranch.id && (!s.type || s.type === 'cash')
+        )
+        if (!targetSession) return  // sin caja abierta, esperamos a que abra
         const order = await getCustomerOrder(orderId)
         if (cancelled) return
         if (!order || order.status === 'confirmed') {

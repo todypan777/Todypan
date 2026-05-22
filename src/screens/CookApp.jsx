@@ -1896,7 +1896,11 @@ function CallCashierFAB({ authUser, userDoc }) {
   )
   const targetSession = useMemo(() => {
     if (!targetBranch) return null
-    return openSessions.find(s => s.branchId === targetBranch.id && s.status === 'open') || null
+    // La llamada va a la CAJERA, no a una mesera/cocina que también pueda
+    // tener turno abierto en la misma panadería. Filtramos por sesión de caja.
+    return openSessions.find(
+      s => s.branchId === targetBranch.id && s.status === 'open' && (!s.type || s.type === 'cash')
+    ) || null
   }, [openSessions, targetBranch])
 
   const isPending = myPendingCalls.length > 0

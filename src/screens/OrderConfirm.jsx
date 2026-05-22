@@ -406,9 +406,11 @@ function AdminConfirmView({ order, orderId }) {
     () => branches.find(b => b.name === WEB_ORDER_BRANCH_NAME) || null,
     [branches]
   )
+  // El pedido web lo cobra la CAJA: enganchamos a la sesión de caja, no a una
+  // de mesera/cocina que también pueda estar abierta en la misma panadería.
   const targetSession = useMemo(
     () => targetBranch
-      ? openSessions.find(s => s.branchId === targetBranch.id)
+      ? openSessions.find(s => s.branchId === targetBranch.id && (!s.type || s.type === 'cash'))
       : null,
     [openSessions, targetBranch]
   )

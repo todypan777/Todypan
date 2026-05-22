@@ -22,6 +22,7 @@ import MissingPricesPanel from '../components/MissingPricesPanel'
 import ProductCatalogPanel from '../components/ProductCatalogPanel'
 import ConnectionChip from '../components/ConnectionChip'
 import { useOnlineStatus, useDataSaver } from '../utils/network'
+import { requestPersistentStorage, useStorageHealth, onLocalWriteFailure } from '../utils/storage'
 import MyHistoricalSales from './MyHistoricalSales'
 import {
   watchCashierProducts,
@@ -42,6 +43,11 @@ export default function CashierApp({ authUser, userDoc }) {
   // llamada de cocina suene en iOS (Safari bloquea audio sin gesto previo).
   useEffect(() => { setupAudioUnlock() }, [])
 
+  // Reintenta pedir almacenamiento persistente con la cajera ya dentro (más
+  // 'engagement' → Chrome lo concede más fácil que en el primer arranque).
+  // Blinda la cola offline de ventas/gastos/mesas contra el borrado del SO.
+  useEffect(() => { requestPersistentStorage() }, [])
+
   if (mySession === undefined) {
     return <LoadingScreen label="Verificando turno..." />
   }
@@ -60,6 +66,7 @@ export default function CashierApp({ authUser, userDoc }) {
       />
 
       <ConnectivityBanner />
+      <StorageHealthBanner />
 
       {mySession ? (
         mySession.openingConfirmation?.status === 'pending' ? (
@@ -158,6 +165,55 @@ function bannerStyle(bg, border, fg) {
     padding: '10px 16px',
     display: 'flex', alignItems: 'flex-start', gap: 10,
   }
+}
+
+// Aviso cuando el celular está en riesgo de perder datos offline:
+//   - Crítico (rojo): una escritura NO quedó guardada (IndexedDB sin espacio).
+//     Se gatilla en vivo desde firestoreOffline cuando un doc no entra a caché.
+//   - Preventivo (ámbar): persistencia denegada o almacenamiento casi lleno.
+//     Más enfático si el modo ahorro está activo (ahí se acumulan ventas sin subir).
+function StorageHealthBanner() {
+  const health = useStorageHealth()
+  const { enabled: dataSaver } = useDataSaver()
+  const [writeFailed, setWriteFailed] = useState(false)
+
+  useEffect(() => onLocalWriteFailure(() => setWriteFailed(true)), [])
+
+  if (writeFailed) {
+    return (
+      <div style={bannerStyle('#FBE9E5', '#F0C8BE', '#B42318')}>
+        <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>⚠️</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+            El celular no pudo guardar algo
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+            Parece que falta espacio en este celular. Libera espacio y, si tienes
+            modo ahorro, toca "Sincronizar ahora". Avísale al administrador para
+            revisar que no falte ninguna venta o gasto.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!health || !health.atRisk) return null
+
+  return (
+    <div style={bannerStyle('#FFF4DD', '#F0D699', '#8A5E12')}>
+      <div style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📦</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
+          Este celular está bajo de espacio
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+          {dataSaver
+            ? 'Con poco espacio y modo ahorro activo, tus ventas sin subir podrían perderse. Sincroniza seguido y libera espacio en el celular.'
+            : 'Podría borrar lo guardado sin conexión. Libera espacio en el celular para no perder ventas ni gastos.'}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ──────────────────────────────────────────────────────────────

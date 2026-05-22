@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import App from './App.jsx'
 import { startPhotoQueueWorker } from './utils/photoQueue'
+import { requestPersistentStorage } from './utils/storage'
 
 // ── Kill switch one-shot ──
 // Los celulares con SW viejo (sin skipWaiting) quedaban atascados sirviendo
@@ -52,19 +53,7 @@ startPhotoQueueWorker()
 // preguntar y blinda IndexedDB ante limpiezas automaticas del SO cuando
 // el almacenamiento del dispositivo se llena. Sin esto, la cola de
 // ventas/fotos offline podria perderse en celulares con poco espacio.
-async function requestPersistentStorage() {
-  try {
-    if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
-      const already = await navigator.storage.persisted?.()
-      if (!already) {
-        const granted = await navigator.storage.persist()
-        console.log('[storage] persistente:', granted ? 'concedido' : 'no concedido')
-      }
-    }
-  } catch (e) {
-    console.warn('[storage] no se pudo solicitar persistencia:', e?.message)
-  }
-}
+// (Se reintenta tras confirmar turno desde CashierApp — más 'engagement'.)
 requestPersistentStorage()
 
 // NOTA: el "Modo ahorro de datos" (disableNetwork) ya NO se aplica aquí al

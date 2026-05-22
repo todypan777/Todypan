@@ -1,4 +1,5 @@
-import { doc, setDoc } from 'firebase/firestore'
+import { doc, setDoc, getDocFromCache } from 'firebase/firestore'
+import { notifyLocalWriteFailure } from './storage'
 
 /**
  * Variante de `addDoc` que NO espera la respuesta del servidor.
@@ -14,13 +15,12 @@ import { doc, setDoc } from 'firebase/firestore'
  *   - Dispara `setDoc(ref, data)` SIN `await` — se encola y resuelve cuando
  *     haya red. Si la escritura falla (regla, schema), se loguea pero NO
  *     bloquea al usuario.
+ *   - Verifica que el doc SÍ haya quedado en la caché local (IndexedDB). En
+ *     celulares sin espacio, IndexedDB puede rechazar la escritura → el doc
+ *     nunca aparece (ej. "no se crea la burbuja") y al recargar se pierde.
+ *     Si no quedó en caché, avisa por notifyLocalWriteFailure para que la UI
+ *     le muestre a la cajera que algo no se guardó.
  *   - Retorna el `DocumentReference` con `id` y `path`, igual que `addDoc`.
- *
- * Trade-off:
- *   El caller asume que la escritura tendrá éxito eventualmente. Si falla
- *   por una regla, la cajera no se entera. Esto es aceptable para escrituras
- *   transaccionales (venta, pedido, gasto) donde la intención del usuario ya
- *   se cumplió en su mente y los datos se consolidan offline-first.
  */
 export function addDocOffline(colRef, data) {
   const ref = doc(colRef)
@@ -29,5 +29,25 @@ export function addDocOffline(colRef, data) {
   setDoc(ref, data).catch(err => {
     console.warn('[firestoreOffline] addDoc deferred:', err?.message || err)
   })
+  verifyLocalWrite(ref)
   return ref
+}
+
+/**
+ * Confirma que la escritura local quedó en la caché. La mutación local se
+ * aplica casi al instante incluso offline; si tras dos intentos el doc no
+ * está en caché, IndexedDB rechazó la escritura (típico: sin espacio).
+ */
+async function verifyLocalWrite(ref) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await new Promise(r => setTimeout(r, 600))
+    try {
+      await getDocFromCache(ref)
+      return // quedó en caché → todo bien
+    } catch {
+      // sigue al próximo intento
+    }
+  }
+  console.error('[firestoreOffline] la escritura NO quedó en caché local:', ref.path)
+  notifyLocalWriteFailure(ref.path)
 }

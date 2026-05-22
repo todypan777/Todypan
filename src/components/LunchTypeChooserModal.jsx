@@ -25,6 +25,7 @@ export default function LunchTypeChooserModal({
   corrienteAvailable, corrientePrice,
   specialActive, specialDescription, specialPrice,
   addonAvailable,
+  hidePrices = false,
   onCancel,
   onPickCorriente,
   onPickSpecial,
@@ -97,7 +98,7 @@ export default function LunchTypeChooserModal({
               emoji="🍽️"
               title="Almuerzo corriente"
               subtitle="Arma el almuerzo del menú del día paso a paso"
-              priceLabel={`Desde ${fmtCOP(corrientePrice)}`}
+              priceLabel={hidePrices ? null : `Desde ${fmtCOP(corrientePrice)}`}
               accentBg={T.copper[50]}
               accentBorder={T.copper[300]}
               accentColor={T.copper[700]}
@@ -109,7 +110,7 @@ export default function LunchTypeChooserModal({
               emoji="⭐"
               title="Almuerzo especial"
               subtitle={specialDescription || 'El especial publicado hoy'}
-              priceLabel={fmtCOP(specialPrice)}
+              priceLabel={hidePrices ? null : fmtCOP(specialPrice)}
               accentBg="#FFF7E6"
               accentBorder="#F4E0BC"
               accentColor="#7A5C00"
@@ -121,7 +122,7 @@ export default function LunchTypeChooserModal({
               emoji="➕"
               title="Adición"
               subtitle="Sopa, huevo o proteína extra · sin almuerzo completo"
-              priceLabel="Varía"
+              priceLabel={hidePrices ? null : 'Varía'}
               accentBg="#FFF7E6"
               accentBorder="#F4E0BC"
               accentColor={T.warn}
@@ -196,14 +197,16 @@ function ChoiceButton({ emoji, title, subtitle, priceLabel, accentBg, accentBord
           {subtitle}
         </div>
       </div>
-      <div style={{
-        fontSize: 13, fontWeight: 800, color: accentColor,
-        fontVariantNumeric: 'tabular-nums', letterSpacing: -0.2,
-        flexShrink: 0, padding: '4px 10px', borderRadius: 999,
-        background: accentBg, border: `1px solid ${accentBorder}`,
-      }}>
-        {priceLabel}
-      </div>
+      {priceLabel != null && (
+        <div style={{
+          fontSize: 13, fontWeight: 800, color: accentColor,
+          fontVariantNumeric: 'tabular-nums', letterSpacing: -0.2,
+          flexShrink: 0, padding: '4px 10px', borderRadius: 999,
+          background: accentBg, border: `1px solid ${accentBorder}`,
+        }}>
+          {priceLabel}
+        </div>
+      )}
     </button>
   )
 }

@@ -760,6 +760,17 @@ function CommandaCard({ group, servedInfo }) {
   const isLlevarTab = !group.tableNumber
   const label = tableLabelFromGroup(group)
 
+  // Quién originó la comanda (mesera / cajera / link de pedidos del admin).
+  const creatorOrder = group.orders.find(o => o.createdByName || o.createdByRole) || group.orders[0]
+  const creatorRole = creatorOrder?.createdByRole || 'cashier'
+  const creatorName = creatorOrder?.createdByName || creatorOrder?.cashierName || group.cashierName || ''
+  const creatorFirst = creatorName.split(' ')[0]
+  const creatorText = creatorRole === 'waitress'
+    ? `🙋 Mesera: ${creatorFirst}`
+    : creatorRole === 'admin'
+      ? `📲 Link de pedidos${creatorFirst ? ` · ${creatorFirst}` : ''}`
+      : (creatorName ? `🧾 Cajera: ${creatorFirst}` : null)
+
   // Plegar/desplegar la comanda. Llega desplegada; la cocinera la pliega
   // cuando quiere "guardarla para una hora" — el título sigue visible.
   const [collapsed, setCollapsed] = useState(false)
@@ -892,6 +903,15 @@ function CommandaCard({ group, servedInfo }) {
               marginTop: 2, letterSpacing: 0.3,
             }}>
               ⚠ Mezcla: {mesaCount} mesa + {llevarCount} llevar — revisar cada plato
+            </div>
+          )}
+          {creatorText && (
+            <div style={{
+              fontSize: 11.5, fontWeight: 700, color: T.neutral[500],
+              marginTop: 3, letterSpacing: 0.2,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {creatorText}
             </div>
           )}
         </div>

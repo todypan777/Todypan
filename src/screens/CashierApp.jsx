@@ -2556,7 +2556,7 @@ function btnSecondary() {
 // Lista compacta con checkbox tipo radio. Tap → chulea (con micro-animación).
 // Re-tap → des-chulea (mientras el turno siga abierto).
 // ──────────────────────────────────────────────────────────────
-function CashierTaskList({ tasks, sessionId }) {
+export function CashierTaskList({ tasks, sessionId }) {
   // Las pendientes arriba, las completadas (en este turno) abajo tachadas
   const sorted = useMemo(() => {
     const pending = tasks.filter(t => t.status === 'pending')

@@ -48,6 +48,7 @@ export default function CashierLunchWizard({
   initialSelections = null,
   initialNote = '',
   initialDestination = null,
+  hidePrices = false,
   onCancel,
   onAdd,
   onSaveEdit = () => {},
@@ -222,6 +223,7 @@ export default function CashierLunchWizard({
           stepIndex={stepIndex}
           total={TOTAL_STEPS}
           editMode={editMode}
+          hidePrices={hidePrices}
           onBack={goBack}
           canCancel={step === 'soup' || (editMode && step === 'destination')}
         />
@@ -421,6 +423,7 @@ export default function CashierLunchWizard({
                 product={product}
                 editMode={editMode}
                 initialDestination={initialDestination}
+                hidePrices={hidePrices}
                 onPick={pickDestination}
               />
             )}
@@ -443,7 +446,7 @@ export default function CashierLunchWizard({
 }
 
 // ─── Header ──────────────────────────────────────────────────────
-function WizardHeader({ product, currentCount, stepIndex, total, editMode, onBack, canCancel }) {
+function WizardHeader({ product, currentCount, stepIndex, total, editMode, hidePrices, onBack, canCancel }) {
   const pct = ((stepIndex + 1) / total) * 100
   const priceMesa = Number(product?.priceMesa || 0)
   const priceLlevar = Number(product?.priceLlevar || product?.priceMesa || 0)
@@ -508,8 +511,8 @@ function WizardHeader({ product, currentCount, stepIndex, total, editMode, onBac
             fontSize: 11, color: T.neutral[500], marginTop: 1,
             fontVariantNumeric: 'tabular-nums',
           }}>
-            Mesa {fmtCOP(priceMesa)} · Llevar {fmtCOP(priceLlevar)}
-            {' · '}<span style={{ fontWeight: 700 }}>Paso {stepIndex + 1}/{total}</span>
+            {!hidePrices && <>Mesa {fmtCOP(priceMesa)} · Llevar {fmtCOP(priceLlevar)}{' · '}</>}
+            <span style={{ fontWeight: 700 }}>Paso {stepIndex + 1}/{total}</span>
           </div>
         </div>
       </div>
@@ -1088,7 +1091,7 @@ function NoteStep({ note, onChange, onContinue }) {
 }
 
 // ─── Step final: elegir Mesa o Llevar ───────────────────────────
-function DestinationStep({ product, editMode, initialDestination, onPick }) {
+function DestinationStep({ product, editMode, initialDestination, hidePrices, onPick }) {
   const priceMesa = Number(product?.priceMesa || 0)
   const priceLlevar = Number(product?.priceLlevar || product?.priceMesa || 0)
   return (
@@ -1104,6 +1107,7 @@ function DestinationStep({ product, editMode, initialDestination, onPick }) {
           title="Para mesa"
           subtitle="Cliente come en el local"
           price={priceMesa}
+          hidePrices={hidePrices}
           accentBg={T.copper[50]}
           accentBorder={T.copper[400]}
           accentColor={T.copper[700]}
@@ -1115,6 +1119,7 @@ function DestinationStep({ product, editMode, initialDestination, onPick }) {
           title="Para llevar"
           subtitle="Cliente se lo lleva empacado"
           price={priceLlevar}
+          hidePrices={hidePrices}
           accentBg="#FFF7E6"
           accentBorder="#F0D699"
           accentColor="#7A5C00"
@@ -1135,7 +1140,7 @@ function DestinationStep({ product, editMode, initialDestination, onPick }) {
   )
 }
 
-function DestinationBigButton({ icon, title, subtitle, price, accentBg, accentBorder, accentColor, highlight, onClick }) {
+function DestinationBigButton({ icon, title, subtitle, price, hidePrices, accentBg, accentBorder, accentColor, highlight, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -1171,12 +1176,14 @@ function DestinationBigButton({ icon, title, subtitle, price, accentBg, accentBo
           {subtitle}
         </div>
       </div>
-      <div style={{
-        fontSize: 18, fontWeight: 900, color: accentColor,
-        fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-      }}>
-        {fmtCOP(price)}
-      </div>
+      {!hidePrices && (
+        <div style={{
+          fontSize: 18, fontWeight: 900, color: accentColor,
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          {fmtCOP(price)}
+        </div>
+      )}
     </button>
   )
 }

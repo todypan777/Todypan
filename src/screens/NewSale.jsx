@@ -49,12 +49,43 @@ export default function NewSale({
   // nombre del cliente y mande. Al enviar exitoso, si assistMode trae
   // `customerOrderId`, se marca ese pedido web como confirmado.
   initialLunchCommanda,
+  // Modo "mesera": toma pedidos en piso para la caja de su panadería. Recibe
+  // { waitressUid, waitressName }. La mesa/almuerzo se contabiliza a la cajera
+  // dueña del turno (igual que asistir) pero la mesera NO ve precios y NO
+  // cobra: solo arma la mesa y la deja lista para que la cajera cobre.
+  waitressMode,
   onCancel, onSaved,
 }) {
   // Modo "asistir": admin haciendo ventas en el turno de una cajera.
   // Las ventas/mesas quedan a nombre de la cajera (session.cashierUid),
   // pero registradas como recordedByUid del admin.
   const isAssistMode = !!assistMode
+
+  // ── Modo mesera (ver descripción del prop arriba) ──
+  const isWaitress = !!waitressMode
+  // La mesera no ve dinero en ninguna parte del flujo.
+  const hidePrices = isWaitress
+  const actorUid = isWaitress ? (waitressMode.waitressUid || authUser.uid) : authUser.uid
+  const actorName = isWaitress
+    ? (waitressMode.waitressName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim())
+    : `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+  // Dueño de cobro de la mesa/almuerzo: la cajera del turno cuando asiste el
+  // admin o trabaja una mesera; si no, la propia cajera.
+  const tabOwnerUid = (isAssistMode || isWaitress) ? (session.cashierUid || authUser.uid) : authUser.uid
+  // Atribución de quién ABRIÓ la mesa — solo se marca para mesera (la burbuja
+  // muestra su nombre y el aviso de "listo" la encuentra). Para asistir se
+  // mantiene el recordedBy* de siempre.
+  const tabAttribution = isWaitress
+    ? { openedByUid: actorUid, openedByName: actorName, openedByRole: 'waitress' }
+    : isAssistMode
+      ? { recordedByUid: authUser.uid, recordedByName: assistMode.adminName, recordedByRole: 'admin' }
+      : {}
+  // Atribución del almuerzo en cocina (quién lo originó).
+  const orderAttribution = isWaitress
+    ? { createdByRole: 'waitress', createdByUid: actorUid, createdByName: actorName }
+    : isAssistMode
+      ? { createdByRole: 'admin', createdByUid: authUser.uid, createdByName: assistMode.adminName }
+      : { createdByRole: 'cashier' }
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   const adminProducts = getData().products || []
   const catalog = useMemo(
@@ -296,6 +327,29 @@ export default function NewSale({
       setQuery('')
       return
     }
+    // Mesera: nunca fija precios. Venta libre y productos sin precio en la
+    // panadería entran en $0; la cajera pone el valor real al cobrar.
+    if (isWaitress) {
+      if (product.freeAmount) {
+        setCart(prev => [
+          ...prev,
+          {
+            key: `free_${product.source}_${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            productId: product.id,
+            source: product.source,
+            name: product.name,
+            qty: 1,
+            unitPrice: 0,
+            freeAmount: true,
+          },
+        ])
+        setQuery('')
+        return
+      }
+      const wp = getProductPrice(product, branchId)
+      addProductToCart(product, wp === null ? 0 : wp)
+      return
+    }
     // Productos de venta libre (ej: "Pan"): cajera escribe el monto al vender.
     // Se salta la lógica de "primera vez" porque no hay precio guardado.
     if (product.freeAmount) {
@@ -456,21 +510,14 @@ export default function NewSale({
   // Devuelve un mensaje de error si falla, null si OK (para que el modal lo muestre).
   async function handleConvertToTab(numberToUse) {
     try {
-      // En modo asistir: la mesa queda a nombre de la cajera dueña del turno.
-      // Si no, a nombre del usuario actual.
-      const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
       await createOpenTab({
         sessionId: session.id,
-        cashierUid: ownerUid,
+        cashierUid: tabOwnerUid,
         branchId: session.branchId,
         branchName: session.branchName,
         tableNumber: numberToUse,
         items: cart,
-        ...(isAssistMode ? {
-          recordedByUid: authUser.uid,
-          recordedByName: assistMode.adminName,
-          recordedByRole: 'admin',
-        } : {}),
+        ...tabAttribution,
       })
       setConvertOpen(false)
       onCancel() // cerrar el modal de venta; la burbuja aparecerá vía listener
@@ -486,6 +533,35 @@ export default function NewSale({
         return 'Sin conexión a la base de datos. Verifica tu red.'
       }
       return `No se pudo crear la mesa. ${err?.message || 'Intenta de nuevo.'}`
+    }
+  }
+
+  // Guardar el carrito actual como pedido "para llevar" (mesera, cart sin
+  // almuerzos). Devuelve mensaje de error o null si OK.
+  async function handleConvertToLlevar(name) {
+    const cn = String(name || '').trim()
+    if (!cn) return 'Pon un nombre para identificar al cliente.'
+    try {
+      await createOpenTab({
+        sessionId: session.id,
+        cashierUid: tabOwnerUid,
+        branchId: session.branchId,
+        branchName: session.branchName,
+        kind: 'llevar',
+        customerName: cn,
+        items: cart,
+        ...tabAttribution,
+      })
+      setConvertOpen(false)
+      onCancel()
+      return null
+    } catch (err) {
+      console.error('[NewSale] no se pudo crear el pedido para llevar:', err)
+      const code = err?.code || ''
+      if (code === 'permission-denied') {
+        return 'Las reglas de Firestore bloquean crear pedidos. El admin debe habilitar /openTabs en Firebase.'
+      }
+      return `No se pudo guardar el pedido. ${err?.message || 'Intenta de nuevo.'}`
     }
   }
 
@@ -717,7 +793,7 @@ export default function NewSale({
   //   En modo tab (mesa ya abierta), kind se ignora — se usa el de la tab existente.
   async function handleSendCommanda(payload) {
     if (lunchCommanda.length === 0) return null
-    const ownerUid = isAssistMode ? (session.cashierUid || authUser.uid) : authUser.uid
+    const ownerUid = tabOwnerUid
     const cashierName = session.cashierName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
     const commandaId = newCommandaId()
 
@@ -751,11 +827,7 @@ export default function NewSale({
             tableNumber: numberToUse,
             tableSuffix: suffix,
             items: cart,
-            ...(isAssistMode ? {
-              recordedByUid: authUser.uid,
-              recordedByName: assistMode.adminName,
-              recordedByRole: 'admin',
-            } : {}),
+            ...tabAttribution,
           })
         } else {
           // kind === 'llevar' — necesita nombre del cliente.
@@ -770,11 +842,7 @@ export default function NewSale({
             kind: 'llevar',
             customerName: cn,
             items: cart,
-            ...(isAssistMode ? {
-              recordedByUid: authUser.uid,
-              recordedByName: assistMode.adminName,
-              recordedByRole: 'admin',
-            } : {}),
+            ...tabAttribution,
           })
         }
       } else {
@@ -823,6 +891,7 @@ export default function NewSale({
           // commandaNote es per-almuerzo. Mantenemos el nombre del campo
           // por backward compat con la cocina que ya lo lee.
           commandaNote: lunch.note || null,
+          ...orderAttribution,
         })
         orderIds.push(orderId)
       }
@@ -995,6 +1064,8 @@ export default function NewSale({
               )}
               {session.branchName || 'Panadería'}
               {isAssistMode && session.cashierName && ` · turno de ${session.cashierName}`}
+              {isTabMode && tab?.openedByRole === 'waitress' && tab?.openedByName &&
+                ` · abrió ${tab.openedByName.split(' ')[0]}`}
             </div>
           </div>
           {isTabMode && (tab?.kind || 'mesa') === 'mesa' && (
@@ -1162,12 +1233,14 @@ export default function NewSale({
                     }}>
                       {p.name}
                     </div>
-                    <div style={{
-                      fontSize: 11.5, color: T.neutral[500], marginTop: 2,
-                      letterSpacing: 0.2,
-                    }}>
-                      Mesa {fmtCOP(p.priceMesa)} · Llevar {fmtCOP(p.priceLlevar)}
-                    </div>
+                    {!hidePrices && (
+                      <div style={{
+                        fontSize: 11.5, color: T.neutral[500], marginTop: 2,
+                        letterSpacing: 0.2,
+                      }}>
+                        Mesa {fmtCOP(p.priceMesa)} · Llevar {fmtCOP(p.priceLlevar)}
+                      </div>
+                    )}
                   </div>
                   <div style={{
                     fontSize: 11, fontWeight: 800, color: accent,
@@ -1234,7 +1307,7 @@ export default function NewSale({
                     }}>
                       {p.name}
                     </div>
-                    {isLunchItem && (
+                    {isLunchItem && !hidePrices && (
                       <div style={{
                         fontSize: 11, color: T.neutral[500], marginTop: 1,
                         letterSpacing: 0.3,
@@ -1260,7 +1333,7 @@ export default function NewSale({
                     }}>
                       Venta libre
                     </div>
-                  ) : needsPrice ? (
+                  ) : (needsPrice && !hidePrices) ? (
                     <div style={{
                       fontSize: 11, fontWeight: 700, color: T.copper[700],
                       background: T.copper[50], padding: '4px 10px', borderRadius: 999,
@@ -1268,7 +1341,7 @@ export default function NewSale({
                     }}>
                       Poner precio
                     </div>
-                  ) : (
+                  ) : hidePrices ? null : (
                     <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                       {fmtCOP(priceHere)}
                     </div>
@@ -1325,6 +1398,7 @@ export default function NewSale({
                 key={it.key}
                 item={it}
                 isLast={i === cart.length - 1}
+                hidePrices={hidePrices}
                 // Estado en vivo del kitchenOrder (si es un shim de cocina):
                 // 'pending' = editable, 'ready' = ya cocinado.
                 kitchenLiveStatus={
@@ -1336,7 +1410,7 @@ export default function NewSale({
                 onPlus={() => updateQty(it.key, +1)}
                 onRemove={() => removeItem(it.key)}
                 onEditKitchen={() => handleEditKitchenItem(it)}
-                onEditAmount={() => setFreeAmountTarget({
+                onEditAmount={hidePrices ? undefined : () => setFreeAmountTarget({
                   product: { id: it.productId, source: it.source, name: it.name },
                   editingKey: it.key,
                 })}
@@ -1357,42 +1431,61 @@ export default function NewSale({
             padding: '14px 18px',
             paddingBottom: 'calc(14px + env(safe-area-inset-bottom, 0px))',
           }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: T.neutral[600] }}>Total</span>
-              <span style={{ fontSize: 28, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
-                {fmtCOP(total)}
-              </span>
-            </div>
-            <button
-              onClick={() => setPaymentOpen(true)}
-              style={{
-                width: '100%', padding: '15px', borderRadius: 16,
-                background: T.copper[500], color: '#fff',
-                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 15.5, fontWeight: 700,
-                boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
-              }}
-            >
-              Cobrar {fmtCOP(total)}
-            </button>
+            {!hidePrices && (
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: T.neutral[600] }}>Total</span>
+                <span style={{ fontSize: 28, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.5 }}>
+                  {fmtCOP(total)}
+                </span>
+              </div>
+            )}
+            {!isWaitress && (
+              <button
+                onClick={() => setPaymentOpen(true)}
+                style={{
+                  width: '100%', padding: '15px', borderRadius: 16,
+                  background: T.copper[500], color: '#fff',
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 15.5, fontWeight: 700,
+                  boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+                }}
+              >
+                Cobrar {fmtCOP(total)}
+              </button>
+            )}
+            {/* Mesera en modo mesa: botón "Listo" que guarda y vuelve. */}
+            {isWaitress && isTabMode && (
+              <button
+                onClick={handleMinimize}
+                style={{
+                  width: '100%', padding: '15px', borderRadius: 16,
+                  background: T.copper[500], color: '#fff',
+                  border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 15.5, fontWeight: 700,
+                  boxShadow: '0 4px 14px rgba(184,122,86,0.35)',
+                }}
+              >
+                Listo · guardar mesa
+              </button>
+            )}
             {!isTabMode && (
               <button
                 onClick={() => setConvertOpen(true)}
                 style={{
-                  width: '100%', marginTop: 10, padding: '14px',
-                  background: T.neutral[900], color: '#fff',
+                  width: '100%', marginTop: isWaitress ? 0 : 10, padding: '14px',
+                  background: isWaitress ? T.copper[500] : T.neutral[900], color: '#fff',
                   border: 'none', borderRadius: 16,
                   cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 14.5, fontWeight: 700,
+                  fontSize: isWaitress ? 15.5 : 14.5, fontWeight: 700,
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  boxShadow: '0 3px 12px rgba(0,0,0,0.18)',
+                  boxShadow: isWaitress ? '0 4px 14px rgba(184,122,86,0.35)' : '0 3px 12px rgba(0,0,0,0.18)',
                 }}
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                   <circle cx="9" cy="9" r="7" stroke="#fff" strokeWidth="1.6" fill="none"/>
                   <path d="M9 5 V9 L11.5 11" stroke="#fff" strokeWidth="1.6" fill="none" strokeLinecap="round"/>
                 </svg>
-                Enviar a mesa
+                {isWaitress ? 'Guardar pedido' : 'Enviar a mesa'}
               </button>
             )}
             {/* En modo mesa: botón secundario "Eliminar mesa" */}
@@ -1466,8 +1559,10 @@ export default function NewSale({
       {convertOpen && (
         <ConvertToTabModal
           openTabs={openTabs}
+          waitress={isWaitress}
           onCancel={() => setConvertOpen(false)}
           onConfirm={handleConvertToTab}
+          onConfirmLlevar={handleConvertToLlevar}
         />
       )}
 
@@ -1479,6 +1574,7 @@ export default function NewSale({
       {lunchModal?.kind === 'menu' && (
         <CashierLunchWizard
           product={lunchModal.product}
+          hidePrices={hidePrices}
           currentCount={lunchCommanda.length}
           stockDailyMenu={dailyMenu}
           consumedByItem={consumedByItem}
@@ -1506,6 +1602,7 @@ export default function NewSale({
       {lunchModal?.kind === 'special' && (
         <CashierSpecialWizard
           currentCount={lunchCommanda.length}
+          hidePrices={hidePrices}
           editMode={!!lunchModal.edit}
           initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}
@@ -1530,6 +1627,7 @@ export default function NewSale({
           según disponibilidad del día. */}
       {lunchChooserOpen && (
         <LunchTypeChooserModal
+          hidePrices={hidePrices}
           corrienteAvailable={corrienteState.available}
           corrientePrice={corrienteState.priceMesa}
           specialActive={!!specialFromDay}
@@ -1556,6 +1654,7 @@ export default function NewSale({
       {addonsModalState && (
         <PublicAddonsModal
           prices={addonPrices}
+          hidePrices={hidePrices}
           proteinOptions={proteinOptionsForDay}
           initialType={addonsModalState === 'menu' ? null : addonsModalState}
           onCancel={() => {
@@ -1591,6 +1690,7 @@ export default function NewSale({
             })
           }}
           isTabMode={isTabMode}
+          hidePrices={hidePrices}
           tab={tab}
           openTabs={openTabs}
           lunchCommanda={lunchCommanda}
@@ -1630,7 +1730,7 @@ export default function NewSale({
 // Ojo: el destino es POR ALMUERZO. Una mesa numerada PUEDE contener almuerzos
 // con destination='llevar' (cliente sentado pero pide algo para llevar).
 // ──────────────────────────────────────────────────────────────
-function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
+function SendCommandaModal({ state, setState, isTabMode, hidePrices, tab, openTabs, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
   // Determinar kind de la tab destino.
   const tabKind = isTabMode
     ? (tab?.kind || 'mesa')
@@ -1742,9 +1842,11 @@ function SendCommandaModal({ state, setState, isTabMode, tab, openTabs, lunchCom
                 {isAddon && <span style={{ marginRight: 4 }}>➕</span>}
                 {label}
               </span>
-              <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                ${(l.price || 0).toLocaleString('es-CO')}
-              </span>
+              {!hidePrices && (
+                <span style={{ fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                  ${(l.price || 0).toLocaleString('es-CO')}
+                </span>
+              )}
               {onRemoveLunch && (
                 <button
                   type="button"
@@ -2060,7 +2162,7 @@ function SearchInput({ value, onChange, placeholder }) {
   )
 }
 
-function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEditAmount, kitchenLiveStatus }) {
+function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEditAmount, kitchenLiveStatus, hidePrices }) {
   const subtotal = item.qty * item.unitPrice
 
   // Items shim de cocina (almuerzos enviados). Tap en remover cancela el
@@ -2127,12 +2229,14 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
             }}>
               {item.name}
             </div>
-            <div style={{
-              fontSize: 14, fontWeight: 700, color: T.neutral[900],
-              fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-            }}>
-              {fmtCOP(subtotal)}
-            </div>
+            {!hidePrices && (
+              <div style={{
+                fontSize: 14, fontWeight: 700, color: T.neutral[900],
+                fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+              }}>
+                {fmtCOP(subtotal)}
+              </div>
+            )}
           </div>
 
           {/* Tabla de selecciones — TODO lo que la cliente pidió, sin truncar.
@@ -2228,22 +2332,24 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
             {item.name}
           </div>
           <div style={{ fontSize: 11, color: T.copper[700], marginTop: 2, fontWeight: 600, letterSpacing: 0.3 }}>
-            VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR
+            {hidePrices ? 'VENTA LIBRE · LA CAJERA PONE EL PRECIO' : 'VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR'}
           </div>
         </div>
 
-        <button
-          onClick={onEditAmount}
-          style={{
-            padding: '8px 14px', borderRadius: 12,
-            background: T.copper[50], border: `1.5px solid ${T.copper[300]}`,
-            cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 16, fontWeight: 800, color: T.copper[700],
-            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-          }}
-        >
-          {fmtCOP(item.unitPrice)}
-        </button>
+        {!hidePrices && (
+          <button
+            onClick={onEditAmount}
+            style={{
+              padding: '8px 14px', borderRadius: 12,
+              background: T.copper[50], border: `1.5px solid ${T.copper[300]}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 16, fontWeight: 800, color: T.copper[700],
+              fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
+            }}
+          >
+            {fmtCOP(item.unitPrice)}
+          </button>
+        )}
 
         <button onClick={onRemove} style={{
           width: 32, height: 32, borderRadius: 999, marginLeft: 4,
@@ -2271,9 +2377,11 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
         }}>
           {item.name}
         </div>
-        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-          {fmtCOP(item.unitPrice)} c/u
-        </div>
+        {!hidePrices && (
+          <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+            {fmtCOP(item.unitPrice)} c/u
+          </div>
+        )}
       </div>
 
       <div style={{
@@ -2294,12 +2402,14 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
         </button>
       </div>
 
-      <div style={{
-        minWidth: 70, textAlign: 'right',
-        fontSize: 14, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
-      }}>
-        {fmtCOP(subtotal)}
-      </div>
+      {!hidePrices && (
+        <div style={{
+          minWidth: 70, textAlign: 'right',
+          fontSize: 14, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
+        }}>
+          {fmtCOP(subtotal)}
+        </div>
+      )}
 
       <button onClick={onRemove} style={{
         width: 32, height: 32, borderRadius: 999, marginLeft: 4,
@@ -2420,14 +2530,20 @@ function ChangeTableNumberModal({ currentNumber, openTabs, currentTabId, onCance
 // ──────────────────────────────────────────────────────────────
 // MODAL: Convertir venta nueva en mesa (asignar número)
 // ──────────────────────────────────────────────────────────────
-function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
+function ConvertToTabModal({ openTabs, onCancel, onConfirm, waitress, onConfirmLlevar }) {
   const defaultNum = nextFreeTableNumber(openTabs)
   const [str, setStr] = useState(String(defaultNum))
+  // kind solo aplica para la mesera (puede guardar mesa o llevar). La cajera
+  // siempre crea mesa desde aquí (los 'llevar' los arma por el flujo de cocina).
+  const [kind, setKind] = useState('mesa')
+  const [customerName, setCustomerName] = useState('')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const num = Number(str)
-  const isTaken = num > 0 && isTableNumberTaken(openTabs, num)
-  const valid = num > 0 && !isTaken
+  const isTaken = kind === 'mesa' && num > 0 && isTableNumberTaken(openTabs, num)
+  const valid = kind === 'llevar'
+    ? customerName.trim().length > 0
+    : (num > 0 && !isTaken)
 
   async function handleConfirm() {
     if (!valid) {
@@ -2436,35 +2552,83 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
     }
     setBusy(true)
     setError(null)
-    const errMsg = await onConfirm(num)
+    const errMsg = kind === 'llevar'
+      ? await onConfirmLlevar(customerName)
+      : await onConfirm(num)
     if (errMsg) {
       setError(errMsg)
       setBusy(false)
     }
-    // Si onConfirm tuvo éxito, el modal se cierra desde fuera (no hace falta resetear busy)
+    // Si tuvo éxito, el modal se cierra desde fuera (no hace falta resetear busy)
   }
 
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
-          Número de mesa
+          {waitress ? 'Guardar pedido' : 'Número de mesa'}
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, lineHeight: 1.5, textAlign: 'center' }}>
-          La venta queda guardada como mesa. Después la abres desde la burbuja para agregar más o cobrar.
+          {waitress
+            ? 'El pedido le llega a la cajera para cobrarlo. Tú puedes seguir agregándole desde la burbuja.'
+            : 'La venta queda guardada como mesa. Después la abres desde la burbuja para agregar más o cobrar.'}
         </div>
 
-        <TableNumberStepper
-          value={str}
-          onChange={(v) => { setStr(v); setError(null) }}
-          error={isTaken}
-        />
+        {/* Toggle Mesa / Llevar — solo para la mesera */}
+        {waitress && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            {[
+              { id: 'mesa', label: '🍽️ Mesa' },
+              { id: 'llevar', label: '📦 Llevar' },
+            ].map(opt => {
+              const active = kind === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => { setKind(opt.id); setError(null) }}
+                  style={{
+                    flex: 1, padding: '11px', borderRadius: 12,
+                    background: active ? T.copper[500] : '#fff',
+                    color: active ? '#fff' : T.neutral[700],
+                    border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 14, fontWeight: 800,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {kind === 'mesa' ? (
+          <TableNumberStepper
+            value={str}
+            onChange={(v) => { setStr(v); setError(null) }}
+            error={isTaken}
+          />
+        ) : (
+          <input
+            value={customerName}
+            onChange={e => { setCustomerName(e.target.value); setError(null) }}
+            placeholder="Nombre del cliente"
+            autoFocus
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              padding: '13px 14px', borderRadius: 12,
+              border: `1.5px solid ${T.neutral[200]}`,
+              fontFamily: 'inherit', fontSize: 15, fontWeight: 600,
+              color: T.neutral[900], outline: 'none',
+            }}
+          />
+        )}
 
         {(error || isTaken) && (
           <ErrorBox text={error || `Ya tienes una Mesa ${num}.`} />
         )}
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
           <button onClick={onCancel} disabled={busy} style={btnSecondary()}>Cancelar</button>
           <button
             onClick={handleConfirm}
@@ -2477,7 +2641,7 @@ function ConvertToTabModal({ openTabs, onCancel, onConfirm }) {
               boxShadow: valid && !busy ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
             }}
           >
-            {busy ? 'Creando...' : 'Crear mesa'}
+            {busy ? 'Guardando...' : (waitress ? 'Guardar' : 'Crear mesa')}
           </button>
         </div>
       </div>

@@ -185,6 +185,7 @@ export async function createOpenTab({
   kind, tableNumber, tableSuffix, customerName,
   items,
   recordedByUid, recordedByName, recordedByRole,
+  openedByUid, openedByName, openedByRole,
 }) {
   const tabKind = kind === 'llevar' ? 'llevar' : 'mesa'
   const cleanItems = (items || []).map(cleanCartItem)
@@ -198,6 +199,13 @@ export async function createOpenTab({
     total: computeTabTotal(cleanItems),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+  }
+  // Atribución de quién ABRIÓ la mesa (mesera/cajera). Permite mostrar
+  // "Mesa 5 · Laura" en la burbuja y dirigir el aviso de "listo" a la mesera.
+  if (openedByUid) {
+    data.openedByUid = openedByUid
+    data.openedByName = openedByName || null
+    data.openedByRole = openedByRole || 'cashier'
   }
   if (tabKind === 'mesa') {
     data.tableNumber = Number(tableNumber) || 1

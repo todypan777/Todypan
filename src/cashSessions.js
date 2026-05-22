@@ -74,6 +74,35 @@ export function watchMyOpenSession(uid, callback) {
 }
 
 /**
+ * Suscripción a la sesión de CAJA abierta de una panadería (única por D5).
+ * La usa la mesera para enganchar sus mesas/almuerzos a la caja de su
+ * panadería. callback(session | null).
+ *
+ * Acepta sesiones type 'cash' y legacy sin type (todas las viejas eran caja).
+ * Ignora kitchen/waitress. Mantiene el último valor en error (offline-safe).
+ */
+export function watchOpenCashSessionForBranch(branchId, callback) {
+  if (branchId == null) { callback(null); return () => {} }
+  const q = query(
+    sessionsCol(),
+    where('status', '==', 'open'),
+    where('branchId', '==', branchId),
+  )
+  return onSnapshot(
+    q,
+    snap => {
+      const cash = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .find(s => !s.type || s.type === 'cash')
+      callback(cash || null)
+    },
+    err => {
+      console.error('[cashSessions] watchOpenCashSessionForBranch error (manteniendo último valor):', err?.message || err)
+    }
+  )
+}
+
+/**
  * Última sesión cerrada de una panadería (para mostrarle al admin el contexto
  * cuando va a abrir un nuevo turno).
  */

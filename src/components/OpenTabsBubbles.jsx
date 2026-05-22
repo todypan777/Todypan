@@ -157,11 +157,16 @@ function Bubble({ tab, kitchenState, onClick }) {
     ? `📦 ${tab.customerName || 'Cliente'}`
     : `Mesa ${formatTableLabel(tab)}`
 
+  // Mesa abierta por una mesera → badge con su inicial y nombre en el tooltip.
+  const byWaitress = tab.openedByRole === 'waitress' ? (tab.openedByName || '') : ''
+  const waitressInitial = byWaitress.trim().charAt(0).toUpperCase()
+
   return (
     <button
       onClick={onClick}
-      title={`${idLabel} · ${fmtCOP(total)}${stateLabel ? ` · ${stateLabel}` : ''}`}
+      title={`${idLabel} · ${fmtCOP(total)}${stateLabel ? ` · ${stateLabel}` : ''}${byWaitress ? ` · abrió ${byWaitress.split(' ')[0]}` : ''}`}
       style={{
+        position: 'relative',
         width: 64, height: 64, borderRadius: 999,
         background: bg,
         color: '#fff',
@@ -175,6 +180,18 @@ function Bubble({ tab, kitchenState, onClick }) {
         animation,
       }}
     >
+      {waitressInitial && (
+        <div style={{
+          position: 'absolute', top: -3, left: -3,
+          width: 22, height: 22, borderRadius: 999,
+          background: T.copper[700], color: '#fff',
+          border: '2px solid #fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 11, fontWeight: 800,
+        }}>
+          {waitressInitial}
+        </div>
+      )}
       {isLlevar ? (
         // Burbuja de llevar: ícono prominente; el nombre se ve grande al
         // abrir la mesa. La user pidió ícono — sin texto encima.

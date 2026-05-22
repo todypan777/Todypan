@@ -26,6 +26,7 @@ import { fmtCOP } from '../utils/format'
 export default function PublicAddonsModal({
   prices, proteinOptions,
   initialType = null,
+  hidePrices = false,
   onCancel, onAdd,
 }) {
   // Bloquear scroll del body mientras está abierto
@@ -162,6 +163,7 @@ export default function PublicAddonsModal({
                   title="Sopa adicional"
                   subtitle="La sopa del día"
                   price={prices.soup}
+                  hidePrices={hidePrices}
                   onClick={() => startAddon('soup')}
                 />
               )}
@@ -171,6 +173,7 @@ export default function PublicAddonsModal({
                   title="Huevo adicional"
                   subtitle="Frito o cocido (dilo en la nota)"
                   price={prices.egg}
+                  hidePrices={hidePrices}
                   onClick={() => startAddon('egg')}
                 />
               )}
@@ -180,6 +183,7 @@ export default function PublicAddonsModal({
                   title="Proteína adicional"
                   subtitle="Elige cuál entre las de hoy"
                   price={prices.protein}
+                  hidePrices={hidePrices}
                   onClick={() => startAddon('protein')}
                 />
               )}
@@ -191,6 +195,7 @@ export default function PublicAddonsModal({
               active={active}
               prices={prices}
               proteinOptions={proteinOptions}
+              hidePrices={hidePrices}
               onChange={setActive}
               onBack={() => setActive(null)}
             />
@@ -214,7 +219,9 @@ export default function PublicAddonsModal({
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
               }}
             >
-              + Agregar · {fmtCOP(unitPriceForActive(active, prices) * Math.max(1, active.qty))}
+              {hidePrices
+                ? '+ Agregar'
+                : `+ Agregar · ${fmtCOP(unitPriceForActive(active, prices) * Math.max(1, active.qty))}`}
             </button>
           </div>
         )}
@@ -242,7 +249,7 @@ function unitPriceForActive(active, prices) {
 }
 
 // ─── Tarjeta de elegir tipo de adición ───────────────────────────
-function AddonChoiceCard({ emoji, title, subtitle, price, onClick }) {
+function AddonChoiceCard({ emoji, title, subtitle, price, hidePrices, onClick }) {
   return (
     <button
       onClick={onClick}
@@ -278,19 +285,21 @@ function AddonChoiceCard({ emoji, title, subtitle, price, onClick }) {
           {subtitle}
         </div>
       </div>
-      <div style={{
-        fontSize: 17, fontWeight: 900, color: T.warn,
-        fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-        flexShrink: 0,
-      }}>
-        {fmtCOP(price)}
-      </div>
+      {!hidePrices && (
+        <div style={{
+          fontSize: 17, fontWeight: 900, color: T.warn,
+          fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
+          flexShrink: 0,
+        }}>
+          {fmtCOP(price)}
+        </div>
+      )}
     </button>
   )
 }
 
 // ─── Step de cantidad (y picker de proteína si aplica) ───────────
-function AddonQuantityStep({ active, prices, proteinOptions, onChange, onBack }) {
+function AddonQuantityStep({ active, prices, proteinOptions, hidePrices, onChange, onBack }) {
   const unitPrice = unitPriceForActive(active, prices)
   const meta = {
     soup:    { emoji: '🥣', title: 'Sopa adicional' },
@@ -322,12 +331,14 @@ function AddonQuantityStep({ active, prices, proteinOptions, onChange, onBack })
           }}>
             {meta.title}
           </div>
-          <div style={{
-            fontSize: 12, color: T.copper[700], marginTop: 1,
-            fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-          }}>
-            {fmtCOP(unitPrice)} c/u
-          </div>
+          {!hidePrices && (
+            <div style={{
+              fontSize: 12, color: T.copper[700], marginTop: 1,
+              fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+            }}>
+              {fmtCOP(unitPrice)} c/u
+            </div>
+          )}
         </div>
         <button
           onClick={onBack}
@@ -424,13 +435,15 @@ function AddonQuantityStep({ active, prices, proteinOptions, onChange, onBack })
             onClick={() => onChange({ ...active, qty: Math.min(20, active.qty + 1) })}
           />
         </div>
-        <div style={{
-          marginTop: 12, padding: '10px 12px', borderRadius: 10,
-          background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-          textAlign: 'center', fontSize: 12.5, color: T.copper[700],
-        }}>
-          {active.qty} × {fmtCOP(unitPrice)} = <b>{fmtCOP(unitPrice * active.qty)}</b>
-        </div>
+        {!hidePrices && (
+          <div style={{
+            marginTop: 12, padding: '10px 12px', borderRadius: 10,
+            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            textAlign: 'center', fontSize: 12.5, color: T.copper[700],
+          }}>
+            {active.qty} × {fmtCOP(unitPrice)} = <b>{fmtCOP(unitPrice * active.qty)}</b>
+          </div>
+        )}
       </div>
     </div>
   )

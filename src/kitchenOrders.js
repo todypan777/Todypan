@@ -82,6 +82,13 @@ export async function createKitchenOrder(payload) {
     commandaNote: payload.commandaNote?.trim() || null,
     status: 'pending',
     paid: !!payload.paid,
+    // Quién originó el pedido para que la cocina lo muestre:
+    //   'cashier'  → la cajera desde el POS
+    //   'waitress' → la mesera desde piso
+    //   'admin'    → el admin desde el link de pedidos web
+    createdByRole: payload.createdByRole || 'cashier',
+    createdByUid: payload.createdByUid || payload.cashierUid || null,
+    createdByName: payload.createdByName || payload.cashierName || null,
     createdAt: serverTimestamp(),
     createdAtClient: getClientTimestamp(),
   }
@@ -411,6 +418,38 @@ export function watchLiveOrdersForSession(sessionId, callback) {
     )
   } catch (err) {
     console.error('[kitchen] watchLiveOrdersForSession setup failed:', err)
+    callback([])
+    return () => {}
+  }
+}
+
+/**
+ * Pedidos LISTOS (status 'ready') creados por una mesera específica.
+ * Alimenta el aviso "Mesa lista" que recibe la mesera en piso. Solo trae
+ * los 'ready' (la cajera se encarga de entregar/cobrar; al cobrar pasan a
+ * 'delivered' y desaparecen de aquí).
+ */
+export function watchReadyOrdersForWaitress(waitressUid, callback) {
+  if (!waitressUid) { callback([]); return () => {} }
+  try {
+    const q = query(
+      ordersCol(),
+      where('createdByUid', '==', waitressUid),
+      where('status', '==', 'ready'),
+    )
+    return onSnapshot(
+      q,
+      snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        list.sort((a, b) => timeOf(a) - timeOf(b))
+        callback(list)
+      },
+      err => {
+        console.error('[kitchen] watchReadyOrdersForWaitress error:', err)
+      }
+    )
+  } catch (err) {
+    console.error('[kitchen] watchReadyOrdersForWaitress setup failed:', err)
     callback([])
     return () => {}
   }

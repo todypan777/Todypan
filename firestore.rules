@@ -10,8 +10,14 @@
 // completa lista para pegar.
 //
 // Última actualización: 2026-05-21
-// Último cambio: la cajera ahora puede EDITAR (descripción/monto) y ELIMINAR
-//   sus propios gastos de caja mientras sigan 'pending' (antes solo foto).
+// Último cambio: rol MESERA + alineación con el modelo real de roles. Ningún
+//   empleado tiene rol permanente: todos son role:'staff' y el rol funcional
+//   (caja/cocina/mesera) lo define la sesión (cashSessions.type). Por eso se
+//   reemplazan isApprovedCashier()/isApprovedCook() por isApprovedStaff()
+//   (empleado aprobado, no admin). La mesera arma mesas/almuerzos que se
+//   enganchan a la caja de su panadería: el doc lleva cashierUid = la cajera y
+//   ella se identifica con openedByUid/createdByUid. openTabs y kitchenOrders
+//   pasan a ser colaborativos entre el equipo aprobado del piso.
 // ─────────────────────────────────────────────────────────────────────────────
 
 rules_version = '2';
@@ -36,22 +42,20 @@ service cloud.firestore {
       return isAdminBootstrap() || isAdminUser();
     }
 
-    function isApprovedCashier() {
+    // Empleado APROBADO que no es admin. Acepta el rol nuevo 'staff' y los
+    // legacy 'cashier'/'cook' por compatibilidad con docs viejos. El rol
+    // FUNCIONAL del día (caja/cocina/mesera) no vive en el doc de usuario sino
+    // en la sesión que abre el admin — por eso aquí solo validamos que sea un
+    // empleado de confianza aprobado.
+    function isApprovedStaff() {
       return request.auth != null
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cashier'
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
-    }
-
-    function isApprovedCook() {
-      return request.auth != null
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'cook'
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['staff', 'cashier', 'cook'];
     }
 
     function isApprovedAny() {
-      return isAdmin() || isApprovedCashier();
+      return isAdmin() || isApprovedStaff();
     }
 
     match /users/{uid} {
@@ -61,24 +65,24 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // La cocinera puede LEER /todypan/data (necesita la lista de
-    // `branches` para saber el id de "Panadería B" antes de enviar
-    // una kitchenCall). Escrituras siguen restringidas.
+    // El equipo aprobado puede LEER /todypan/data (la cajera y la mesera
+    // necesitan branches/products; la cocina necesita branches para dirigir
+    // una kitchenCall). Escrituras de datos compartidos: equipo aprobado.
     match /todypan/{doc} {
-      allow read: if isApprovedAny() || isApprovedCook();
+      allow read: if isApprovedAny();
       allow create, delete: if isAdmin();
       allow update: if isApprovedAny();
     }
 
-    // La cocinera puede LEER /cashSessions (necesita saber qué cajera
-    // está abierta en Panadería B para dirigirle la kitchenCall).
-    // NO puede crear/actualizar/borrar.
+    // El equipo aprobado puede LEER /cashSessions: la cocina para saber qué
+    // cajera está abierta, y la MESERA para encontrar la caja de su panadería
+    // (a la que engancha sus mesas). Crear/cerrar turnos: cajera dueña o admin.
     match /cashSessions/{sid} {
-      allow read: if isApprovedAny() || isApprovedCook();
-      allow create: if isApprovedCashier()
+      allow read: if isApprovedAny();
+      allow create: if isApprovedStaff()
                     && request.resource.data.cashierUid == request.auth.uid
                     && request.resource.data.status == 'open';
-      allow update: if (isApprovedCashier()
+      allow update: if (isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid
                         && resource.data.status == 'open')
                     || isAdmin();
@@ -87,7 +91,7 @@ service cloud.firestore {
 
     match /products/{pid} {
       allow read: if isApprovedAny();
-      allow create: if isApprovedCashier()
+      allow create: if isApprovedStaff()
                     && request.resource.data.createdByCashier == true
                     && request.resource.data.needsCostReview == true;
       allow update: if isApprovedAny();
@@ -96,10 +100,10 @@ service cloud.firestore {
 
     match /sales/{sid} {
       allow read: if isApprovedAny();
-      allow create: if (isApprovedCashier()
+      allow create: if (isApprovedStaff()
                         && request.resource.data.cashierUid == request.auth.uid)
                     || isAdmin();
-      allow update: if (isApprovedCashier()
+      allow update: if (isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid)
                     || isAdmin();
       allow delete: if isAdmin();
@@ -113,7 +117,7 @@ service cloud.firestore {
 
     match /cashExpenses/{eid} {
       allow read: if isApprovedAny();
-      allow create: if isApprovedCashier()
+      allow create: if isApprovedStaff()
                     && request.resource.data.cashierUid == request.auth.uid
                     && request.resource.data.status == 'pending';
 
@@ -122,7 +126,7 @@ service cloud.firestore {
       //   - descripción y monto (corregir antes del cierre)
       // status y cashierUid NO están en hasOnly → no los puede cambiar.
       allow update: if isAdmin()
-                    || (isApprovedCashier()
+                    || (isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid
                         && resource.data.status == 'pending'
                         && request.resource.data.diff(resource.data).affectedKeys()
@@ -135,7 +139,7 @@ service cloud.firestore {
       // La cajera puede eliminar SUS gastos mientras sigan 'pending'
       // (subió uno por error o duplicado). Aprobado/rechazado lo bloquea el admin.
       allow delete: if isAdmin()
-                    || (isApprovedCashier()
+                    || (isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid
                         && resource.data.status == 'pending');
     }
@@ -146,19 +150,25 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // MESAS abiertas. Modelo colaborativo de piso: la cajera y la(s) mesera(s)
+    // de una panadería trabajan sobre las mismas mesas.
+    //   - create: el dueño de cobro (cashierUid == quien crea, caso cajera) o
+    //     una mesera que se identifica con openedByUid == su uid (el doc lleva
+    //     cashierUid = la cajera de la caja para que ella pueda cobrar).
+    //   - update/delete: cualquier empleado aprobado (agregar items, cambiar
+    //     mesa, cobrar/eliminar). Son datos operativos, no contables.
     match /openTabs/{tid} {
       allow read: if isApprovedAny();
-      allow create: if (isApprovedCashier()
-                        && request.resource.data.cashierUid == request.auth.uid)
-                    || isAdmin();
-      allow update, delete: if isAdmin()
-                            || (isApprovedCashier()
-                                && resource.data.cashierUid == request.auth.uid);
+      allow create: if isAdmin()
+                    || (isApprovedStaff()
+                        && (request.resource.data.cashierUid == request.auth.uid
+                            || request.resource.data.openedByUid == request.auth.uid));
+      allow update, delete: if isAdmin() || isApprovedStaff();
     }
 
     match /productChangeRequests/{rid} {
       allow read: if isApprovedAny();
-      allow create: if isApprovedCashier()
+      allow create: if isApprovedStaff()
                     && request.resource.data.cashierUid == request.auth.uid
                     && request.resource.data.status == 'pending';
       allow update, delete: if isAdmin();
@@ -166,7 +176,7 @@ service cloud.firestore {
 
     match /tasks/{tid} {
       allow read: if isAdmin()
-                  || (isApprovedCashier()
+                  || (isApprovedStaff()
                       && resource.data.assignedToUid == request.auth.uid);
 
       allow create: if isAdmin()
@@ -174,7 +184,7 @@ service cloud.firestore {
                     && request.resource.data.createdBy == request.auth.uid;
 
       allow update: if isAdmin()
-                    || (isApprovedCashier()
+                    || (isApprovedStaff()
                         && resource.data.assignedToUid == request.auth.uid
                         && request.resource.data.assignedToUid == resource.data.assignedToUid
                         && request.resource.data.status in ['pending', 'done']
@@ -187,10 +197,10 @@ service cloud.firestore {
 
     // Lectura PÚBLICA (sin auth) para la página /menu de clientes.
     // No expone datos sensibles — son nombres de platos del catálogo.
-    // Las escrituras siguen reservadas a cocinera/admin.
+    // Las escrituras siguen reservadas al equipo (cocina) / admin.
     match /menuItems/{id} {
       allow read: if true;
-      allow create, update: if isAdmin() || isApprovedCook();
+      allow create, update: if isAdmin() || isApprovedStaff();
       allow delete: if isAdmin();
     }
 
@@ -199,7 +209,7 @@ service cloud.firestore {
     // (precios persistentes). Las escrituras siguen reservadas.
     match /dailyMenu/{date} {
       allow read: if true;
-      allow write: if isAdmin() || isApprovedCook();
+      allow write: if isAdmin() || isApprovedStaff();
     }
 
     // Pedidos web hechos por clientes desde /menu.
@@ -213,24 +223,25 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // ALMUERZOS a cocina. Colaborativo: los crea la cajera, la mesera o el
+    // admin (desde el link de pedidos). El doc lleva cashierUid = la cajera de
+    // la caja; quien lo originó queda en createdByUid/createdByRole.
+    //   - create: admin, o empleado aprobado que se identifica como dueño de
+    //     cobro (cashierUid == su uid, caso cajera) o como creador
+    //     (createdByUid == su uid, caso mesera).
+    //   - update: cualquier empleado aprobado (la cocina marca listo, la cajera
+    //     entrega/cancela, la mesera corrige un pedido pending). Operativo.
     match /kitchenOrders/{id} {
-      allow read: if isApprovedAny() || isApprovedCook();
+      allow read: if isApprovedAny();
 
-      allow create: if (isApprovedCashier()
-                        && request.resource.data.cashierUid == request.auth.uid
+      allow create: if (isAdmin()
                         && request.resource.data.status == 'pending')
-                    || (isAdmin()
-                        && request.resource.data.status == 'pending');
+                    || (isApprovedStaff()
+                        && request.resource.data.status == 'pending'
+                        && (request.resource.data.cashierUid == request.auth.uid
+                            || request.resource.data.createdByUid == request.auth.uid));
 
-      allow update: if isAdmin()
-                    || (isApprovedCashier()
-                        && resource.data.cashierUid == request.auth.uid
-                        && request.resource.data.cashierUid == resource.data.cashierUid)
-                    || (isApprovedCook()
-                        && request.resource.data.status in ['pending', 'ready']
-                        && request.resource.data.cashierUid == resource.data.cashierUid
-                        && request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly(['status', 'readyAt', 'readyAtClient']));
+      allow update: if isAdmin() || isApprovedStaff();
 
       allow delete: if isAdmin();
     }
@@ -240,23 +251,21 @@ service cloud.firestore {
     //   - Cocinera/admin crea con status='pending' y se identifica como creador.
     //   - Cajera destino la lee (filtrada por targetCashierUid) y solo
     //     puede marcarla 'acknowledged' (cerrar el pop-up).
-    //   - ⚠ CAMBIO: la cocinera creadora ahora también puede marcar su
-    //     propia llamada como 'cancelled' para abortarla antes de que
-    //     la cajera atienda.
+    //   - La cocinera creadora también puede marcar su propia llamada como
+    //     'cancelled' para abortarla antes de que la cajera atienda.
     //   - Admin tiene control total para auditoría.
     match /kitchenCalls/{cid} {
       allow read: if isAdmin()
-                  || (isApprovedCook()
-                      && resource.data.createdBy == request.auth.uid)
-                  || (isApprovedCashier()
-                      && resource.data.targetCashierUid == request.auth.uid);
+                  || (isApprovedStaff()
+                      && (resource.data.createdBy == request.auth.uid
+                          || resource.data.targetCashierUid == request.auth.uid));
 
-      allow create: if (isApprovedCook() || isAdmin())
+      allow create: if (isApprovedStaff() || isAdmin())
                     && request.resource.data.createdBy == request.auth.uid
                     && request.resource.data.status == 'pending';
 
       allow update: if isAdmin()
-                    || (isApprovedCashier()
+                    || (isApprovedStaff()
                         && resource.data.targetCashierUid == request.auth.uid
                         && resource.data.status == 'pending'
                         && request.resource.data.status == 'acknowledged'
@@ -264,7 +273,7 @@ service cloud.firestore {
                         && request.resource.data.diff(resource.data).affectedKeys()
                              .hasOnly(['status', 'acknowledgedAt', 'acknowledgedAtClient',
                                        'acknowledgedBy', 'acknowledgedByName']))
-                    || (isApprovedCook()
+                    || (isApprovedStaff()
                         && resource.data.createdBy == request.auth.uid
                         && resource.data.status == 'pending'
                         && request.resource.data.status == 'cancelled'

@@ -160,6 +160,17 @@ export async function updateKitchenOrder(id, payload) {
     console.warn('[kitchenOrders] updateKitchenOrder deferred:', err?.message || err))
 }
 
+/**
+ * Marca UN almuerzo como pagado SIN entregarlo (sigue 'pending' en cocina).
+ * Se usa cuando la cajera cobra un almuerzo que la cocina todavía está
+ * cocinando: queda con el sello "Pagado" pero permanece en la cola hasta que
+ * la cocinera lo marque Listo (ahí pasa a entregado). Fire-and-forget.
+ */
+export function markOrderPaid(id) {
+  updateDoc(orderRef(id), { paid: true }).catch(err =>
+    console.warn('[kitchenOrders] markOrderPaid deferred:', err?.message || err))
+}
+
 /** Marca toda una comanda como pagada antes de tiempo (solo para llevar). */
 export async function markCommandaPaid(commandaId, _ids) {
   // Recibe commandaId pero firestore necesita actualizar doc por doc;

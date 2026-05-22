@@ -902,17 +902,26 @@ export default function NewSale({
   // kitchenOrder activo asociado pasa a 'delivered' (la cajera entregó).
   async function handleSaleConfirmed() {
     if (isTabMode) {
-      // Marcar como delivered todos los items shim del cart que aún tengan order activo
-      const orderIdsToDeliver = cart
-        .filter(it => it.source === 'kitchen' && it.kitchenOrderId)
-        .map(it => it.kitchenOrderId)
+      // Almuerzos de cocina de esta mesa.
+      const kitchenItems = cart.filter(it => it.source === 'kitchen' && it.kitchenOrderId)
       // Fire-and-forget: en modo ahorro el await de updateDoc/deleteDoc se
       // cuelga. La cajera ya cobró — no hay que bloquearla esperando red.
-      if (orderIdsToDeliver.length > 0) {
+      if (kitchenItems.length > 0) {
         import('../kitchenOrders').then(m => {
-          orderIdsToDeliver.forEach(id => {
-            m.markOrderDelivered(id).catch(err =>
-              console.warn('[NewSale] markOrderDelivered deferred:', err?.message || err))
+          kitchenItems.forEach(it => {
+            // Estado EN VIVO del almuerzo (el shim del carrito puede estar viejo).
+            const status = liveOrderById[it.kitchenOrderId]?.status || it.kitchenStatus || 'pending'
+            if (status === 'ready') {
+              // Ya estaba cocinado → al cobrar queda entregado (va a Archivados).
+              m.markOrderDelivered(it.kitchenOrderId).catch(err =>
+                console.warn('[NewSale] markOrderDelivered deferred:', err?.message || err))
+            } else if (status === 'pending') {
+              // Todavía se está cocinando → solo lo marcamos PAGADO y lo dejamos
+              // en la cola de cocina. Pasará a entregado cuando la cocinera lo
+              // marque Listo. Así no desaparece de la cocina al cobrar.
+              m.markOrderPaid(it.kitchenOrderId)
+            }
+            // delivered/cancelled → no tocar.
           })
         })
       }

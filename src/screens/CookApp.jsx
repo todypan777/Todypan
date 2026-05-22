@@ -10,7 +10,7 @@ import {
 import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchKitchenQueue, watchKitchenArchivedForDate,
-  markOrderReady, unmarkOrderReady,
+  markOrderReady, unmarkOrderReady, markOrderDelivered,
 } from '../kitchenOrders'
 import { watchOpenSessions } from '../cashSessions'
 import { createKitchenCall, cancelKitchenCall, watchMyPendingCalls } from '../kitchenCalls'
@@ -1333,10 +1333,18 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
     if (busy || !isToggleable) return
     setBusy(true)
     try {
-      const willBeReady = !isReady
-      if (isReady) await unmarkOrderReady(order.id)
-      else await markOrderReady(order.id)
-      setFlashAction(willBeReady ? 'ready' : 'unready')
+      if (isReady) {
+        await unmarkOrderReady(order.id)
+        setFlashAction('unready')
+      } else if (order.paid) {
+        // Ya lo cobraron mientras se cocinaba → al marcar Listo queda
+        // directamente entregado/vendido (no se vuelve a cobrar).
+        await markOrderDelivered(order.id)
+        setFlashAction('delivered')
+      } else {
+        await markOrderReady(order.id)
+        setFlashAction('ready')
+      }
       setTimeout(() => onClose(), 1200)
     } catch (err) {
       console.error('[kitchen] toggle ready error:', err)
@@ -1692,7 +1700,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                 opacity: busy ? 0.7 : 1,
               }}
             >
-              {busy ? '...' : (isReady ? '↺ Volver a pendiente' : '✓ Confirmar listo')}
+              {busy ? '...' : (isReady ? '↺ Volver a pendiente' : (order.paid ? '✓ Listo y entregar' : '✓ Confirmar listo'))}
             </button>
           )}
         </div>
@@ -1700,7 +1708,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
         {flashAction && (
           <div style={{
             position: 'absolute', inset: 0,
-            background: flashAction === 'ready' ? T.ok : T.warn,
+            background: (flashAction === 'ready' || flashAction === 'delivered') ? T.ok : T.warn,
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
             color: '#fff', textAlign: 'center', padding: '20px',
@@ -1708,13 +1716,13 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
             zIndex: 5,
           }}>
             <div style={{ fontSize: 64, lineHeight: 1, marginBottom: 8 }}>
-              {flashAction === 'ready' ? '✓' : '↺'}
+              {flashAction === 'delivered' ? '💰' : flashAction === 'ready' ? '✓' : '↺'}
             </div>
             <div style={{
               fontSize: 22, fontWeight: 900, letterSpacing: 1,
               textTransform: 'uppercase', marginBottom: 6,
             }}>
-              {flashAction === 'ready' ? 'LISTO' : 'DEVUELTO'}
+              {flashAction === 'delivered' ? 'ENTREGADO' : flashAction === 'ready' ? 'LISTO' : 'DEVUELTO'}
             </div>
             <div style={{
               fontSize: tableLabel.length > 12 ? 32 : 44,

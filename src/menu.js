@@ -323,6 +323,91 @@ export async function setDailySpecial(dateStr, config, { publishedBy, publishedB
   await setDoc(dailyMenuRef(dateStr), payload, { merge: true })
 }
 
+// ─── Stock bajo por item ("quedan N") ─────────────────────────────
+//
+// La cocinera puede avisar que de una opción quedan pocas porciones (1..5).
+// NO se guarda "quedan N" directo: se guarda un TOPE absoluto del día en
+// `dailyMenu.stockByItem[itemId]` = (porciones ya vendidas al fijarlo) + N.
+// Así el "quedan" baja SOLO a medida que la cajera vende, derivándolo de las
+// comandas reales del día (robusto ante ediciones/cancelaciones, sin contadores
+// que se descuadren). Ausencia del item en stockByItem = sin límite.
+export const MAX_LOW_STOCK = 5
+
+/**
+ * Cuenta cuántas porciones de cada item se consumieron en las comandas dadas
+ * (excluye canceladas). Sirve igual para corriente y especial: recorre todas
+ * las categorías de `selections` y soporta principio mixto (array).
+ * Devuelve { [itemId]: count }.
+ */
+export function countConsumedByItem(orders) {
+  const out = {}
+  for (const o of orders || []) {
+    if (o?.status === 'cancelled') continue
+    const sel = o?.selections
+    if (!sel) continue
+    for (const catId of CATEGORY_IDS) {
+      const v = sel[catId]
+      if (!v) continue
+      if (Array.isArray(v)) {
+        for (const x of v) if (x?.id) out[x.id] = (out[x.id] || 0) + 1
+      } else if (v.id) {
+        out[v.id] = (out[v.id] || 0) + 1
+      }
+    }
+  }
+  return out
+}
+
+/** Tope absoluto de porciones de un item para el día (o null = sin límite). */
+export function getItemStockCap(dailyMenu, itemId) {
+  const v = dailyMenu?.stockByItem?.[itemId]
+  return (typeof v === 'number' && v >= 0) ? v : null
+}
+
+/**
+ * Estado de stock de un item HOY:
+ *   { limited, cap, consumed, remaining }
+ * limited=false → sin límite (no mostrar nada). remaining nunca baja de 0.
+ * `extraConsumed` suma porciones aún no enviadas (almuerzos en construcción).
+ */
+export function getItemStockState(dailyMenu, consumedByItem, itemId, extraConsumed = 0) {
+  const cap = getItemStockCap(dailyMenu, itemId)
+  if (cap == null) return { limited: false, cap: null, consumed: 0, remaining: Infinity }
+  const consumed = (consumedByItem?.[itemId] || 0) + (extraConsumed || 0)
+  return { limited: true, cap, consumed, remaining: Math.max(0, cap - consumed) }
+}
+
+/**
+ * Fija (o quita) el tope de porciones de un item para el día.
+ * `cap` es el tope ABSOLUTO ya calculado por quien llama
+ * (= consumidas al momento + lo que la cocinera dijo que queda).
+ * `cap == null` quita el límite.
+ */
+export async function setItemStock(dateStr, itemId, cap, { publishedBy, publishedByName } = {}) {
+  if (!dateStr || !itemId) return
+  const ref = dailyMenuRef(dateStr)
+  const fieldPath = `stockByItem.${itemId}`
+  const snap = await getDoc(ref)
+  const meta = {
+    date: dateStr,
+    publishedAt: serverTimestamp(),
+    publishedAtClient: getClientTimestamp(),
+    publishedBy: publishedBy || null,
+    publishedByName: publishedByName || null,
+  }
+  if (cap == null) {
+    if (!snap.exists()) return
+    await updateDoc(ref, { ...meta, [fieldPath]: deleteField() })
+    return
+  }
+  const value = Math.max(0, Math.round(cap))
+  if (!snap.exists()) {
+    await setDoc(ref, { ...meta, stockByItem: { [itemId]: value } })
+  } else {
+    await updateDoc(ref, { ...meta, [fieldPath]: value })
+  }
+}
+
 /**
  * Helpers para construir la vista del menú de hoy con los datos completos
  * (no solo IDs).

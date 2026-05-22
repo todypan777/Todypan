@@ -5,7 +5,7 @@ import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
 import {
   CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES,
-  watchMenuItems, watchDailyMenu, watchCorrienteConfig,
+  watchMenuItems, watchDailyMenu, watchCorrienteConfig, resolveDailyMenu,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import {
@@ -14,6 +14,7 @@ import {
 } from '../kitchenOrders'
 import { watchOpenSessions } from '../cashSessions'
 import { createKitchenCall, cancelKitchenCall, watchMyPendingCalls } from '../kitchenCalls'
+import { setupAudioUnlock, playNewOrderSound } from '../utils/notificationSound'
 import { getData } from '../db'
 import ContactSupportButton from '../components/ContactSupportButton'
 import CatalogView from '../components/MenuEditor/CatalogView'
@@ -80,6 +81,10 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
   useEffect(() => watchMenuItems(setAllMenuItems), [])
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
   useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
+
+  // Desbloquea el audio al primer toque (iOS/Safari lo exigen) para que el
+  // sonido de "pedido nuevo" pueda sonar luego sin gesto directo.
+  useEffect(() => { setupAudioUnlock() }, [])
 
   const publisherName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
     || authUser?.email || 'Editor'
@@ -164,6 +169,8 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
               archivedForDate={archivedForDate}
               selectedDate={selectedDate}
               today={today}
+              dailyMenu={dailyMenu}
+              allMenuItems={allMenuItems}
             />
           </>
         )}
@@ -467,9 +474,24 @@ function CookTab({ active, onClick, label, badge }) {
 // Filtra TODO por `selectedDate` (Bogotá). Cocinera = siempre hoy, admin
 // (assist mode) puede navegar con el DateNavigator.
 // ──────────────────────────────────────────────────────────────
-function KitchenQueueView({ queue, archivedForDate, selectedDate, today }) {
+function KitchenQueueView({ queue, archivedForDate, selectedDate, today, dailyMenu, allMenuItems }) {
   const lastIdsRef = useRef(new Set())
   const [archivedExpanded, setArchivedExpanded] = useState(false)
+
+  // Nombres de las opciones del día por categoría → para que cocina vea
+  // "SIN TAJADAS" (el acompañante real) en vez de "SIN ACOMPAÑANTE", y para
+  // saber si el día tenía sopa (y así mostrar "SIN SOPA" cuando la rechazan).
+  // Solo aplica cuando vemos HOY: el menú vive en el doc de hoy; para días
+  // pasados caemos al nombre genérico de la categoría.
+  const servedInfo = useMemo(() => {
+    if (selectedDate !== today) return null
+    const resolved = resolveDailyMenu(dailyMenu, allMenuItems)
+    const byCat = {}
+    for (const cat of CORRIENTE_CATEGORIES) {
+      byCat[cat.id] = (resolved[cat.id] || []).map(it => it.name)
+    }
+    return byCat
+  }, [dailyMenu, allMenuItems, selectedDate, today])
 
   // Pending/ready del día seleccionado.
   const queueForDate = useMemo(
@@ -488,6 +510,7 @@ function KitchenQueueView({ queue, archivedForDate, selectedDate, today }) {
     const isNewArrival = [...currentIds].some(id => !lastIdsRef.current.has(id))
     if (isNewArrival && lastIdsRef.current.size > 0) {
       try { navigator.vibrate?.([100, 60, 100]) } catch {}
+      try { playNewOrderSound() } catch {}
     }
     lastIdsRef.current = currentIds
   }, [queueForDate, selectedDate, today])
@@ -608,7 +631,7 @@ function KitchenQueueView({ queue, archivedForDate, selectedDate, today }) {
             label={`🍳 PREPARANDO · ${pendingGroups.length}`}
           />
           {pendingGroups.map(group => (
-            <CommandaCard key={group.commandaId} group={group} />
+            <CommandaCard key={group.commandaId} group={group} servedInfo={servedInfo} />
           ))}
         </>
       )}
@@ -631,7 +654,7 @@ function KitchenQueueView({ queue, archivedForDate, selectedDate, today }) {
             onToggle={() => setArchivedExpanded(prev => !prev)}
           />
           {expanded && archivedGroups.map(group => (
-            <CommandaCard key={group.commandaId} group={group} />
+            <CommandaCard key={group.commandaId} group={group} servedInfo={servedInfo} />
           ))}
         </>
       )}
@@ -729,13 +752,17 @@ function tableLabelFromGroup(group) {
   return suffix > 0 ? `${group.tableNumber}.${suffix}` : String(group.tableNumber)
 }
 
-function CommandaCard({ group }) {
+function CommandaCard({ group, servedInfo }) {
   // "Done" = no hay pendientes (todos ready/delivered/cancelled).
   // "AllCancelled" = grupo entero anulado → la card se ve gris.
   const allDone = group.orders.every(o => o.status !== 'pending')
   const allCancelled = group.orders.every(o => o.status === 'cancelled')
   const isLlevarTab = !group.tableNumber
   const label = tableLabelFromGroup(group)
+
+  // Plegar/desplegar la comanda. Llega desplegada; la cocinera la pliega
+  // cuando quiere "guardarla para una hora" — el título sigue visible.
+  const [collapsed, setCollapsed] = useState(false)
 
   const startMs = group.createdAt?.toMillis?.() ?? group.createdAtClient ?? Date.now()
   const frozenEndMs = useMemo(() => {
@@ -808,12 +835,24 @@ function CommandaCard({ group }) {
       animation: 'commandaSlide 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
       opacity: allCancelled ? 0.78 : (allDone ? 0.95 : 1),
     }}>
-      <div style={{
-        padding: '14px 18px',
-        background: destBg,
-        borderBottom: `1.5px solid ${destBorder}`,
-        display: 'flex', alignItems: 'center', gap: 12,
-      }}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setCollapsed(c => !c)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setCollapsed(c => !c)
+          }
+        }}
+        title={collapsed ? 'Toca para desplegar' : 'Toca para plegar'}
+        style={{
+          padding: '14px 18px',
+          background: destBg,
+          borderBottom: collapsed ? 'none' : `1.5px solid ${destBorder}`,
+          display: 'flex', alignItems: 'center', gap: 12,
+          cursor: 'pointer', outline: 'none',
+        }}>
         <div style={{
           width: 60, height: 60, borderRadius: 14,
           background: '#fff', flexShrink: 0,
@@ -866,23 +905,46 @@ function CommandaCard({ group }) {
         }}>
           {elapsedPrefix} {elapsedLabel}
         </div>
+        {/* Chevron de plegado: indica si la comanda está abierta o cerrada. */}
+        <div style={{
+          width: 34, height: 34, borderRadius: 999, flexShrink: 0,
+          background: '#fff', border: `1.5px solid ${destBorder}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'transform 0.2s',
+          transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)',
+        }}>
+          <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+            <path d="M3 5 L7 9 L11 5" stroke={destColor} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
       </div>
 
       {/* Las notas ahora son PER-ALMUERZO y se muestran dentro de cada
           KitchenOrderRow. No hay banner global de comanda — eso evita la
           confusión de "¿esta nota aplica a cuál?". */}
 
-      <div>
-        {group.orders.map((order, i) => (
-          <KitchenOrderRow
-            key={order.id}
-            order={order}
-            isLast={i === group.orders.length - 1}
-          />
-        ))}
-      </div>
+      {!collapsed && (
+        <div>
+          {group.orders.map((order, i) => (
+            <KitchenOrderRow
+              key={order.id}
+              order={order}
+              isLast={i === group.orders.length - 1}
+              servedInfo={servedInfo}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
+}
+
+// Etiqueta "SIN X" de una categoría omitida. Si conocemos la opción del día
+// (servedInfo), usamos su nombre real → "SIN TAJADAS"; si no, la categoría.
+function omittedLabel(cat, servedInfo) {
+  const names = servedInfo?.[cat.id]
+  if (names && names.length > 0) return `SIN ${names.join(' / ').toUpperCase()}`
+  return `SIN ${cat.label.toUpperCase()}`
 }
 
 function principioToArray(value) {
@@ -891,7 +953,7 @@ function principioToArray(value) {
   return [value]
 }
 
-function KitchenOrderRow({ order, isLast }) {
+function KitchenOrderRow({ order, isLast, servedInfo }) {
   const isReady = order.status === 'ready'
   const isDelivered = order.status === 'delivered'
   const isCancelled = order.status === 'cancelled'
@@ -928,6 +990,13 @@ function KitchenOrderRow({ order, isLast }) {
         ? { bg: '#F5FBF5', bgHover: '#EAF6EA', titleColor: T.ok, badgeBg: T.ok + '22', badgeColor: T.ok, badgeLabel: '✓ Listo' }
         : { bg: '#fff', bgHover: '#FBF5F0', titleColor: T.copper[700], badgeBg: T.copper[50], badgeColor: T.copper[700], badgeLabel: '🍳 Cocinando' }
 
+  // Diferenciador FUERTE de "para llevar": franja ámbar a un lado (siempre,
+  // salvo cancelado) + fondo ámbar mientras se cocina. Así la cocinera separa
+  // de un vistazo los de llevar de los de mesa, incluso en comandas mixtas.
+  const isLlevar = order.destination === 'llevar'
+  const rowBg = (!isDone && isLlevar) ? '#FFF4DD' : palette.bg
+  const rowBgHover = (!isDone && isLlevar) ? '#FFEAC2' : palette.bgHover
+
   return (
     <>
       <div
@@ -944,7 +1013,8 @@ function KitchenOrderRow({ order, isLast }) {
           display: 'block', width: '100%', textAlign: 'left',
           padding: '18px 20px',
           borderBottom: isLast ? 'none' : `1px solid ${T.neutral[100]}`,
-          background: palette.bg,
+          borderLeft: (isLlevar && !isCancelled) ? '7px solid #E8A33D' : 'none',
+          background: rowBg,
           cursor: 'pointer', fontFamily: 'inherit',
           transition: 'background 0.15s',
           outline: 'none',
@@ -954,8 +1024,8 @@ function KitchenOrderRow({ order, isLast }) {
           textDecoration: isCancelled ? 'line-through' : 'none',
           textDecorationColor: isCancelled ? T.neutral[400] : undefined,
         }}
-        onMouseEnter={e => e.currentTarget.style.background = palette.bgHover}
-        onMouseLeave={e => e.currentTarget.style.background = palette.bg}
+        onMouseEnter={e => e.currentTarget.style.background = rowBgHover}
+        onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -980,12 +1050,13 @@ function KitchenOrderRow({ order, isLast }) {
               )}
               {order.destination === 'llevar' && (
                 <span style={{
-                  fontSize: 12, fontWeight: 800, color: '#7A5C00',
-                  background: '#FFF7E6', border: '1px solid #F0D699',
-                  padding: '2px 8px', borderRadius: 999,
-                  letterSpacing: 0.3,
+                  fontSize: 13, fontWeight: 900, color: '#fff',
+                  background: '#E8A33D', border: '1px solid #D8912A',
+                  padding: '3px 11px', borderRadius: 999,
+                  letterSpacing: 0.5,
+                  boxShadow: '0 2px 6px rgba(232,163,61,0.4)',
                 }}>
-                  📦 LLEVAR
+                  📦 PARA LLEVAR
                 </span>
               )}
             </div>
@@ -996,8 +1067,13 @@ function KitchenOrderRow({ order, isLast }) {
                   const sel = selections[cat.id]
                   const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
                   const isAlwaysServed = !!cat.alwaysServed
+                  const isMissing = sel === null || sel === undefined
 
-                  if (isAlwaysServed && (sel === null || sel === undefined)) {
+                  // Sopa rechazada: el cliente NO quiso sopa (y el día sí tenía).
+                  // Lo mostramos explícito; el reemplazo, si lo hay, va en la nota.
+                  if (cat.id === 'soup' && isMissing) {
+                    const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
+                    if (!dayHadSoup) return null
                     return (
                       <div key={cat.id} style={{
                         fontSize: 18, fontWeight: 900, color: T.bad,
@@ -1006,7 +1082,21 @@ function KitchenOrderRow({ order, isLast }) {
                         display: 'inline-block', alignSelf: 'flex-start',
                         border: `2px solid ${T.bad}55`,
                       }}>
-                        ⚠ SIN {cat.label.toUpperCase()}
+                        ⚠ SIN SOPA
+                      </div>
+                    )
+                  }
+
+                  if (isAlwaysServed && isMissing) {
+                    return (
+                      <div key={cat.id} style={{
+                        fontSize: 18, fontWeight: 900, color: T.bad,
+                        letterSpacing: 0.5, textTransform: 'uppercase',
+                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
+                        display: 'inline-block', alignSelf: 'flex-start',
+                        border: `2px solid ${T.bad}55`,
+                      }}>
+                        ⚠ {omittedLabel(cat, servedInfo)}
                       </div>
                     )
                   }
@@ -1079,7 +1169,7 @@ function KitchenOrderRow({ order, isLast }) {
                         display: 'inline-block', alignSelf: 'flex-start',
                         border: `2px solid ${T.bad}55`,
                       }}>
-                        ⚠ SIN {cat.label.toUpperCase()}
+                        ⚠ {omittedLabel(cat, servedInfo)}
                       </div>
                     )
                   }
@@ -1209,6 +1299,7 @@ function KitchenOrderRow({ order, isLast }) {
       {detailOpen && (
         <KitchenOrderDetailModal
           order={order}
+          servedInfo={servedInfo}
           onClose={() => setDetailOpen(false)}
         />
       )}
@@ -1216,7 +1307,7 @@ function KitchenOrderRow({ order, isLast }) {
   )
 }
 
-function KitchenOrderDetailModal({ order, onClose }) {
+function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
   const isReady = order.status === 'ready'
   const isDelivered = order.status === 'delivered'
   const isCancelled = order.status === 'cancelled'
@@ -1415,8 +1506,11 @@ function KitchenOrderDetailModal({ order, onClose }) {
                 const sel = selections[cat.id]
                 const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
                 const isAlwaysServed = !!cat.alwaysServed
+                const isMissing = sel === null || sel === undefined
 
-                if (isAlwaysServed && (sel === null || sel === undefined)) {
+                if (cat.id === 'soup' && isMissing) {
+                  const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
+                  if (!dayHadSoup) return null
                   return (
                     <div key={cat.id} style={{
                       fontSize: 20, fontWeight: 900, color: T.bad,
@@ -1424,7 +1518,20 @@ function KitchenOrderDetailModal({ order, onClose }) {
                       background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
                       border: `2px solid ${T.bad}55`,
                     }}>
-                      ⚠ SIN {cat.label.toUpperCase()}
+                      ⚠ SIN SOPA
+                    </div>
+                  )
+                }
+
+                if (isAlwaysServed && isMissing) {
+                  return (
+                    <div key={cat.id} style={{
+                      fontSize: 20, fontWeight: 900, color: T.bad,
+                      letterSpacing: 0.5, textTransform: 'uppercase',
+                      background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
+                      border: `2px solid ${T.bad}55`,
+                    }}>
+                      ⚠ {omittedLabel(cat, servedInfo)}
                     </div>
                   )
                 }
@@ -1498,7 +1605,7 @@ function KitchenOrderDetailModal({ order, onClose }) {
                       display: 'inline-block', alignSelf: 'flex-start',
                       border: `2px solid ${T.bad}55`,
                     }}>
-                      ⚠ SIN {cat.label.toUpperCase()}
+                      ⚠ {omittedLabel(cat, servedInfo)}
                     </div>
                   )
                 }

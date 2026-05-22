@@ -23,8 +23,8 @@ import {
   nextTableSuffix,
   formatTableLabel,
 } from '../openTabs'
-import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder } from '../kitchenOrders'
-import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getSpecialState, getAddonPrices } from '../menu'
+import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder, watchKitchenOrdersForDate } from '../kitchenOrders'
+import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getSpecialState, getAddonPrices, countConsumedByItem } from '../menu'
 import CashierLunchWizard from '../components/CashierLunchWizard'
 import CashierSpecialWizard from '../components/CashierSpecialWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
@@ -150,6 +150,22 @@ export default function NewSale({
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
   useEffect(() => watchMenuItems(setAllMenuItems), [])
   useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
+
+  // Comandas de hoy → para saber cuántas porciones de cada opción ya se
+  // vendieron y respetar el "quedan N" que fijó la cocinera (avisar/bloquear).
+  const [dayOrders, setDayOrders] = useState([])
+  useEffect(() => watchKitchenOrdersForDate(today, setDayOrders), [today])
+
+  // Porciones consumidas por item = vendidas en comandas de hoy + las que ya
+  // están en la comanda en construcción (sin enviar). En modo edición se
+  // excluye el propio almuerzo que se corrige para no bloquearse a sí mismo.
+  const consumedByItem = useMemo(() => {
+    const editOrderId = lunchModal?.edit?.orderId || null
+    const committed = editOrderId
+      ? dayOrders.filter(o => o.id !== editOrderId)
+      : dayOrders
+    return countConsumedByItem([...committed, ...lunchCommanda])
+  }, [dayOrders, lunchCommanda, lunchModal?.edit?.orderId])
 
   const branchId = session.branchId
 
@@ -1455,6 +1471,8 @@ export default function NewSale({
         <CashierLunchWizard
           product={lunchModal.product}
           currentCount={lunchCommanda.length}
+          stockDailyMenu={dailyMenu}
+          consumedByItem={consumedByItem}
           editMode={!!lunchModal.edit}
           initialSelections={lunchModal.edit?.initialSelections || null}
           initialNote={lunchModal.edit?.initialNote || ''}

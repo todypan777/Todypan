@@ -4,7 +4,9 @@ import { fmtCOP } from '../../utils/format'
 import {
   CORRIENTE_CATEGORIES, CATEGORY_BY_ID, resolveDailyMenu, getCorrienteState,
   createMenuItem, setDailyMenuItem, setDailySpecial,
+  countConsumedByItem, getItemStockState, setItemStock, MAX_LOW_STOCK,
 } from '../../menu'
+import { watchKitchenOrdersForDate } from '../../kitchenOrders'
 import { FieldLabel, inputStyle, ErrorBox } from './ui'
 
 // ──────────────────────────────────────────────────────────────
@@ -28,6 +30,12 @@ export default function MenuEditView({
   onClose, onGoToCatalog,
 }) {
   const [adding, setAdding] = useState(null) // categoryId mientras está abierto el picker
+
+  // Comandas de hoy → para derivar cuántas porciones se han vendido por item
+  // y mostrar "quedan N" en vivo (baja solo a medida que la cajera vende).
+  const [orders, setOrders] = useState([])
+  useEffect(() => watchKitchenOrdersForDate(today, setOrders), [today])
+  const consumedByItem = useMemo(() => countConsumedByItem(orders), [orders])
 
   // Bloquear scroll del body
   useEffect(() => {
@@ -53,9 +61,29 @@ export default function MenuEditView({
         publishedBy: authUser?.uid,
         publishedByName: publisherName,
       })
+      // Limpiar cualquier tope de stock del item que se acabó (si se vuelve a
+      // agregar luego, arranca sin límite en vez de heredar un tope viejo).
+      setItemStock(today, itemId, null, {
+        publishedBy: authUser?.uid, publishedByName: publisherName,
+      }).catch(err => console.warn('[edit] clear stock:', err?.message || err))
     } catch (err) {
       console.error('[edit] remove failed:', err)
       alert('No pudimos actualizar el menú. Intenta de nuevo.')
+    }
+  }
+
+  // La cocinera fija "quedan N" porciones de un item. Guardamos el TOPE
+  // absoluto = porciones ya vendidas hoy + N, para que baje solo. n=null
+  // quita el límite.
+  async function setLowStock(itemId, n) {
+    const cap = n == null ? null : (consumedByItem[itemId] || 0) + n
+    try {
+      await setItemStock(today, itemId, cap, {
+        publishedBy: authUser?.uid, publishedByName: publisherName,
+      })
+    } catch (err) {
+      console.error('[edit] setItemStock failed:', err)
+      alert('No pudimos guardar las porciones. Intenta de nuevo.')
     }
   }
 
@@ -116,7 +144,10 @@ export default function MenuEditView({
               key={cat.id}
               category={cat}
               items={resolved[cat.id]}
+              dailyMenu={dailyMenu}
+              consumedByItem={consumedByItem}
               onRemove={(itemId) => removeItem(cat.id, itemId)}
+              onSetStock={setLowStock}
               onAddClick={() => setAdding(cat.id)}
             />
           ))}
@@ -275,7 +306,7 @@ function PricesInfoCard({ corriente, onGoToCatalog }) {
   )
 }
 
-function CategoryBlock({ category, items, onRemove, onAddClick }) {
+function CategoryBlock({ category, items, dailyMenu, consumedByItem, onRemove, onSetStock, onAddClick }) {
   const isEmpty = !items || items.length === 0
   const canAddMore = category.multi || isEmpty
 
@@ -323,33 +354,14 @@ function CategoryBlock({ category, items, onRemove, onAddClick }) {
       {!isEmpty && (
         <div>
           {items.map((item, i) => (
-            <div key={item.id} style={{
-              padding: '14px 14px',
-              borderBottom: i === items.length - 1
-                ? 'none'
-                : `0.5px solid ${T.neutral[100]}`,
-              display: 'flex', alignItems: 'center', gap: 10,
-            }}>
-              <div style={{
-                flex: 1, minWidth: 0,
-                fontSize: 15.5, fontWeight: 700, color: T.neutral[900],
-              }}>
-                {item.name}
-              </div>
-              <button
-                onClick={() => onRemove(item.id)}
-                style={{
-                  padding: '8px 12px', borderRadius: 10,
-                  background: '#FBE9E5', color: T.bad,
-                  border: `1px solid #F0C8BE`,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 12.5, fontWeight: 800, flexShrink: 0,
-                  display: 'flex', alignItems: 'center', gap: 4,
-                }}
-              >
-                ✕ Se acabó
-              </button>
-            </div>
+            <ItemRow
+              key={item.id}
+              item={item}
+              isLast={i === items.length - 1}
+              stock={getItemStockState(dailyMenu, consumedByItem, item.id)}
+              onRemove={() => onRemove(item.id)}
+              onSetStock={(n) => onSetStock(item.id, n)}
+            />
           ))}
         </div>
       )}
@@ -370,6 +382,109 @@ function CategoryBlock({ category, items, onRemove, onAddClick }) {
         >
           + Agregar {isEmpty ? category.label.toLowerCase() : 'otra'}
         </button>
+      )}
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Fila de un item: nombre + control "Quedan N" + "Se acabó".
+// El control de stock es para avisar cuando quedan POCAS porciones (1..5):
+// la cocinera lo fija y baja solo a medida que la cajera vende. La cajera lo
+// ve y, al pasarse, se le bloquea esa opción.
+// ──────────────────────────────────────────────────────────────
+function ItemRow({ item, isLast, stock, onRemove, onSetStock }) {
+  const [open, setOpen] = useState(false)
+  const limited = stock.limited
+  const remaining = limited ? stock.remaining : null
+  const out = limited && remaining <= 0
+
+  return (
+    <div style={{
+      padding: '14px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 15.5, fontWeight: 700, color: T.neutral[900],
+        }}>
+          {item.name}
+        </div>
+        {/* Botón de stock: muestra el estado actual y abre los números */}
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            padding: '8px 11px', borderRadius: 10,
+            background: out ? '#FBE9E5' : limited ? '#FFF7E6' : T.neutral[100],
+            color: out ? T.bad : limited ? '#7A5C00' : T.neutral[600],
+            border: `1px solid ${out ? '#F0C8BE' : limited ? '#F0D699' : T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 800, flexShrink: 0, whiteSpace: 'nowrap',
+          }}
+        >
+          {out ? '⚠ 0 — agotado' : limited ? `Quedan ${remaining}` : 'Quedan…'}
+        </button>
+        <button
+          onClick={onRemove}
+          style={{
+            padding: '8px 12px', borderRadius: 10,
+            background: '#FBE9E5', color: T.bad,
+            border: `1px solid #F0C8BE`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12.5, fontWeight: 800, flexShrink: 0,
+            display: 'flex', alignItems: 'center', gap: 4,
+          }}
+        >
+          ✕ Se acabó
+        </button>
+      </div>
+
+      {open && (
+        <div style={{
+          marginTop: 10, padding: '10px 11px', borderRadius: 12,
+          background: T.neutral[25], border: `1px solid ${T.neutral[100]}`,
+        }}>
+          <div style={{
+            fontSize: 11.5, color: T.neutral[600], marginBottom: 8, lineHeight: 1.4,
+          }}>
+            ¿Cuántas porciones quedan? Baja sola con cada venta.
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {Array.from({ length: MAX_LOW_STOCK }, (_, i) => i + 1).map(n => {
+              const active = limited && remaining === n
+              return (
+                <button
+                  key={n}
+                  onClick={() => { onSetStock(n); setOpen(false) }}
+                  style={{
+                    width: 42, height: 42, borderRadius: 11,
+                    background: active ? T.copper[500] : '#fff',
+                    color: active ? '#fff' : T.neutral[800],
+                    border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 16, fontWeight: 800,
+                  }}
+                >
+                  {n}
+                </button>
+              )
+            })}
+            <button
+              onClick={() => { onSetStock(null); setOpen(false) }}
+              style={{
+                flex: 1, minWidth: 90, padding: '0 12px', height: 42, borderRadius: 11,
+                background: !limited ? T.copper[50] : '#fff',
+                color: T.neutral[600],
+                border: `1.5px solid ${!limited ? T.copper[200] : T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              Sin límite
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

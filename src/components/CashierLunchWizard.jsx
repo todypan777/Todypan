@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import {
   CATEGORIES, CATEGORY_BY_ID, CORRIENTE_CATEGORIES,
-  watchMenuItems, watchDailyMenu, resolveDailyMenu,
+  watchMenuItems, watchDailyMenu, resolveDailyMenu, getItemStockState,
 } from '../menu'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import {
@@ -42,6 +42,8 @@ import {
 export default function CashierLunchWizard({
   product,
   currentCount = 0,
+  stockDailyMenu = null,
+  consumedByItem = null,
   editMode = false,
   initialSelections = null,
   initialNote = '',
@@ -61,6 +63,14 @@ export default function CashierLunchWizard({
     () => resolveDailyMenu(dailyMenu, allItems),
     [dailyMenu, allItems]
   )
+
+  // Estado de stock de un item ("quedan N" que fijó la cocinera). Usa el menú
+  // y el consumo que pasa NewSale (vendidas + comanda en construcción). Si no
+  // llegan, cae al dailyMenu propio del wizard. Sin límite → { limited:false }.
+  const stockMenu = stockDailyMenu || dailyMenu
+  function stockOf(itemId) {
+    return getItemStockState(stockMenu, consumedByItem, itemId)
+  }
 
   // ─── Estado del almuerzo ─────────────────────────────────────────
   const [selections, setSelections] = useState(() => {
@@ -92,7 +102,12 @@ export default function CashierLunchWizard({
       for (const catId of ['side', 'salad', 'juice']) {
         if (next[catId] !== undefined) continue
         const opts = resolvedMenu[catId] || []
-        if (opts.length > 0) next[catId] = { id: opts[0].id, name: opts[0].name }
+        // Preseleccionar la primera opción que NO esté agotada.
+        const opt = opts.find(o => {
+          const st = stockOf(o.id)
+          return !st.limited || st.remaining > 0
+        })
+        if (opt) next[catId] = { id: opt.id, name: opt.name }
       }
       return next
     })
@@ -225,6 +240,7 @@ export default function CashierLunchWizard({
                     subtitle={`Hoy hay ${soupOpts.length} opciones — elige una.`}
                     options={soupOpts}
                     selected={selections.soup}
+                    stockOf={stockOf}
                     onPick={(opt) => {
                       clearReplacement('soup')
                       setCategory('soup', { id: opt.id, name: opt.name })
@@ -263,6 +279,7 @@ export default function CashierLunchWizard({
                   emoji="🥣"
                   title="La sopa de hoy"
                   item={soupOpts[0] || null}
+                  stock={soupOpts[0] ? stockOf(soupOpts[0].id) : null}
                   onYes={() => {
                     const opt = soupOpts[0]
                     if (opt) {
@@ -301,6 +318,7 @@ export default function CashierLunchWizard({
                 subtitle="Puedes pedir mixto si quieres dos."
                 options={resolvedMenu.principio || []}
                 selected={selections.principio}
+                stockOf={stockOf}
                 multi
                 maxSel={CATEGORY_BY_ID.principio?.maxSelections || 1}
                 onPick={(opt) => {
@@ -370,6 +388,7 @@ export default function CashierLunchWizard({
                 subtitle="Esta sí va sí o sí."
                 options={resolvedMenu.protein || []}
                 selected={selections.protein}
+                stockOf={stockOf}
                 onPick={(opt) => {
                   setCategory('protein', opt)
                   setTimeout(() => setStep('sides-combo'), 180)
@@ -383,6 +402,7 @@ export default function CashierLunchWizard({
               <SidesComboStep
                 resolvedMenu={resolvedMenu}
                 selections={selections}
+                stockOf={stockOf}
                 onChange={(catId, val) => setCategory(catId, val)}
                 onContinue={() => setStep('note')}
               />
@@ -508,7 +528,7 @@ function WizardHeader({ product, currentCount, stepIndex, total, editMode, onBac
 }
 
 // ─── Step: una opción ÚNICA del día (sopa) ──────────────────────
-function SingleOptionStep({ emoji, title, item, onYes, onNo, emptyText, onEmpty }) {
+function SingleOptionStep({ emoji, title, item, stock, onYes, onNo, emptyText, onEmpty }) {
   if (!item) {
     return (
       <div>
@@ -535,12 +555,13 @@ function SingleOptionStep({ emoji, title, item, onYes, onNo, emptyText, onEmpty 
       </div>
     )
   }
+  const out = stock?.limited && stock.remaining <= 0
   return (
     <div>
       <StepHero emoji={emoji} title={title} />
       <div style={{
         marginTop: 16, padding: '22px 20px', borderRadius: 18,
-        background: '#fff', border: `2px solid ${T.copper[200]}`,
+        background: '#fff', border: `2px solid ${out ? '#F0C8BE' : T.copper[200]}`,
         textAlign: 'center',
         boxShadow: '0 4px 16px rgba(184,122,86,0.12)',
       }}>
@@ -556,9 +577,24 @@ function SingleOptionStep({ emoji, title, item, onYes, onNo, emptyText, onEmpty 
         }}>
           {item.name}
         </div>
+        {stock?.limited && (
+          <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+            <StockBadge stock={stock} />
+          </div>
+        )}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-        <BigChoice label="Sí quiere" icon="✓" color={T.ok} onClick={onYes} />
+        {out ? (
+          <div style={{
+            padding: '14px 16px', borderRadius: 14,
+            background: '#FBE9E5', border: `1.5px solid #F0C8BE`,
+            color: T.bad, fontSize: 13.5, fontWeight: 700, textAlign: 'center', lineHeight: 1.45,
+          }}>
+            Se agotó por hoy. Continúa sin esta opción.
+          </div>
+        ) : (
+          <BigChoice label="Sí quiere" icon="✓" color={T.ok} onClick={onYes} />
+        )}
         <BigChoice label="No, gracias" icon="✕" color={T.neutral[500]} onClick={onNo} />
       </div>
     </div>
@@ -598,7 +634,7 @@ function BigChoice({ label, icon, color, onClick }) {
 
 // ─── Step: elegir entre opciones ────────────────────────────────
 function PickStep({
-  emoji, title, subtitle, options, selected, onPick,
+  emoji, title, subtitle, options, selected, onPick, stockOf,
   multi = false, maxSel = 1,
   emptyText, onEmpty, ctaBelow,
 }) {
@@ -651,22 +687,28 @@ function PickStep({
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
         {options.map(opt => {
           const active = selectedArr.some(s => s?.id === opt.id)
+          const st = stockOf ? stockOf(opt.id) : { limited: false }
+          // Bloqueado solo si está agotado Y no está ya seleccionado (para
+          // poder deseleccionarlo). Permite que la cajera "destrabe" si tocó.
+          const out = st.limited && st.remaining <= 0 && !active
           return (
             <button
               key={opt.id}
-              onClick={() => onPick(opt)}
+              onClick={() => { if (!out) onPick(opt) }}
+              disabled={out}
               style={{
                 width: '100%', padding: '14px 16px', borderRadius: 14,
                 background: active ? T.copper[500] : '#fff',
-                color: active ? '#fff' : T.neutral[900],
-                border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
-                cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                color: active ? '#fff' : (out ? T.neutral[400] : T.neutral[900]),
+                border: `1.5px solid ${active ? T.copper[500] : (out ? T.neutral[100] : T.neutral[200])}`,
+                cursor: out ? 'not-allowed' : 'pointer', fontFamily: 'inherit', textAlign: 'left',
                 fontSize: 15, fontWeight: 700, letterSpacing: -0.1,
                 display: 'flex', alignItems: 'center', gap: 12,
+                opacity: out ? 0.65 : 1,
                 boxShadow: active ? `0 4px 14px ${T.copper[500]}55` : '0 2px 6px rgba(0,0,0,0.03)',
                 transition: 'background 0.15s, border-color 0.15s, transform 0.1s ease',
               }}
-              onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.99)')}
+              onMouseDown={e => !out && (e.currentTarget.style.transform = 'scale(0.99)')}
               onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
               onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
             >
@@ -683,6 +725,7 @@ function PickStep({
                 )}
               </div>
               <span style={{ flex: 1, minWidth: 0 }}>{opt.name}</span>
+              <StockBadge stock={st} onColor={active} />
             </button>
           )
         })}
@@ -739,7 +782,7 @@ function ReplaceStep({ emoji, title, options, selected, onPick }) {
 }
 
 // ─── Step: Acompañante + Ensalada + Jugo combinado ──────────────
-function SidesComboStep({ resolvedMenu, selections, onChange, onContinue }) {
+function SidesComboStep({ resolvedMenu, selections, stockOf, onChange, onContinue }) {
   const CATS = ['side', 'salad', 'juice']
   return (
     <div>
@@ -758,6 +801,7 @@ function SidesComboStep({ resolvedMenu, selections, onChange, onContinue }) {
               category={cat}
               options={opts}
               selected={selections[catId]}
+              stockOf={stockOf}
               onChange={(val) => onChange(catId, val)}
             />
           )
@@ -779,11 +823,17 @@ function SidesComboStep({ resolvedMenu, selections, onChange, onContinue }) {
   )
 }
 
-function SideRow({ category, options, selected, onChange }) {
+function SideRow({ category, options, selected, stockOf, onChange }) {
   const [changing, setChanging] = useState(false)
   const hasOptions = options.length > 0
   const showPicker = changing && hasOptions
   const isActive = !!selected
+  const st = (stockOf && selected) ? stockOf(selected.id) : { limited: false }
+  // Primera opción NO agotada (para "+ Agregar").
+  const firstAvailable = options.find(o => {
+    const s = stockOf ? stockOf(o.id) : { limited: false }
+    return !s.limited || s.remaining > 0
+  })
 
   if (!hasOptions) {
     return (
@@ -827,6 +877,7 @@ function SideRow({ category, options, selected, onChange }) {
             {isActive ? selected.name : `Sin ${category.label.toLowerCase()}`}
           </div>
         </div>
+        {isActive && <StockBadge stock={st} />}
       </div>
 
       {showPicker && (
@@ -836,23 +887,34 @@ function SideRow({ category, options, selected, onChange }) {
         }}>
           {options.map(opt => {
             const active = selected?.id === opt.id
+            const s = stockOf ? stockOf(opt.id) : { limited: false }
+            const out = s.limited && s.remaining <= 0 && !active
             return (
               <button
                 key={opt.id}
+                disabled={out}
                 onClick={() => {
+                  if (out) return
                   onChange({ id: opt.id, name: opt.name })
                   setChanging(false)
                 }}
                 style={{
                   padding: '9px 14px', borderRadius: 12,
                   background: active ? T.copper[500] : '#fff',
-                  color: active ? '#fff' : T.neutral[800],
-                  border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
-                  cursor: 'pointer', fontFamily: 'inherit',
+                  color: active ? '#fff' : (out ? T.neutral[400] : T.neutral[800]),
+                  border: `1.5px solid ${active ? T.copper[500] : (out ? T.neutral[100] : T.neutral[200])}`,
+                  cursor: out ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
                   fontSize: 13.5, fontWeight: 700, letterSpacing: -0.1,
+                  opacity: out ? 0.6 : 1,
+                  display: 'flex', alignItems: 'center', gap: 6,
                 }}
               >
                 {active && '✓ '}{opt.name}
+                {s.limited && (
+                  <span style={{ fontSize: 11, fontWeight: 800, opacity: 0.9 }}>
+                    · {s.remaining <= 0 ? 'agotado' : `quedan ${s.remaining}`}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -907,19 +969,21 @@ function SideRow({ category, options, selected, onChange }) {
           </button>
         ) : (
           <button
+            disabled={!firstAvailable}
             onClick={() => {
-              const first = options[0]
-              onChange({ id: first.id, name: first.name })
+              if (!firstAvailable) return
+              onChange({ id: firstAvailable.id, name: firstAvailable.name })
             }}
             style={{
               flex: 1, padding: '10px', borderRadius: 11,
-              background: T.copper[500], color: '#fff',
+              background: firstAvailable ? T.copper[500] : T.neutral[200],
+              color: firstAvailable ? '#fff' : T.neutral[500],
               border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit',
+              cursor: firstAvailable ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
               fontSize: 13, fontWeight: 700,
             }}
           >
-            + Agregar
+            {firstAvailable ? '+ Agregar' : 'Agotado'}
           </button>
         )}
       </div>
@@ -1114,6 +1178,29 @@ function DestinationBigButton({ icon, title, subtitle, price, accentBg, accentBo
         {fmtCOP(price)}
       </div>
     </button>
+  )
+}
+
+// ─── Badge de stock bajo ("Quedan N" / "Agotado") ──────────────
+// Solo aparece cuando la cocinera fijó un tope. `onColor` = true cuando va
+// sobre un fondo cobre (opción seleccionada) → usa variante clara.
+function StockBadge({ stock, onColor = false }) {
+  if (!stock || !stock.limited) return null
+  const out = stock.remaining <= 0
+  const bg = out ? '#FBE9E5' : '#FFF7E6'
+  const color = out ? T.bad : '#7A5C00'
+  const border = out ? '#F0C8BE' : '#F0D699'
+  return (
+    <span style={{
+      flexShrink: 0,
+      fontSize: 11, fontWeight: 800, letterSpacing: 0.2,
+      padding: '4px 9px', borderRadius: 999,
+      background: onColor ? '#fff' : bg,
+      color, border: `1px solid ${onColor ? '#fff' : border}`,
+      whiteSpace: 'nowrap',
+    }}>
+      {out ? 'Agotado' : `Quedan ${stock.remaining}`}
+    </span>
   )
 }
 

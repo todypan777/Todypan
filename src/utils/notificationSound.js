@@ -154,6 +154,25 @@ export function playOrderReadySound() {
   }
 }
 
+/**
+ * Sonido para "llegó un pedido nuevo a la cocina". Campana doble ascendente
+ * (Sol5 → Do6), clara y notoria sin ser tan insistente como la llamada
+ * urgente de la cajera. Pensada para que la cocinera levante la vista.
+ */
+export function playNewOrderSound() {
+  const c = getCtx()
+  if (!c) return
+  try {
+    if (c.state === 'suspended') {
+      c.resume().catch(() => {})
+    }
+    playBellNote(c, 783.99, 0)     // Sol5
+    playBellNote(c, 1046.50, 0.20) // Do6
+  } catch (err) {
+    console.warn('[notificationSound] newOrder no se pudo reproducir:', err?.message || err)
+  }
+}
+
 function playSoftBlip(c, freq, delaySec) {
   const chain = getMasterChain(c)
   const startAt = c.currentTime + delaySec

@@ -523,8 +523,11 @@ export function watchSessionsWithPendingReview(callback) {
 }
 
 /**
- * Sesiones cerradas (o pending_close legacy) cuyo cierre cae en una fecha
- * específica (zona Bogotá). Usado por la pantalla Registro.
+ * Sesiones de CAJA cerradas (o pending_close legacy) cuyo cierre cae en una
+ * fecha específica (zona Bogotá). Usado por la pantalla Registro ("Cierres de
+ * caja"). SOLO turnos de caja: los turnos de cocina/mesera no manejan dinero,
+ * así que no son "cierres de caja" y no deben aparecer aquí (si aparecían, el
+ * sistema les inventaba una falta fantasma comparando contra la base).
  */
 export function watchClosedSessionsForDate(dateStr, callback) {
   if (!dateStr) { callback([]); return () => {} }
@@ -536,6 +539,7 @@ export function watchClosedSessionsForDate(dateStr, callback) {
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(s => {
           if (s.mergedIntoSession) return false // turno absorbido en otra combinación
+          if (s.type && s.type !== 'cash') return false // cocina/mesera no son cierres de caja
           const ts = s.closedAt?.toDate?.()
           if (!ts) return false
           const bogotaDate = ts.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })

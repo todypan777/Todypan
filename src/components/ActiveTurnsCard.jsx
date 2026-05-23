@@ -18,7 +18,6 @@ import {
   rejectCashExpense,
 } from '../cashExpenses'
 import { watchAllUsers } from '../users'
-import { createDeduction } from '../cashierDeductions'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import { getCustomerOrder } from '../customerOrders'
@@ -771,7 +770,6 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
     cashierLegacyDeclared != null ? String(cashierLegacyDeclared) : ''
   )
 
-  const [resolution, setResolution] = useState(null) // para shortage
   const [handoverChoice, setHandoverChoice] = useState('admin') // 'admin' | 'leave'
   const [reopenAfter, setReopenAfter] = useState(false) // checkbox para abrir nuevo turno después
   const [note, setNote] = useState('')
@@ -835,11 +833,6 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   // de "bajar la base". Esto evita que la base se anclara en valores bajos
   // por decisiones de un día específico.
 
-  const cashiers = useMemo(
-    () => allUsers.filter(u => u.status === 'approved' && u.role !== 'admin'),
-    [allUsers]
-  )
-
   function setDecision(expenseId, decision) {
     setExpenseDecisions(prev => ({ ...prev, [expenseId]: decision }))
   }
@@ -849,7 +842,6 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
     !busy &&
     declaredStr.trim() !== '' &&
     pendingExpensesCount === 0 &&
-    (!hasShortage || !!resolution) &&
     (pendingTabs.length === 0 || !!tabsDecision)
 
   async function handleConfirm() {
@@ -877,22 +869,6 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         } else if (dec === 'reject') {
           await rejectCashExpense(exp.id, { reviewedBy: adminUid, reviewNote: null })
         }
-      }
-
-      // 2. Si hay falta a descontar a la cajera, crear deduction
-      let deductionId = null
-      if (hasShortage && resolution === 'cashier_deduction') {
-        const cashierUser = cashiers.find(u => u.uid === session.cashierUid)
-        const employeeId = cashierUser?.linkedEmployeeId || null
-        deductionId = await createDeduction({
-          cashierUid: session.cashierUid,
-          cashierName: session.cashierName,
-          employeeId,
-          amount: Math.abs(difference),
-          reason: 'cash_shortage',
-          sessionId: session.id,
-          createdBy: adminUid,
-        })
       }
 
       // 3. Construir handover
@@ -945,8 +921,6 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         declaredClosingCash: declared,
         expectedCash,
         approveNote: note.trim() || null,
-        resolution: hasShortage ? resolution : null,
-        deductionId,
         handover,
         session,
         // La base SIEMPRE se restaura al default si quedó por debajo.
@@ -1122,23 +1096,18 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
             />
           )}
 
-          {/* Si hay FALTA: pide resolución */}
+          {/* Si hay FALTA: solo se registra. La app no decide descuentos —
+              el admin ve la falta y decide por fuera si se la cobra a la cajera. */}
           {hasShortage && (
-            <>
-              <SectionLabel>¿Qué hacer con la falta de {fmtCOP(Math.abs(difference))}?</SectionLabel>
-              <RadioOption
-                selected={resolution === 'business_loss'}
-                onClick={() => setResolution('business_loss')}
-                title="Asumir como pérdida del negocio"
-                subtitle="No afecta a la cajera. Solo se registra."
-              />
-              <RadioOption
-                selected={resolution === 'cashier_deduction'}
-                onClick={() => setResolution('cashier_deduction')}
-                title="Descontar a la cajera"
-                subtitle={`Se restará del próximo pago de ${session.cashierName}.`}
-              />
-            </>
+            <div style={{
+              padding: '12px 14px', borderRadius: 12,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              fontSize: 12.5, color: T.bad, fontWeight: 600, lineHeight: 1.5,
+              marginBottom: 14,
+            }}>
+              Falta de {fmtCOP(Math.abs(difference))}. Queda registrada en el turno.
+              Tú decides por fuera si se la descuentas a {session.cashierName || 'la cajera'}.
+            </div>
           )}
 
           {/* Si hay SOBRA */}

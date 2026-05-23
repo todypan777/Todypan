@@ -295,22 +295,16 @@ export async function discardEmptySession(sessionId) {
     throw new Error(`No se puede cancelar: el turno tiene ${activity.tabs} ${activity.tabs === 1 ? 'mesa abierta' : 'mesas abiertas'}. Resuélvelas o ciérralo normal.`)
   }
 
-  // Limpieza de efectos de una discrepancia FANTASMA. Un turno sin ventas ni
-  // gastos puede haber quedado con falta/sobra (ej. cerró declarando $0 sobre
-  // la base). Esa diferencia no corresponde a plata real movida, así que al
-  // borrar el turno deshacemos lo que haya generado:
-  //   - movimiento de "sobra" (ingreso contable) → se elimina
-  //   - descuento de nómina a la cajera (falta) → se cancela
+  // Limpieza de un efecto de discrepancia FANTASMA: si el turno (cerrado por
+  // error declarando un valor distinto a la base) llegó a registrar un
+  // movimiento de "sobra" como ingreso, lo eliminamos para que no quede plata
+  // inventada en los reportes.
   try {
     const snap = await getDoc(sessionRef(sessionId))
-    const disc = snap.exists() ? snap.data()?.closingDiscrepancy : null
-    if (disc?.surplusMovementId) deleteMovement(disc.surplusMovementId)
-    if (disc?.deductionId) {
-      const { cancelDeduction } = await import('./cashierDeductions')
-      await cancelDeduction(disc.deductionId, 'Turno cancelado (vacío / abierto por error)')
-    }
+    const surplusMovementId = snap.exists() ? snap.data()?.closingDiscrepancy?.surplusMovementId : null
+    if (surplusMovementId) deleteMovement(surplusMovementId)
   } catch (e) {
-    console.warn('[cashSessions] discardEmptySession: no se pudo limpiar efectos previos:', e?.message || e)
+    console.warn('[cashSessions] discardEmptySession: no se pudo limpiar el movimiento de sobra:', e?.message || e)
   }
 
   await deleteDoc(sessionRef(sessionId))
@@ -318,19 +312,16 @@ export async function discardEmptySession(sessionId) {
 }
 
 /**
- * Resuelve una falta de cierre (closingDiscrepancy con type='shortage').
- * LEGACY: solo se usa para discrepancias antiguas que quedaron en 'pending'
- * antes del cambio de modelo. En el flujo nuevo el admin resuelve la
- * discrepancia dentro de adminCloseSession.
+ * Marca como REGISTRADA una falta de cierre legacy (closingDiscrepancy
+ * 'pending' que quedó de antes del modelo D25). La app ya no genera descuentos
+ * de nómina: la falta solo se deja registrada y el admin decide por fuera.
  */
-export async function resolveClosingDiscrepancy(sessionId, payload) {
+export async function resolveClosingDiscrepancy(sessionId, { note, reviewedBy } = {}) {
   await updateDoc(sessionRef(sessionId), {
-    'closingDiscrepancy.status': payload.resolution === 'business_loss' ? 'absorbed' : 'deducted',
-    'closingDiscrepancy.resolution': payload.resolution,
-    'closingDiscrepancy.reviewNote': payload.note || null,
-    'closingDiscrepancy.reviewedBy': payload.reviewedBy,
+    'closingDiscrepancy.status': 'recorded',
+    'closingDiscrepancy.reviewNote': note || null,
+    'closingDiscrepancy.reviewedBy': reviewedBy || null,
     'closingDiscrepancy.reviewedAt': serverTimestamp(),
-    'closingDiscrepancy.deductionId': payload.deductionId || null,
   })
 }
 
@@ -403,9 +394,10 @@ async function buildSessionSnapshot(sessionId) {
  *
  * payload opcional:
  *   - approveNote: nota interna del admin
- *   - resolution: 'business_loss' | 'cashier_deduction' (requerido si hay falta)
- *   - deductionId: id en cashierDeductions (si resolution === 'cashier_deduction')
  *   - nextCashFloor: si se pasa, persiste el cashFloor de la panadería
+ *
+ * Nota: la FALTA solo se registra (status 'recorded'). La app no genera
+ * descuentos de nómina; el admin decide por fuera.
  */
 export async function adminCloseSession(sessionId, payload = {}) {
   const session = payload.session || {}
@@ -445,18 +437,15 @@ export async function adminCloseSession(sessionId, payload = {}) {
       reviewedAt: serverTimestamp(),
     }
   } else if (isShortage) {
-    if (!payload.resolution) {
-      throw new Error('Se requiere resolution (business_loss | cashier_deduction) para cerrar un turno con FALTA')
-    }
+    // La falta solo se REGISTRA. La app ya no decide descuentos de nómina;
+    // el admin ve la falta y decide por fuera si se la descuenta a la cajera.
     data.closingDiscrepancy = {
       type: 'shortage',
       amount: Math.abs(difference),
-      status: payload.resolution === 'business_loss' ? 'absorbed' : 'deducted',
-      resolution: payload.resolution,
+      status: 'recorded',
       reviewedBy: payload.reviewedBy || null,
       reviewedAt: serverTimestamp(),
       reviewNote: payload.approveNote || null,
-      deductionId: payload.deductionId || null,
     }
   }
 

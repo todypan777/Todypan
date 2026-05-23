@@ -12,7 +12,6 @@ import {
   resolveOpeningDispute,
 } from '../cashSessions'
 import { watchAllSales } from '../sales'
-import { createDeduction } from '../cashierDeductions'
 import { patchCashierProduct } from '../products'
 import {
   watchPendingChangeRequests,
@@ -27,13 +26,11 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const { authUser } = useAuth()
 
   const [pendingUsers, setPendingUsers] = useState([])
-  const [allUsers, setAllUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [allSales, setAllSales] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
   useEffect(() => watchAllUsers(list => {
-    setAllUsers(list)
     setPendingUsers(list.filter(u => u.status === 'pending'))
   }), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
@@ -174,7 +171,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
         <ClosingShortagesSection
           sessions={orphanShortages}
           adminUid={authUser.uid}
-          allUsers={allUsers}
         />
       )}
 
@@ -407,7 +403,7 @@ function OpeningDisputeModal({ session, adminUid, onCancel, onResolved }) {
 // ──────────────────────────────────────────────────────────────
 // Faltas de cierre (LEGACY: solo para sesiones cerradas antes del cambio)
 // ──────────────────────────────────────────────────────────────
-function ClosingShortagesSection({ sessions, adminUid, allUsers }) {
+function ClosingShortagesSection({ sessions, adminUid }) {
   const [resolving, setResolving] = useState(null)
   return (
     <>
@@ -442,7 +438,6 @@ function ClosingShortagesSection({ sessions, adminUid, allUsers }) {
         <ClosingShortageModal
           session={resolving}
           adminUid={adminUid}
-          allUsers={allUsers}
           onCancel={() => setResolving(null)}
           onResolved={() => setResolving(null)}
         />
@@ -451,8 +446,7 @@ function ClosingShortagesSection({ sessions, adminUid, allUsers }) {
   )
 }
 
-function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolved }) {
-  const [resolution, setResolution] = useState(null) // 'business_loss' | 'cashier_deduction'
+function ClosingShortageModal({ session, adminUid, onCancel, onResolved }) {
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -461,35 +455,18 @@ function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolve
   const amount = cd.amount
 
   async function handleConfirm() {
-    if (!resolution || busy) return
+    if (busy) return
     setBusy(true); setError(null)
     try {
-      let deductionId = null
-      if (resolution === 'cashier_deduction') {
-        // Buscar el employeeId vinculado al user de la cajera
-        const cashierUser = (allUsers || []).find(u => u.uid === session.cashierUid)
-        const employeeId = cashierUser?.linkedEmployeeId || null
-        deductionId = await createDeduction({
-          cashierUid: session.cashierUid,
-          cashierName: session.cashierName,
-          employeeId,
-          amount,
-          reason: 'cash_shortage',
-          sessionId: session.id,
-          createdBy: adminUid,
-        })
-      }
-
+      // La app no genera descuentos: la falta solo se deja registrada.
       await resolveClosingDiscrepancy(session.id, {
-        resolution,
         note: note.trim() || null,
         reviewedBy: adminUid,
-        deductionId,
       })
       onResolved()
     } catch (err) {
       console.error(err)
-      setError('No pudimos guardar la decisión.')
+      setError('No pudimos guardar.')
       setBusy(false)
     }
   }
@@ -519,22 +496,10 @@ function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolve
           )}
         </div>
 
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600], marginBottom: 8 }}>
-          ¿Qué hacer con la diferencia?
+        <div style={{ fontSize: 12.5, color: T.neutral[600], lineHeight: 1.5, marginBottom: 12 }}>
+          La falta queda registrada en el turno. La app no descuenta nómina —
+          tú decides por fuera si se la cobras a {session.cashierName || 'la cajera'}.
         </div>
-
-        <RadioOption
-          selected={resolution === 'business_loss'}
-          onClick={() => setResolution('business_loss')}
-          title="Asumir como pérdida del negocio"
-          subtitle="No afecta a la cajera. Solo se registra."
-        />
-        <RadioOption
-          selected={resolution === 'cashier_deduction'}
-          onClick={() => setResolution('cashier_deduction')}
-          title="Descontar a la cajera"
-          subtitle={`Se restará ${fmtCOP(amount)} del próximo pago de ${session.cashierName}.`}
-        />
 
         <NoteInput value={note} onChange={setNote} placeholder="Nota interna (opcional)" disabled={busy} />
 
@@ -543,8 +508,8 @@ function ClosingShortageModal({ session, adminUid, allUsers, onCancel, onResolve
         <ModalActions
           onCancel={onCancel}
           onConfirm={handleConfirm}
-          confirmLabel={busy ? 'Guardando...' : 'Confirmar'}
-          confirmDisabled={!resolution || busy}
+          confirmLabel={busy ? 'Guardando...' : 'Marcar como registrada'}
+          confirmDisabled={busy}
           confirmColor={T.copper[500]}
         />
       </ModalCard>

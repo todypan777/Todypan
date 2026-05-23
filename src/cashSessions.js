@@ -295,14 +295,22 @@ export async function discardEmptySession(sessionId) {
     throw new Error(`No se puede cancelar: el turno tiene ${activity.tabs} ${activity.tabs === 1 ? 'mesa abierta' : 'mesas abiertas'}. Resuélvelas o ciérralo normal.`)
   }
 
-  // Defensivo: si por alguna razón el turno tuviera un movimiento de sobra
-  // asociado (no debería en un turno vacío), lo limpiamos antes de borrar.
+  // Limpieza de efectos de una discrepancia FANTASMA. Un turno sin ventas ni
+  // gastos puede haber quedado con falta/sobra (ej. cerró declarando $0 sobre
+  // la base). Esa diferencia no corresponde a plata real movida, así que al
+  // borrar el turno deshacemos lo que haya generado:
+  //   - movimiento de "sobra" (ingreso contable) → se elimina
+  //   - descuento de nómina a la cajera (falta) → se cancela
   try {
     const snap = await getDoc(sessionRef(sessionId))
-    const surplusMovementId = snap.exists() ? snap.data()?.closingDiscrepancy?.surplusMovementId : null
-    if (surplusMovementId) deleteMovement(surplusMovementId)
+    const disc = snap.exists() ? snap.data()?.closingDiscrepancy : null
+    if (disc?.surplusMovementId) deleteMovement(disc.surplusMovementId)
+    if (disc?.deductionId) {
+      const { cancelDeduction } = await import('./cashierDeductions')
+      await cancelDeduction(disc.deductionId, 'Turno cancelado (vacío / abierto por error)')
+    }
   } catch (e) {
-    console.warn('[cashSessions] discardEmptySession: no se pudo limpiar movimiento previo:', e?.message || e)
+    console.warn('[cashSessions] discardEmptySession: no se pudo limpiar efectos previos:', e?.message || e)
   }
 
   await deleteDoc(sessionRef(sessionId))

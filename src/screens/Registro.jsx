@@ -311,10 +311,13 @@ function ClosureDetailModal({ session, onClose }) {
   // salía de la pantalla y no dejaba bajar.
   const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024
 
-  // Turno VACÍO = sin ventas reales, sin gastos y con cuadre exacto. Solo esos
-  // se pueden borrar (turno cerrado por error con el mismo valor de apertura).
+  // Turno VACÍO = sin ventas reales y sin gastos. Se puede borrar AUNQUE
+  // muestre falta/sobra: si no hubo ventas ni gastos, esa diferencia es
+  // fantasma (ej. cerró declarando $0 sobre la base), no se movió plata real.
+  // Al borrar, discardEmptySession limpia el descuento/movimiento que esa
+  // discrepancia hubiera generado, para no dejar nada colgando.
   const realSalesCount = sales.filter(s => (s.status || 'active') !== 'deleted').length
-  const canDelete = realSalesCount === 0 && expenses.length === 0 && difference === 0
+  const canDelete = realSalesCount === 0 && expenses.length === 0
 
   async function handleDeleteEmpty() {
     setDeleting(true)
@@ -535,7 +538,9 @@ function ClosureDetailModal({ session, onClose }) {
               ) : (
                 <div>
                   <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5, marginBottom: 10, textAlign: 'center' }}>
-                    Se borra sin dejar registro. No tuvo ventas, gastos ni mesas. ¿Seguro?
+                    Se borra sin dejar registro. No tuvo ventas ni gastos.
+                    {difference !== 0 && ' La falta/sobra de este turno es fantasma y también se deshace (no afecta a la cajera).'}
+                    {' '}¿Seguro?
                   </div>
                   <div style={{ display: 'flex', gap: 10 }}>
                     <button

@@ -4,8 +4,10 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaDateStr, getCashFloor } from '../db'
-import { watchClosedSessionsForDate, discardEmptySession } from '../cashSessions'
-import { watchSessionSales } from '../sales'
+import { useAuth } from '../context/AuthCtx'
+import { watchClosedSessionsForDate, discardEmptySession, recomputeClosedSession } from '../cashSessions'
+import { watchSessionSales, editSaleItems, deleteSaleAsAdmin } from '../sales'
+import { adjustDebtorForSaleChange } from '../debtors'
 import { watchSessionExpenses } from '../cashExpenses'
 import { watchTasksCompletedInSession, watchTasksForCashier } from '../tasks'
 import { paymentIcon } from '../utils/payment'
@@ -234,6 +236,8 @@ function ClosureCard({ session }) {
 }
 
 function ClosureDetailModal({ session, onClose }) {
+  const { authUser } = useAuth()
+  const adminUid = authUser?.uid || null
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
   const [completedTasks, setCompletedTasks] = useState([])
@@ -419,7 +423,7 @@ function ClosureDetailModal({ session, onClose }) {
           </div>
 
           {sales.length > 0 ? (
-            <SalesList sales={sales} />
+            <SalesList sales={sales} sessionId={session.id} adminUid={adminUid} />
           ) : (
             <div style={{
               padding: '14px', textAlign: 'center', borderRadius: 10,
@@ -628,7 +632,7 @@ function MethodChip({ label, amount, icon }) {
   )
 }
 
-function SalesList({ sales }) {
+function SalesList({ sales, sessionId, adminUid }) {
   const [expanded, setExpanded] = useState(false)
   const visible = expanded ? sales : sales.slice(0, 5)
   const hasMore = sales.length > 5
@@ -640,7 +644,7 @@ function SalesList({ sales }) {
         border: `1px solid ${T.neutral[100]}`, overflow: 'hidden',
       }}>
         {visible.map((s, i) => (
-          <SaleDetailRow key={s.id} sale={s} isLast={i === visible.length - 1} />
+          <SaleDetailRow key={s.id} sale={s} isLast={i === visible.length - 1} sessionId={sessionId} adminUid={adminUid} />
         ))}
       </div>
       {hasMore && (
@@ -657,8 +661,13 @@ function SalesList({ sales }) {
   )
 }
 
-function SaleDetailRow({ sale, isLast }) {
+function SaleDetailRow({ sale, isLast, sessionId, adminUid }) {
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [actionError, setActionError] = useState(null)
+  const [confirmDel, setConfirmDel] = useState(false)
   const time = sale.createdAt?.toDate?.() || sale.createdAtClient
   const timeStr = time
     ? new Date(time).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
@@ -667,6 +676,82 @@ function SaleDetailRow({ sale, isLast }) {
   const isDeleted = sale.status === 'deleted'
   const isFlagged = sale.status === 'flagged'
   const items = sale.items || []
+  const isDebt = sale.paymentMethod === 'deuda'
+
+  const draftTotal = draft.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.unitPrice) || 0), 0)
+
+  function startEdit() {
+    setDraft(items.map(it => ({ ...it, qty: Number(it.qty) || 0 })))
+    setActionError(null)
+    setEditing(true)
+  }
+  function changeQty(idx, delta) {
+    setDraft(prev => prev.map((it, i) => i === idx ? { ...it, qty: Math.max(0, (Number(it.qty) || 0) + delta) } : it))
+  }
+  function removeDraftItem(idx) {
+    setDraft(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleSaveEdit() {
+    const cleanItems = draft
+      .filter(it => (Number(it.qty) || 0) > 0)
+      .map(it => {
+        const qty = Number(it.qty) || 0
+        const unitPrice = Number(it.unitPrice) || 0
+        return {
+          productId: it.productId || null,
+          source: it.source || 'inline',
+          name: it.name || 'Producto',
+          qty,
+          unitPrice,
+          subtotal: qty * unitPrice,
+        }
+      })
+    if (cleanItems.length === 0) {
+      setActionError('Si quitas todo, mejor elimina la venta.')
+      return
+    }
+    const newTotal = cleanItems.reduce((s, it) => s + it.subtotal, 0)
+    setBusy(true); setActionError(null)
+    try {
+      const { oldTotal } = await editSaleItems(sale.id, {
+        items: cleanItems, total: newTotal, byUid: adminUid, note: 'Editado desde cierre',
+      })
+      if (isDebt && sale.debtorId) {
+        await adjustDebtorForSaleChange(sale.debtorId, {
+          saleId: sale.id, oldAmount: oldTotal, newAmount: newTotal,
+          byUid: adminUid, reason: 'venta editada desde cierre',
+        })
+      }
+      await recomputeClosedSession(sessionId, { byUid: adminUid })
+      setEditing(false)
+    } catch (err) {
+      console.error(err)
+      setActionError('No se pudo guardar el cambio.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDelete() {
+    setBusy(true); setActionError(null)
+    try {
+      await deleteSaleAsAdmin(sale.id, { byUid: adminUid, reason: 'Corrección desde cierre' })
+      if (isDebt && sale.debtorId) {
+        await adjustDebtorForSaleChange(sale.debtorId, {
+          saleId: sale.id, oldAmount: sale.total || 0, newAmount: 0,
+          byUid: adminUid, reason: 'venta eliminada desde cierre',
+        })
+      }
+      await recomputeClosedSession(sessionId, { byUid: adminUid })
+      setConfirmDel(false)
+    } catch (err) {
+      console.error(err)
+      setActionError('No se pudo eliminar la venta.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div style={{ borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}` }}>
@@ -715,7 +800,7 @@ function SaleDetailRow({ sale, isLast }) {
 
       {open && (
         <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {items.length === 0 ? (
+          {!editing && (items.length === 0 ? (
             <div style={{ fontSize: 12, color: T.neutral[500], padding: '6px 0' }}>Sin detalle de productos.</div>
           ) : items.map((it, i) => {
             const qty = Number(it.qty) || 0
@@ -740,7 +825,53 @@ function SaleDetailRow({ sale, isLast }) {
                 </span>
               </div>
             )
-          })}
+          }))}
+
+          {/* Editor de items (admin, corrección de descuadres) */}
+          {editing && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {draft.map((it, i) => {
+                const qty = Number(it.qty) || 0
+                const unit = Number(it.unitPrice) || 0
+                return (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    padding: '6px 8px', borderRadius: 8,
+                    background: '#fff', border: `0.5px solid ${T.neutral[200]}`,
+                  }}>
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: T.neutral[800], wordBreak: 'break-word' }}>
+                      {it.name || 'Producto'}
+                      {unit > 0 && <span style={{ color: T.neutral[400] }}> · {fmtCOP(unit)} c/u</span>}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 0, background: T.neutral[100], borderRadius: 999, padding: 2, flexShrink: 0 }}>
+                      <button onClick={() => changeQty(i, -1)} disabled={busy} style={qtyBtnSmall()}>−</button>
+                      <span style={{ minWidth: 22, textAlign: 'center', fontSize: 13, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>{qty}</span>
+                      <button onClick={() => changeQty(i, +1)} disabled={busy} style={qtyBtnSmall()}>+</button>
+                    </div>
+                    <button onClick={() => removeDraftItem(i)} disabled={busy} title="Quitar" style={{
+                      width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+                      background: 'transparent', border: 'none', cursor: 'pointer', color: T.bad, fontWeight: 800,
+                    }}>✕</button>
+                  </div>
+                )
+              })}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '4px 4px 0' }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: T.neutral[600] }}>Nuevo total</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(draftTotal)}</span>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button onClick={() => { setEditing(false); setActionError(null) }} disabled={busy} style={{
+                  flex: 1, padding: '10px', borderRadius: 10, background: '#fff', color: T.neutral[700],
+                  border: `1px solid ${T.neutral[200]}`, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+                }}>Cancelar</button>
+                <button onClick={handleSaveEdit} disabled={busy} style={{
+                  flex: 1.4, padding: '10px', borderRadius: 10, background: T.copper[500], color: '#fff',
+                  border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 800,
+                }}>{busy ? 'Guardando...' : 'Guardar cambios'}</button>
+              </div>
+            </div>
+          )}
+
           <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
             {paymentLabelFor(sale)}
             {sale.cashReceived != null && sale.paymentMethod === 'efectivo' && (
@@ -762,10 +893,63 @@ function SaleDetailRow({ sale, isLast }) {
               ))}
             </div>
           )}
+
+          {actionError && (
+            <div style={{
+              marginTop: 4, padding: '8px 10px', borderRadius: 8,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              fontSize: 12, color: T.bad, fontWeight: 600,
+            }}>
+              {actionError}
+            </div>
+          )}
+
+          {/* Acciones admin: corregir descuadres. Recalcula el cuadre del turno
+              sin tocar la plata ya entregada. */}
+          {!isDeleted && !editing && (
+            confirmDel ? (
+              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: 12, color: T.neutral[700], lineHeight: 1.4 }}>
+                  ¿Eliminar esta venta? Se recalcula el cuadre del turno.
+                  {isDebt && ' Se ajusta el saldo del deudor.'}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setConfirmDel(false)} disabled={busy} style={{
+                    flex: 1, padding: '9px', borderRadius: 10, background: '#fff', color: T.neutral[700],
+                    border: `1px solid ${T.neutral[200]}`, cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
+                  }}>No</button>
+                  <button onClick={handleDelete} disabled={busy} style={{
+                    flex: 1.3, padding: '9px', borderRadius: 10, background: T.bad, color: '#fff',
+                    border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 800,
+                  }}>{busy ? 'Eliminando...' : 'Sí, eliminar'}</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={startEdit} style={{
+                  flex: 1, padding: '9px', borderRadius: 10, background: '#fff', color: T.copper[700],
+                  border: `1px solid ${T.copper[200]}`, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
+                }}>Editar</button>
+                <button onClick={() => setConfirmDel(true)} style={{
+                  flex: 1, padding: '9px', borderRadius: 10, background: 'transparent', color: T.bad,
+                  border: `1px solid ${T.bad}55`, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
+                }}>Eliminar</button>
+              </div>
+            )
+          )}
         </div>
       )}
     </div>
   )
+}
+
+function qtyBtnSmall() {
+  return {
+    width: 26, height: 26, borderRadius: 999,
+    background: 'transparent', border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: 16, fontWeight: 800, color: T.neutral[700],
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  }
 }
 
 // Etiqueta legible del método de pago de una venta (para el detalle).

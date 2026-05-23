@@ -485,6 +485,97 @@ export async function adminCloseSession(sessionId, payload = {}) {
 }
 
 /**
+ * Recalcula el cuadre de un turno YA CERRADO tras editar/eliminar una de sus
+ * ventas (corrección de descuadres desde el histórico). Vuelve a leer las
+ * ventas reales del turno y actualiza salesBreakdown / expectedCash /
+ * difference / closingDiscrepancy.
+ *
+ * SEGURO por diseño:
+ *   - NO toca el handover (la plata ya entregada es un número fijo): solo
+ *     cambia el CÁLCULO de lo esperado vs lo declarado.
+ *   - Solo el efectivo afecta el esperado, así que ajustamos el esperado por
+ *     el delta de efectivo respecto al cierre original (consistente con cómo
+ *     se calculó al cerrar; no re-inventa la base ni los gastos).
+ *   - La falta resultante solo se REGISTRA (la app no genera descuentos).
+ *   - Si pasa a SOBRA, ajusta el movimiento contable de sobra (borra el viejo,
+ *     crea el nuevo); si deja de haber sobra, borra el movimiento.
+ */
+export async function recomputeClosedSession(sessionId, { byUid } = {}) {
+  const ref = sessionRef(sessionId)
+  const sessSnap = await getDoc(ref)
+  if (!sessSnap.exists()) throw new Error('Turno no encontrado.')
+  const session = { id: sessionId, ...sessSnap.data() }
+
+  const finalSnapshot = await buildSessionSnapshot(sessionId)
+  const newBreakdown = finalSnapshot.salesBreakdown
+
+  const oldEfectivo = Number(session.salesBreakdown?.efectivo) || 0
+  const newEfectivo = Number(newBreakdown.efectivo) || 0
+  const oldExpected = Number(session.expectedCash) || 0
+  const newExpected = oldExpected + (newEfectivo - oldEfectivo)
+  const declared = Number(session.declaredClosingCash) || 0
+  const difference = declared - newExpected
+  const isSurplus = difference > 0
+  const isShortage = difference < 0
+
+  // Ajuste del movimiento contable de "sobra".
+  const oldSurplusMovementId = session.closingDiscrepancy?.surplusMovementId || null
+  let newSurplusMovementId = null
+  try {
+    if (oldSurplusMovementId) deleteMovement(oldSurplusMovementId)
+    if (isSurplus) {
+      newSurplusMovementId = addMovement({
+        type: 'income',
+        amount: Math.abs(difference),
+        date: getBogotaDateStr(),
+        cat: 'sobra_caja',
+        branch: session.branchId || 'both',
+        origin: 'caja',
+        sessionId,
+        cashierName: session.cashierName,
+        note: `Sobra de cierre (recalculado) · ${session.cashierName || 'cajera'}`,
+      })
+    }
+  } catch (e) {
+    console.warn('[cashSessions] recomputeClosedSession: no se pudo ajustar el movimiento de sobra:', e?.message || e)
+  }
+
+  let closingDiscrepancy = null
+  if (isSurplus) {
+    closingDiscrepancy = {
+      type: 'surplus',
+      amount: Math.abs(difference),
+      status: 'resolved_as_income',
+      reviewedBy: byUid || null,
+      reviewedAt: serverTimestamp(),
+      note: 'Recalculado al editar ventas del cierre',
+      ...(newSurplusMovementId ? { surplusMovementId: newSurplusMovementId } : {}),
+    }
+  } else if (isShortage) {
+    closingDiscrepancy = {
+      type: 'shortage',
+      amount: Math.abs(difference),
+      status: 'recorded',
+      reviewedBy: byUid || null,
+      reviewedAt: serverTimestamp(),
+      note: 'Recalculado al editar ventas del cierre',
+    }
+  }
+
+  await updateDoc(ref, {
+    salesBreakdown: newBreakdown,
+    expensesAtClose: finalSnapshot.expensesAtClose,
+    expectedCash: newExpected,
+    difference,
+    closingDiscrepancy, // null cuando queda cuadre exacto → limpia la discrepancia
+    recomputedAt: serverTimestamp(),
+    recomputedBy: byUid || null,
+  })
+
+  return { expectedCash: newExpected, difference }
+}
+
+/**
  * Watcher de items que requieren acción del admin en la pestaña Pendientes:
  *  - closingDiscrepancy.shortage pendiente: faltas legacy sin resolver
  *

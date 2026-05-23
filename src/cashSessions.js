@@ -4,6 +4,7 @@ import {
   collection,
   addDoc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
   query,
   where,
@@ -248,6 +249,64 @@ export async function adminCloseNonCashSession(sessionId, { reviewedBy } = {}) {
     closeApprovedAt: serverTimestamp(),
     closeApprovedBy: reviewedBy || null,
   })
+}
+
+/**
+ * Cuenta la actividad real de una sesión (lectura puntual). Sirve para decidir
+ * si un turno está "vacío" (abierto/cerrado por error) y se puede descartar.
+ *   - sales: ventas NO eliminadas
+ *   - expenses: gastos de caja (cualquier estado)
+ *   - tabs: mesas abiertas colgando de la sesión
+ */
+export async function countSessionActivity(sessionId) {
+  if (!sessionId) return { sales: 0, expenses: 0, tabs: 0 }
+  const [salesSnap, expSnap, tabsSnap] = await Promise.all([
+    getDocs(query(collection(firestoreDb, 'sales'), where('sessionId', '==', sessionId))),
+    getDocs(query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', sessionId))),
+    getDocs(query(collection(firestoreDb, 'openTabs'), where('sessionId', '==', sessionId))),
+  ])
+  const sales = salesSnap.docs.filter(d => (d.data().status || 'active') !== 'deleted').length
+  return { sales, expenses: expSnap.size, tabs: tabsSnap.size }
+}
+
+/**
+ * Borra una sesión que se abrió/cerró POR ERROR (sin actividad real). Pensado
+ * para cuando el admin abre una caja por equivocación: en vez de cerrarla con
+ * el mismo valor y dejar un turno fantasma en el Registro, se descarta y no
+ * queda rastro.
+ *
+ * BLINDAJE: vuelve a verificar en el servidor que no haya ventas, gastos ni
+ * mesas colgando. Si encuentra cualquiera, NO borra y lanza un error claro —
+ * así nunca se pierde plata ni un pedido por accidente. (Un turno realmente
+ * vacío no generó ningún movimiento contable, así que borrarlo es seguro y no
+ * afecta reportes.)
+ */
+export async function discardEmptySession(sessionId) {
+  if (!sessionId) throw new Error('No hay turno para cancelar.')
+
+  const activity = await countSessionActivity(sessionId)
+  if (activity.sales > 0) {
+    throw new Error(`No se puede cancelar: el turno ya tiene ${activity.sales} ${activity.sales === 1 ? 'venta' : 'ventas'}. Ciérralo normal.`)
+  }
+  if (activity.expenses > 0) {
+    throw new Error(`No se puede cancelar: el turno tiene ${activity.expenses} ${activity.expenses === 1 ? 'gasto de caja' : 'gastos de caja'}. Ciérralo normal.`)
+  }
+  if (activity.tabs > 0) {
+    throw new Error(`No se puede cancelar: el turno tiene ${activity.tabs} ${activity.tabs === 1 ? 'mesa abierta' : 'mesas abiertas'}. Resuélvelas o ciérralo normal.`)
+  }
+
+  // Defensivo: si por alguna razón el turno tuviera un movimiento de sobra
+  // asociado (no debería en un turno vacío), lo limpiamos antes de borrar.
+  try {
+    const snap = await getDoc(sessionRef(sessionId))
+    const surplusMovementId = snap.exists() ? snap.data()?.closingDiscrepancy?.surplusMovementId : null
+    if (surplusMovementId) deleteMovement(surplusMovementId)
+  } catch (e) {
+    console.warn('[cashSessions] discardEmptySession: no se pudo limpiar movimiento previo:', e?.message || e)
+  }
+
+  await deleteDoc(sessionRef(sessionId))
+  return { discarded: true }
 }
 
 /**

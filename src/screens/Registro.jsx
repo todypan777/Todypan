@@ -4,7 +4,7 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaDateStr, getCashFloor } from '../db'
-import { watchClosedSessionsForDate } from '../cashSessions'
+import { watchClosedSessionsForDate, discardEmptySession } from '../cashSessions'
 import { watchSessionSales } from '../sales'
 import { watchSessionExpenses } from '../cashExpenses'
 import { watchTasksCompletedInSession, watchTasksForCashier } from '../tasks'
@@ -238,6 +238,10 @@ function ClosureDetailModal({ session, onClose }) {
   const [expenses, setExpenses] = useState([])
   const [completedTasks, setCompletedTasks] = useState([])
   const [pendingTasksForCashier, setPendingTasksForCashier] = useState([])
+  // Borrado de turno vacío (cerrado por error, sin actividad).
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState(null)
 
   useEffect(() => watchSessionSales(session.id, setSales), [session.id])
   useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
@@ -301,6 +305,23 @@ function ClosureDetailModal({ session, onClose }) {
 
   const baseLowered = declared < cashFloor
   const overBase = declared - cashFloor
+
+  // Turno VACÍO = sin ventas reales, sin gastos y con cuadre exacto. Solo esos
+  // se pueden borrar (turno cerrado por error con el mismo valor de apertura).
+  const realSalesCount = sales.filter(s => (s.status || 'active') !== 'deleted').length
+  const canDelete = realSalesCount === 0 && expenses.length === 0 && difference === 0
+
+  async function handleDeleteEmpty() {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await discardEmptySession(session.id)
+      onClose()
+    } catch (err) {
+      setDeleteError(err?.message || 'No se pudo borrar el turno.')
+      setDeleting(false)
+    }
+  }
 
   return (
     <div onClick={onClose} style={{
@@ -471,6 +492,67 @@ function ClosureDetailModal({ session, onClose }) {
               fontSize: 12.5, color: T.neutral[700], fontStyle: 'italic', lineHeight: 1.5,
             }}>
               <b style={{ fontStyle: 'normal', color: T.neutral[600] }}>Nota del admin:</b> "{session.closeApproveNote}"
+            </div>
+          )}
+
+          {/* Borrar turno vacío (cerrado por error, sin actividad) */}
+          {canDelete && (
+            <div style={{
+              marginTop: 18, paddingTop: 16, borderTop: `1px dashed ${T.neutral[200]}`,
+            }}>
+              {deleteError && (
+                <div style={{
+                  marginBottom: 10, padding: '10px 12px', borderRadius: 10,
+                  background: '#FBE9E5', border: `1px solid #F0C8BE`,
+                  fontSize: 12, color: T.bad, fontWeight: 600, lineHeight: 1.4,
+                }}>
+                  {deleteError}
+                </div>
+              )}
+              {!confirmDelete ? (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  style={{
+                    width: '100%', padding: '12px', borderRadius: 12,
+                    background: 'transparent', color: T.bad,
+                    border: `1.5px solid ${T.bad}55`,
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+                  }}
+                >
+                  Borrar este turno (estuvo vacío)
+                </button>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5, marginBottom: 10, textAlign: 'center' }}>
+                    Se borra sin dejar registro. No tuvo ventas, gastos ni mesas. ¿Seguro?
+                  </div>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      onClick={() => { setConfirmDelete(false); setDeleteError(null) }}
+                      disabled={deleting}
+                      style={{
+                        flex: 1, padding: '12px', borderRadius: 12,
+                        background: '#fff', color: T.neutral[700],
+                        border: `1px solid ${T.neutral[200]}`,
+                        cursor: deleting ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+                      }}
+                    >
+                      No
+                    </button>
+                    <button
+                      onClick={handleDeleteEmpty}
+                      disabled={deleting}
+                      style={{
+                        flex: 1.3, padding: '12px', borderRadius: 12,
+                        background: T.bad, color: '#fff',
+                        border: 'none', cursor: deleting ? 'wait' : 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 800,
+                      }}
+                    >
+                      {deleting ? 'Borrando...' : 'Sí, borrar'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

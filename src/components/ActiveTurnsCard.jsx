@@ -8,6 +8,7 @@ import {
   openSession,
   adminCloseSession,
   adminCloseNonCashSession,
+  discardEmptySession,
   getLatestClosedSessionForBranch,
 } from '../cashSessions'
 import { watchSessionSales } from '../sales'
@@ -118,6 +119,9 @@ export default function ActiveTurnsCard() {
   const [openingNonCash, setOpeningNonCash] = useState(false)
   const [closingSession, setClosingSession] = useState(null)
   const [closingNonCashSession, setClosingNonCashSession] = useState(null)
+  // Turno (caja o no-caja) que el admin quiere CANCELAR por haberlo abierto por
+  // error. Solo se permite si está vacío (sin ventas/gastos/mesas).
+  const [discardingSession, setDiscardingSession] = useState(null)
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
   useEffect(() => watchAllUsers(setAllUsers), [])
@@ -274,6 +278,7 @@ export default function ActiveTurnsCard() {
               onOpen={() => setOpeningBranch(row.branch)}
               onClose={() => setClosingSession(row.session)}
               onAssist={() => enterAssist(row.session)}
+              onDiscard={() => setDiscardingSession(row.session)}
             />
           ))}
         </Card>
@@ -301,6 +306,7 @@ export default function ActiveTurnsCard() {
                 isLast={i === nonCashSessions.length - 1}
                 onAssist={() => setAssistingNonCash(s)}
                 onClose={() => setClosingNonCashSession(s)}
+                onDiscard={() => setDiscardingSession(s)}
               />
             ))}
           </Card>
@@ -335,6 +341,15 @@ export default function ActiveTurnsCard() {
           adminUid={authUser.uid}
           onCancel={() => setClosingNonCashSession(null)}
           onClosed={() => setClosingNonCashSession(null)}
+        />
+      )}
+
+      {/* Modal: cancelar un turno abierto por error (solo si está vacío) */}
+      {discardingSession && (
+        <DiscardSessionModal
+          session={discardingSession}
+          onCancel={() => setDiscardingSession(null)}
+          onDiscarded={() => setDiscardingSession(null)}
         />
       )}
 
@@ -418,10 +433,41 @@ export default function ActiveTurnsCard() {
 // ──────────────────────────────────────────────────────────────
 // Una fila por panadería, con estado y acciones contextuales
 // ──────────────────────────────────────────────────────────────
-function BranchRow({ branch, session, isLast, onOpen, onClose, onAssist }) {
+// Hook ligero: cuenta en vivo la actividad de una sesión (ventas, gastos,
+// mesas) para decidir si se puede mostrar "Cancelar". Solo se suscribe cuando
+// `enabled` — así no agrega listeners en panaderías sin turno.
+function useSessionActivity(sessionId, enabled) {
+  const [state, setState] = useState({ sales: 0, expenses: 0, tabs: 0, loaded: false })
+  useEffect(() => {
+    if (!sessionId || !enabled) { setState({ sales: 0, expenses: 0, tabs: 0, loaded: false }); return }
+    const counts = { sales: 0, expenses: 0, tabs: 0 }
+    const got = { s: false, e: false, t: false }
+    const emit = () => setState({ ...counts, loaded: got.s && got.e && got.t })
+    const u1 = watchSessionSales(sessionId, list => {
+      counts.sales = (list || []).filter(x => (x.status || 'active') !== 'deleted').length
+      got.s = true; emit()
+    })
+    const u2 = watchSessionExpenses(sessionId, list => {
+      counts.expenses = (list || []).length; got.e = true; emit()
+    })
+    const u3 = watchOpenTabsForSession(sessionId, list => {
+      counts.tabs = (list || []).length; got.t = true; emit()
+    })
+    return () => { u1 && u1(); u2 && u2(); u3 && u3() }
+  }, [sessionId, enabled])
+  return state
+}
+
+function BranchRow({ branch, session, isLast, onOpen, onClose, onAssist, onDiscard }) {
   const isLegacyPending = session?.status === 'pending_close'
   const colorKey = branch.colorKey || 'copper'
   const palette = T[colorKey] || T.copper
+
+  // El botón "Cancelar" solo aparece si el turno está VACÍO: sin ventas, sin
+  // gastos y sin mesas. Apenas haya una venta o gasto, desaparece.
+  const activity = useSessionActivity(session?.id, !!session && !isLegacyPending)
+  const canDiscard = !!session && !isLegacyPending && activity.loaded
+    && activity.sales === 0 && activity.expenses === 0 && activity.tabs === 0
 
   return (
     <div style={{
@@ -469,6 +515,21 @@ function BranchRow({ branch, session, isLast, onOpen, onClose, onAssist }) {
 
       {session && (
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {canDiscard && (
+            <button
+              onClick={onDiscard}
+              title="Cancelar turno (abierto por error)"
+              style={{
+                padding: '8px 10px', borderRadius: 10,
+                background: '#fff', color: T.bad,
+                border: `1px solid ${T.bad}55`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}
+            >
+              Cancelar
+            </button>
+          )}
           {!isLegacyPending && (
             <button
               onClick={onAssist}
@@ -1335,6 +1396,82 @@ function ModalTitle({ title, subtitle }) {
   )
 }
 
+// ──────────────────────────────────────────────────────────────
+// MODAL: Cancelar (descartar) un turno abierto por error
+// ──────────────────────────────────────────────────────────────
+function DiscardSessionModal({ session, onCancel, onDiscarded }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const typeLabel = session?.type === 'kitchen'
+    ? 'de cocina'
+    : session?.type === 'waitress' ? 'de mesera' : 'de caja'
+
+  async function handleConfirm() {
+    setBusy(true)
+    setError(null)
+    try {
+      await discardEmptySession(session.id)
+      onDiscarded()
+    } catch (err) {
+      setError(err?.message || 'No se pudo cancelar el turno.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalShell onClose={busy ? undefined : onCancel}>
+      <ModalTitle
+        title="Cancelar turno"
+        subtitle={`${session.cashierName || 'Sin nombre'} · ${session.branchName || 'Sin panadería'}`}
+      />
+      <div style={{ fontSize: 13.5, color: T.neutral[700], lineHeight: 1.55, marginBottom: 16 }}>
+        Esto <b>borra el turno {typeLabel}</b> sin dejar registro. Úsalo solo si
+        lo abriste por error. Solo funciona si el turno no tiene ventas, gastos
+        ni mesas — si tiene algo, no se borra y te avisa.
+      </div>
+
+      {error && (
+        <div style={{
+          marginBottom: 14, padding: '10px 12px', borderRadius: 12,
+          background: '#FBE9E5', border: `1px solid #F0C8BE`,
+          fontSize: 12.5, color: T.bad, lineHeight: 1.45, fontWeight: 600,
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          style={{
+            flex: 1, padding: '13px', borderRadius: 12,
+            background: '#fff', color: T.neutral[700],
+            border: `1px solid ${T.neutral[200]}`,
+            cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 700,
+          }}
+        >
+          No, volver
+        </button>
+        <button
+          onClick={handleConfirm}
+          disabled={busy}
+          style={{
+            flex: 1.3, padding: '13px', borderRadius: 12,
+            background: T.bad, color: '#fff',
+            border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 800,
+            boxShadow: `0 3px 10px ${T.bad}44`,
+          }}
+        >
+          {busy ? 'Cancelando...' : 'Sí, cancelar turno'}
+        </button>
+      </div>
+    </ModalShell>
+  )
+}
+
 function ModalFooter({ children }) {
   return (
     <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
@@ -1966,7 +2103,7 @@ function LastSaleNotice({ lastSaleAt, salesCount }) {
 // ──────────────────────────────────────────────────────────────
 // Fila de la lista "Otros turnos activos" (cocina / mesera)
 // ──────────────────────────────────────────────────────────────
-function NonCashShiftRow({ session, isLast, onAssist, onClose }) {
+function NonCashShiftRow({ session, isLast, onAssist, onClose, onDiscard }) {
   const typeLabel = session.type === 'kitchen' ? 'Cocina' : 'Domiciliaria / Mesera'
   const typeColor = session.type === 'kitchen' ? '#7A5C00' : T.copper[700]
   const typeBg = session.type === 'kitchen' ? '#FFF7E6' : T.copper[50]
@@ -1998,6 +2135,21 @@ function NonCashShiftRow({ session, isLast, onAssist, onClose }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {onDiscard && (
+          <button
+            onClick={onDiscard}
+            title="Cancelar turno (abierto por error)"
+            style={{
+              padding: '7px 10px', borderRadius: 10,
+              background: '#fff', color: T.bad,
+              border: `1px solid ${T.bad}55`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 12, fontWeight: 700,
+            }}
+          >
+            Cancelar
+          </button>
+        )}
         <button
           onClick={onAssist}
           title="Asistir (ver la pantalla de este turno)"

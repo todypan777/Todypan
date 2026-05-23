@@ -658,6 +658,7 @@ function SalesList({ sales }) {
 }
 
 function SaleDetailRow({ sale, isLast }) {
+  const [open, setOpen] = useState(false)
   const time = sale.createdAt?.toDate?.() || sale.createdAtClient
   const timeStr = time
     ? new Date(time).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
@@ -665,35 +666,118 @@ function SaleDetailRow({ sale, isLast }) {
   const methodIcon = paymentIcon(sale)
   const isDeleted = sale.status === 'deleted'
   const isFlagged = sale.status === 'flagged'
+  const items = sale.items || []
 
   return (
-    <div style={{
-      padding: '10px 12px',
-      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
-      display: 'flex', alignItems: 'center', gap: 10,
-      opacity: isDeleted ? 0.5 : 1,
-      textDecoration: isDeleted ? 'line-through' : 'none',
-    }}>
-      <div style={{ fontSize: 14, flexShrink: 0 }}>{methodIcon}</div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: T.neutral[800] }}>
-          {timeStr} · {sale.items?.length || 0} producto{sale.items?.length === 1 ? '' : 's'}
-          {isFlagged && <span style={{ color: T.warn, marginLeft: 6, fontWeight: 700 }}>⚠ reportada</span>}
-        </div>
-        {sale.debtorName && (
-          <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
-            Deudor: {sale.debtorName}
+    <div style={{ borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}` }}>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) } }}
+        style={{
+          padding: '10px 12px',
+          display: 'flex', alignItems: 'center', gap: 10,
+          opacity: isDeleted ? 0.5 : 1,
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ fontSize: 14, flexShrink: 0 }}>{methodIcon}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 12.5, fontWeight: 600, color: T.neutral[800],
+            textDecoration: isDeleted ? 'line-through' : 'none',
+          }}>
+            {timeStr} · {items.length} producto{items.length === 1 ? '' : 's'}
+            {isFlagged && <span style={{ color: T.warn, marginLeft: 6, fontWeight: 700 }}>⚠ reportada</span>}
+            {isDeleted && <span style={{ color: T.bad, marginLeft: 6, fontWeight: 700 }}>eliminada</span>}
           </div>
-        )}
+          {sale.debtorName && (
+            <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
+              Deudor: {sale.debtorName}
+            </div>
+          )}
+        </div>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+          textDecoration: isDeleted ? 'line-through' : 'none',
+        }}>
+          {fmtCOP(sale.total || 0)}
+        </div>
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" style={{
+          flexShrink: 0, transition: 'transform 0.18s',
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+        }}>
+          <path d="M3 5 L7 9 L11 5" stroke={T.neutral[400]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
       </div>
-      <div style={{
-        fontSize: 13, fontWeight: 700, color: T.neutral[900],
-        fontVariantNumeric: 'tabular-nums', flexShrink: 0,
-      }}>
-        {fmtCOP(sale.total || 0)}
-      </div>
+
+      {open && (
+        <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {items.length === 0 ? (
+            <div style={{ fontSize: 12, color: T.neutral[500], padding: '6px 0' }}>Sin detalle de productos.</div>
+          ) : items.map((it, i) => {
+            const qty = Number(it.qty) || 0
+            const unit = Number(it.unitPrice) || 0
+            const sub = Number(it.subtotal) || qty * unit
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'baseline', gap: 8,
+                fontSize: 12.5, color: T.neutral[700],
+                padding: '6px 10px', borderRadius: 8,
+                background: '#fff', border: `0.5px solid ${T.neutral[200]}`,
+              }}>
+                <span style={{ flexShrink: 0, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
+                  {qty}×
+                </span>
+                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-word' }}>
+                  {it.name || 'Producto'}
+                  {unit > 0 && <span style={{ color: T.neutral[400] }}> · {fmtCOP(unit)} c/u</span>}
+                </span>
+                <span style={{ flexShrink: 0, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+                  {fmtCOP(sub)}
+                </span>
+              </div>
+            )
+          })}
+          <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+            {paymentLabelFor(sale)}
+            {sale.cashReceived != null && sale.paymentMethod === 'efectivo' && (
+              <> · recibió {fmtCOP(sale.cashReceived)}</>
+            )}
+            {sale.photoUrl && (
+              <> · <a href={sale.photoUrl} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                style={{ color: T.copper[600], fontWeight: 600 }}>📎 comprobante</a></>
+            )}
+          </div>
+          {(sale.notes || []).length > 0 && (
+            <div style={{
+              marginTop: 4, padding: '7px 10px', borderRadius: 8,
+              background: '#FFF7E6', border: `1px solid #F4E0BC`,
+              fontSize: 11.5, color: '#7A5C00', lineHeight: 1.4,
+            }}>
+              {sale.notes.map((n, i) => (
+                <div key={i}>📝 {n.message}{n.byName ? ` — ${n.byName}` : ''}</div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+// Etiqueta legible del método de pago de una venta (para el detalle).
+function paymentLabelFor(sale) {
+  if (sale.paymentSplit) {
+    return 'Mixto: ' + Object.entries(sale.paymentSplit)
+      .filter(([, v]) => Number(v) > 0)
+      .map(([m, v]) => `${m} ${fmtCOP(Number(v))}`)
+      .join(' + ')
+  }
+  const m = sale.paymentMethod || 'efectivo'
+  return m.charAt(0).toUpperCase() + m.slice(1)
 }
 
 function ExpenseDetailRow({ expense }) {

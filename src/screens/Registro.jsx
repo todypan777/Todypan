@@ -306,6 +306,11 @@ function ClosureDetailModal({ session, onClose }) {
   const baseLowered = declared < cashFloor
   const overBase = declared - cashFloor
 
+  // En escritorio el modal se centra con scroll interno; en móvil es una hoja
+  // inferior (bottom-sheet). Sin esto, en computador el contenido largo se
+  // salía de la pantalla y no dejaba bajar.
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024
+
   // Turno VACÍO = sin ventas reales, sin gastos y con cuadre exacto. Solo esos
   // se pueden borrar (turno cerrado por error con el mismo valor de apertura).
   const realSalesCount = sales.filter(s => (s.status || 'active') !== 'deleted').length
@@ -326,11 +331,17 @@ function ClosureDetailModal({ session, onClose }) {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 1000,
-      display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      display: 'flex', alignItems: isDesktop ? 'center' : 'flex-end',
+      justifyContent: 'center',
+      padding: isDesktop ? 24 : 0,
+      boxSizing: 'border-box',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: '100%', maxWidth: 480, maxHeight: '92vh', overflowY: 'auto',
-        background: '#fff', borderRadius: '20px 20px 0 0',
+        width: '100%', maxWidth: 480,
+        maxHeight: isDesktop ? '88vh' : '92vh', overflowY: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        background: '#fff',
+        borderRadius: isDesktop ? 20 : '20px 20px 0 0',
         boxShadow: '0 -8px 32px rgba(0,0,0,0.15)',
       }}>
         <div style={{

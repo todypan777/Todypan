@@ -209,6 +209,24 @@ export function useDataSaver() {
 }
 
 /**
+ * Reconecta Firestore SIN borrar el flag de modo ahorro.
+ *
+ * Caso de uso: la cajera dejó el modo ahorro activo y NO tiene turno abierto.
+ * Con la red apagada, el aviso de "turno abierto" que crea el admin nunca
+ * llega a la tablet → queda atascada para siempre en la pantalla de espera,
+ * sin forma de apagar el ahorro desde ahí (deadlock). Mientras espera turno
+ * reconectamos la red para recibir la apertura, pero conservamos su
+ * preferencia de ahorro para volver a aplicarla en cuanto el turno arranque.
+ */
+export async function ensureNetworkForWaiting() {
+  try {
+    await enableNetwork(firestoreDb)
+  } catch (e) {
+    console.debug('[network] ensureNetworkForWaiting:', e?.message)
+  }
+}
+
+/**
  * Aplica el estado persistido del modo ahorro al arrancar la app. Llamar UNA
  * vez tras inicializar Firestore. Si la cajera dejó "modo ahorro" activado y
  * recargó la app, esto vuelve a desconectar Firestore para que no consuma

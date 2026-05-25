@@ -21,7 +21,7 @@ import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import MissingPricesPanel from '../components/MissingPricesPanel'
 import ProductCatalogPanel from '../components/ProductCatalogPanel'
 import ConnectionChip from '../components/ConnectionChip'
-import { useOnlineStatus, useDataSaver } from '../utils/network'
+import { useOnlineStatus, useDataSaver, isDataSaverEnabled, applyDataSaverOnBoot, ensureNetworkForWaiting } from '../utils/network'
 import { requestPersistentStorage, useStorageHealth, onLocalWriteFailure } from '../utils/storage'
 import MyHistoricalSales from './MyHistoricalSales'
 import {
@@ -38,6 +38,19 @@ export default function CashierApp({ authUser, userDoc }) {
   const [mySession, setMySession] = useState(undefined) // undefined=loading
 
   useEffect(() => watchMyOpenSession(authUser.uid, setMySession), [authUser.uid])
+
+  // Anti-deadlock del modo ahorro: mientras NO haya turno abierto, la red DEBE
+  // seguir conectada para poder recibir la apertura que hace el admin. Con el
+  // ahorro activo Firestore quedaba desconectado y el aviso de "turno abierto"
+  // nunca llegaba → la cajera se quedaba atascada en "sin turno" sin forma de
+  // apagar el ahorro desde esa pantalla. Reconectamos mientras espera; al abrir
+  // el turno volvemos a respetar su preferencia de ahorro.
+  useEffect(() => {
+    if (mySession === undefined) return // aún cargando
+    if (!isDataSaverEnabled()) return // sin ahorro: nada que forzar
+    if (mySession) applyDataSaverOnBoot().catch(() => {})
+    else ensureNetworkForWaiting().catch(() => {})
+  }, [mySession])
 
   // Desbloquea el audio al primer tap. Necesario para que el sonido de
   // llamada de cocina suene en iOS (Safari bloquea audio sin gesto previo).

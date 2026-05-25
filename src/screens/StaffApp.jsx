@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { T } from '../tokens'
 import { watchMyOpenSession } from '../cashSessions'
+import { isDataSaverEnabled, ensureNetworkForWaiting } from '../utils/network'
 import CashierApp from './CashierApp'
 import CookApp from './CookApp'
 import WaitressApp from './WaitressApp'
@@ -21,6 +22,19 @@ export default function StaffApp({ authUser, userDoc }) {
   const [mySession, setMySession] = useState(undefined) // undefined = loading
 
   useEffect(() => watchMyOpenSession(authUser.uid, setMySession), [authUser.uid])
+
+  // Anti-deadlock del modo ahorro: mientras NO haya turno abierto, la red DEBE
+  // seguir conectada para recibir la apertura que hace el admin. Con el ahorro
+  // activo (flag por-dispositivo en localStorage) Firestore quedaba desconectado
+  // y el turno nuevo nunca llegaba → el empleado se quedaba atascado en "sin
+  // turno" aunque el dispositivo tuviera internet, sin forma de apagar el ahorro
+  // desde esa pantalla. Reconectamos mientras espera; al abrir un turno de CAJA,
+  // CashierApp vuelve a respetar el ahorro durante el turno.
+  useEffect(() => {
+    if (mySession) return // ya hay turno → la app del rol decide la red
+    if (!isDataSaverEnabled()) return
+    ensureNetworkForWaiting().catch(() => {})
+  }, [mySession])
 
   if (mySession === undefined) {
     return (

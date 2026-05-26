@@ -282,7 +282,13 @@ export default function NewSale({
 
   const filtered = useMemo(() => {
     const q = normalizeName(query)
-    if (!q) return enrichedCatalog.slice(0, 12)
+    if (!q) {
+      // Sin búsqueda: las de venta libre (pan, etc.) van de primeras para que
+      // la cajera las agregue rápido. El resto conserva su orden (sort estable).
+      return [...enrichedCatalog]
+        .sort((a, b) => (b.freeAmount === true) - (a.freeAmount === true))
+        .slice(0, 12)
+    }
     // Ordena por relevancia: el que empieza con la búsqueda va primero,
     // el que solo la contiene va al final. Así "Pan" sale arriba aunque
     // existan "Empanada", "Panela", etc.

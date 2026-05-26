@@ -42,6 +42,16 @@ import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
  *  5. Botón "Cobrar" → modal de método de pago
  *  6. Confirmar → guarda venta en Firestore
  */
+// Total de dinero de una línea del carrito. En venta libre el dinero recibido
+// (freeTotal) puede NO ser panes × valor base, porque en montos "cerrados"
+// (múltiplos de $1.000) la panadería da una ñapa (pan de más): entran p.ej.
+// $3.000 pero salen 8 panes. Por eso el dinero manda para el cuadre y `qty`
+// guarda los panes entregados (para inventario).
+function itemLineTotal(it) {
+  if (it.freeAmount && it.freeTotal != null) return Number(it.freeTotal) || 0
+  return (Number(it.qty) || 0) * (Number(it.unitPrice) || 0)
+}
+
 export default function NewSale({
   session, authUser, userDoc, tab, assistMode,
   // Cuando admin entra a atender un pedido web (/comanda/{id}), recibe los
@@ -206,7 +216,7 @@ export default function NewSale({
 
   const branchId = session.branchId
 
-  const total = cart.reduce((s, it) => s + it.qty * it.unitPrice, 0)
+  const total = cart.reduce((s, it) => s + itemLineTotal(it), 0)
 
   // Catálogo enriquecido con productos VIRTUALES de almuerzo:
   //   - "Almuerzo Corriente" si está disponible (precio + opciones suficientes)
@@ -377,15 +387,17 @@ export default function NewSale({
     }
   }
 
-  // Confirmar venta libre. Recibe { units, unitPrice }: con valor base son las
-  // unidades reales y el valor base; sin valor base (legacy) es 1 × el monto.
-  // El total de la línea = qty * unitPrice, así que el reporte queda con las
-  // unidades vendidas.
-  function handleConfirmFreeAmount({ units, unitPrice, newBase }) {
+  // Confirmar venta libre. Recibe { units, unitPrice, freeTotal, napa }:
+  //   - units = panes a ENTREGAR (incluye ñapa) → para inventario.
+  //   - unitPrice = valor base (referencia).
+  //   - freeTotal = dinero recibido → manda para el cuadro de caja.
+  //   - napa = panes de regalo (montos cerrados que no calzan con la base).
+  function handleConfirmFreeAmount({ units, unitPrice, freeTotal, napa, newBase }) {
     if (!freeAmountTarget) return
     const u = Number(units) || 0
     const up = Number(unitPrice) || 0
-    if (u <= 0 || up <= 0) return
+    const money = Number(freeTotal) || (u * up)
+    if (u <= 0 || up <= 0 || money <= 0) return
     const { product, editingKey } = freeAmountTarget
 
     // Si la cajera definió el valor base que faltaba, lo guardamos en el
@@ -400,9 +412,10 @@ export default function NewSale({
       }
     }
 
+    const napaN = Number(napa) || 0
     if (editingKey) {
       setCart(prev => prev.map(it =>
-        it.key === editingKey ? { ...it, qty: u, unitPrice: up } : it
+        it.key === editingKey ? { ...it, qty: u, unitPrice: up, freeTotal: money, napa: napaN } : it
       ))
     } else {
       // Nuevo item: cada agregado de venta libre es una línea independiente
@@ -416,6 +429,8 @@ export default function NewSale({
           name: product.name,
           qty: u,
           unitPrice: up,
+          freeTotal: money,
+          napa: napaN,
           freeAmount: true,
         },
       ])
@@ -1583,8 +1598,7 @@ export default function NewSale({
           <FreeAmountModal
             product={freeAmountTarget.product}
             isEditing={!!freeAmountTarget.editingKey}
-            initialUnits={editItem ? editItem.qty : null}
-            initialAmount={editItem ? editItem.qty * editItem.unitPrice : null}
+            initialAmount={editItem ? itemLineTotal(editItem) : null}
             onCancel={() => setFreeAmountTarget(null)}
             onConfirm={handleConfirmFreeAmount}
           />
@@ -2383,7 +2397,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
             {hidePrices
               ? 'VENTA LIBRE · LA CAJERA PONE EL PRECIO'
               : item.qty > 1
-                ? `VENTA LIBRE · ${item.qty} u × ${fmtCOP(item.unitPrice)}`
+                ? `VENTA LIBRE · ${item.qty} u${item.napa > 0 ? ` (${item.napa} ñapa 🎁)` : ''}`
                 : 'VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR'}
           </div>
         </div>
@@ -2399,7 +2413,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
               fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
             }}
           >
-            {fmtCOP(item.qty * item.unitPrice)}
+            {fmtCOP(itemLineTotal(item))}
           </button>
         )}
 
@@ -2836,7 +2850,7 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: ¿De cuánto? (productos de venta libre, ej: "Pan")
 // ──────────────────────────────────────────────────────────────
-function FreeAmountModal({ product, isEditing, initialUnits, onCancel, onConfirm }) {
+function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfirm }) {
   const MIN_BASE = 100
   const productBase = Number(product.freeUnitPrice) || 0
   const baseFromProduct = productBase > 0
@@ -2851,9 +2865,7 @@ function FreeAmountModal({ product, isEditing, initialUnits, onCancel, onConfirm
   const base = baseFromProduct ? productBase : (Number(baseStr) || 0)
   const baseReady = base >= MIN_BASE
 
-  const [amountStr, setAmountStr] = useState(
-    baseFromProduct && initialUnits ? String(Number(initialUnits) * productBase) : ''
-  )
+  const [amountStr, setAmountStr] = useState(initialAmount ? String(initialAmount) : '')
 
   function setFromAmount(raw) {
     setAmountStr(sanitize(raw))
@@ -2864,20 +2876,33 @@ function FreeAmountModal({ product, isEditing, initialUnits, onCancel, onConfirm
   }
 
   const amount = Number(amountStr) || 0
-  const units = base > 0 ? amount / base : 0
-  const isMultiple = base > 0 && amount > 0 && amount % base === 0
-  const valid = baseReady && amount >= base && isMultiple
-  const unitsStr = isMultiple ? String(units) : ''
-
-  // Opciones cercanas cuando el monto no es múltiplo del valor base.
   const floorU = base > 0 ? Math.floor(amount / base) : 0
+  // Exacto: el monto es múltiplo del valor base (no hay ñapa).
+  const isExact = base > 0 && amount > 0 && amount % base === 0
+  // "Cerrado": múltiplo de $1.000 (de $3.000 para arriba) aunque no calce con
+  // el valor base. La panadería entrega un pan de más (ñapa) y deja pasar la
+  // venta. Por debajo de $3.000 se exige que calce exacto con el valor base.
+  const isRound = amount >= 3000 && amount % 1000 === 0
+  // Panes a ENTREGAR: exacto = monto/base; cerrado = floor + 1 (con la ñapa).
+  const unitsGiven = isExact ? amount / base : (floorU + 1)
+  const napa = isExact ? 0 : Math.max(0, unitsGiven - floorU)
+  const valid = baseReady && amount >= base && (isExact || isRound)
+  const unitsStr = (isExact || isRound) ? String(unitsGiven) : ''
+
+  // Opciones cercanas cuando el monto NO es exacto NI cerrado.
   const lowU = Math.max(1, floorU)
   const highU = floorU + 1
-  const showMismatch = baseReady && amount > 0 && !isMultiple
+  const showMismatch = baseReady && amount > 0 && !isExact && !isRound
 
   function confirm() {
     if (!valid) return
-    onConfirm({ units, unitPrice: base, newBase: baseFromProduct ? null : base })
+    onConfirm({
+      units: unitsGiven,
+      unitPrice: base,
+      freeTotal: amount,
+      napa,
+      newBase: baseFromProduct ? null : base,
+    })
   }
 
   return (
@@ -2976,13 +3001,28 @@ function FreeAmountModal({ product, isEditing, initialUnits, onCancel, onConfirm
         )}
 
         {/* Resumen / validación */}
-        {valid && (
+        {valid && napa === 0 && (
           <div style={{
             marginBottom: 12, padding: '10px 12px', borderRadius: 10,
             background: '#E8F4E8', border: `1px solid #C2DDC1`, color: T.ok,
             fontSize: 13, fontWeight: 700, textAlign: 'center',
           }}>
-            {units} {units === 1 ? 'unidad' : 'unidades'} · {fmtCOP(amount)}
+            {unitsGiven} {unitsGiven === 1 ? 'unidad' : 'unidades'} · {fmtCOP(amount)}
+          </div>
+        )}
+
+        {/* Monto cerrado con ñapa: deja pasar y dice cuántos entregar */}
+        {valid && napa > 0 && (
+          <div style={{
+            marginBottom: 12, padding: '12px', borderRadius: 12,
+            background: '#FFF7E6', border: `1px solid #F4E0BC`, textAlign: 'center',
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: '#7A5C00', marginBottom: 2 }}>
+              Entrega {unitsGiven} {unitsGiven === 1 ? 'pan' : 'panes'}
+            </div>
+            <div style={{ fontSize: 12, color: '#9A7200', lineHeight: 1.4 }}>
+              Incluye {napa} de ñapa 🎁 · recibes {fmtCOP(amount)}
+            </div>
           </div>
         )}
 
@@ -3181,9 +3221,14 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           productId: it.productId,
           source: it.source,
           name: it.name,
-          qty: it.qty,
+          qty: it.qty, // en venta libre = panes entregados (incluye ñapa)
           unitPrice: it.unitPrice,
-          subtotal: it.qty * it.unitPrice,
+          subtotal: itemLineTotal(it),
+          ...(it.freeAmount ? {
+            freeAmount: true,
+            freeTotal: Number(it.freeTotal) || itemLineTotal(it),
+            napa: Number(it.napa) || 0,
+          } : {}),
         })),
         total: effectiveTotal,
         paymentMethod: isSplit ? 'mixto' : method,

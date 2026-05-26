@@ -197,9 +197,13 @@ function CatalogRow({ product, branches, onTap }) {
         {product.name}
       </div>
       <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 3 }}>
-        {breakdown.length === 0
-          ? <span style={{ fontStyle: 'italic' }}>sin precios definidos</span>
-          : breakdown.map(b => `${b.name}: ${fmtCOP(b.price)}`).join(' · ')}
+        {product.freeAmount
+          ? (Number(product.freeUnitPrice) > 0
+              ? <span style={{ color: T.copper[700], fontWeight: 600 }}>Venta libre · base {fmtCOP(product.freeUnitPrice)}/u</span>
+              : <span style={{ color: T.copper[700], fontWeight: 600 }}>Venta libre · falta valor base</span>)
+          : breakdown.length === 0
+            ? <span style={{ fontStyle: 'italic' }}>sin precios definidos</span>
+            : breakdown.map(b => `${b.name}: ${fmtCOP(b.price)}`).join(' · ')}
       </div>
     </button>
   )

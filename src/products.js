@@ -133,6 +133,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     pricesByBranch: p.pricesByBranch || {},
     branch: p.branch,
     freeAmount: p.freeAmount === true,
+    freeUnitPrice: Number(p.freeUnitPrice) || 0,
     createdByCashier: false,
     needsCostReview: false,
   }))
@@ -143,6 +144,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     pricesByBranch: p.pricesByBranch || {},
     branch: p.branch || 'both',
     freeAmount: p.freeAmount === true,
+    freeUnitPrice: Number(p.freeUnitPrice) || 0,
     createdByCashier: true,
     needsCostReview: !!p.needsCostReview,
   }))

@@ -9,7 +9,7 @@ import {
   where,
   onSnapshot,
 } from 'firebase/firestore'
-import { updateProduct } from './db'
+import { updateProduct, deleteProduct } from './db'
 import { addDocOffline } from './utils/firestoreOffline'
 
 /**
@@ -19,8 +19,11 @@ import { addDocOffline } from './utils/firestoreOffline'
  * Doc shape en /productChangeRequests/{id}:
  *   - productId
  *   - source: 'admin' | 'cashier'  (qué catálogo es el producto)
+ *   - kind: 'edit' | 'delete'  (default 'edit')
  *   - currentName / requestedName
  *   - currentPricesByBranch / requestedPricesByBranch
+ *   - currentFreeAmount / requestedFreeAmount    (venta libre on/off)
+ *   - currentFreeUnitPrice / requestedFreeUnitPrice  (valor base venta libre)
  *   - cashierUid / cashierName
  *   - branchId / branchName  (panadería desde donde se pidió)
  *   - reason (opcional, texto)
@@ -83,9 +86,11 @@ export function watchPendingChangeRequestForProduct(productId, callback) {
  * otra pendiente para el mismo producto.
  */
 export function createChangeRequest({
-  productId, source,
+  productId, source, kind,
   currentName, requestedName,
   currentPricesByBranch, requestedPricesByBranch,
+  currentFreeAmount, requestedFreeAmount,
+  currentFreeUnitPrice, requestedFreeUnitPrice,
   cashierUid, cashierName,
   branchId, branchName,
   reason,
@@ -93,10 +98,15 @@ export function createChangeRequest({
   const data = {
     productId,
     source: source || 'admin',
+    kind: kind === 'delete' ? 'delete' : 'edit',
     currentName: currentName || '',
     requestedName: (requestedName || '').trim(),
     currentPricesByBranch: currentPricesByBranch || {},
     requestedPricesByBranch: requestedPricesByBranch || {},
+    currentFreeAmount: !!currentFreeAmount,
+    requestedFreeAmount: !!requestedFreeAmount,
+    currentFreeUnitPrice: Number(currentFreeUnitPrice) || 0,
+    requestedFreeUnitPrice: Number(requestedFreeUnitPrice) || 0,
     cashierUid: cashierUid || null,
     cashierName: cashierName || null,
     branchId: branchId ?? null,
@@ -119,19 +129,39 @@ export function createChangeRequest({
  * Para producto cashier (Firestore /products/{id}), recibe la función updater
  * via dependency injection para no acoplar este archivo a Firestore products.
  */
-export async function approveChangeRequest(req, { adminUid, updateCashierProduct }) {
+export async function approveChangeRequest(req, { adminUid, updateCashierProduct, deleteCashierProduct }) {
   if (!req || req.status !== 'pending') return
-  const updates = {
-    name: req.requestedName,
-    pricesByBranch: req.requestedPricesByBranch || {},
-  }
-  if (req.source === 'admin') {
-    updateProduct(req.productId, updates)
-  } else if (req.source === 'cashier') {
-    if (typeof updateCashierProduct === 'function') {
+
+  if (req.kind === 'delete') {
+    // Eliminar el producto del catálogo correspondiente.
+    if (req.source === 'admin') {
+      deleteProduct(req.productId)
+    } else if (req.source === 'cashier' && typeof deleteCashierProduct === 'function') {
+      await deleteCashierProduct(req.productId)
+    }
+  } else {
+    // Edición: aplicar nombre, venta libre / valor base y precios.
+    const requestedFree = !!req.requestedFreeAmount
+    const updates = {
+      name: req.requestedName,
+      freeAmount: requestedFree,
+      // En venta libre los precios por panadería no aplican; se limpian.
+      pricesByBranch: requestedFree ? {} : (req.requestedPricesByBranch || {}),
+      freeUnitPrice: requestedFree ? (Number(req.requestedFreeUnitPrice) || 0) : 0,
+    }
+    if (requestedFree) {
+      // Alinear con la forma de un producto de venta libre (sin costo/paquete).
+      updates.byPackage = false
+      updates.packageCost = 0
+      updates.unitsPerPackage = 1
+    }
+    if (req.source === 'admin') {
+      updateProduct(req.productId, updates)
+    } else if (req.source === 'cashier' && typeof updateCashierProduct === 'function') {
       await updateCashierProduct(req.productId, updates)
     }
   }
+
   await updateDoc(reqRef(req.id), {
     status: 'approved',
     reviewedBy: adminUid || null,

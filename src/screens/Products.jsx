@@ -42,7 +42,9 @@ function branchesMissingPrice(p) {
 // "Sin configurar" si: producto creado por cajera sin revisar, o sin costo,
 // o sin precio en alguna panadería. Excepción: ventas libres y almuerzos.
 function needsSetup(p) {
-  if (p.freeAmount) return false
+  // Venta libre: configurada solo si tiene valor base (obligatorio para
+  // registrar unidades). Sin base → pendiente de configurar.
+  if (p.freeAmount) return !(Number(p.freeUnitPrice) > 0)
   if (p.isLunch) return false
   if (p.source === 'cashier') return true
   if (!p.packageCost || Number(p.packageCost) <= 0) return true
@@ -126,13 +128,14 @@ function PricesByBranchInline({ product }) {
     )
   }
   if (product.freeAmount) {
+    const base = Number(product.freeUnitPrice) || 0
     return (
       <span style={{
         fontSize: 11.5, fontWeight: 700, color: T.copper[700],
         background: T.copper[50], padding: '4px 10px', borderRadius: 999,
         letterSpacing: 0.3, textTransform: 'uppercase',
       }}>
-        Venta libre
+        {base > 0 ? `Venta libre · ${fmtCOP(base)}/u` : 'Venta libre'}
       </span>
     )
   }
@@ -190,12 +193,13 @@ function PricesByBranchBlock({ product }) {
     )
   }
   if (product.freeAmount) {
+    const base = Number(product.freeUnitPrice) || 0
     return (
       <div style={{
         fontSize: 12, fontWeight: 700, color: T.copper[700],
         textAlign: 'center', letterSpacing: 0.3, textTransform: 'uppercase',
       }}>
-        Venta libre · cajera escribe el monto
+        {base > 0 ? `Venta libre · base ${fmtCOP(base)}/u` : 'Venta libre · falta valor base'}
       </div>
     )
   }
@@ -666,8 +670,10 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
   const branches = getData().branches || []
   const isPromoting = isEdit && source === 'cashier'
 
+  const MIN_BASE = 100
   const [name,            setName]            = useState(initial?.name || '')
   const [freeAmount,      setFreeAmount]      = useState(initial?.freeAmount === true)
+  const [freeBaseStr,     setFreeBaseStr]      = useState(initial?.freeUnitPrice != null && Number(initial.freeUnitPrice) > 0 ? String(initial.freeUnitPrice) : '')
   const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? false)
   const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null && Number(initial.packageCost) > 0 ? String(initial.packageCost) : '')
   const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null && Number(initial.unitsPerPackage) > 0 ? String(initial.unitsPerPackage) : '')
@@ -697,7 +703,8 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
   const profit = avgPrice - costPerUnit
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
 
-  const canSave = name.trim() && (freeAmount || (pc > 0 && (!byPackage || up > 0)))
+  const freeBase = Number(freeBaseStr) || 0
+  const canSave = name.trim() && (freeAmount ? freeBase >= MIN_BASE : (pc > 0 && (!byPackage || up > 0)))
 
   async function handleSave() {
     if (!canSave || busy) return
@@ -707,6 +714,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
         ? {
             name: name.trim(),
             freeAmount: true,
+            freeUnitPrice: freeBase,
             pricesByBranch: {},
             packageCost: 0,
             unitsPerPackage: 1,
@@ -810,12 +818,24 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
       </div>
 
       {freeAmount ? (
-        <div style={{
-          padding: '12px 14px', borderRadius: 12,
-          background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-          fontSize: 12.5, color: T.copper[700], lineHeight: 1.5, marginBottom: 14,
-        }}>
-          ✓ Producto de venta libre. La cajera escribirá el monto al vender (mínimo $400). No requiere precio ni costo.
+        <div style={{ marginBottom: 14 }}>
+          <div style={labelStyle}>Valor base por unidad</div>
+          <input
+            type="number" min="0" inputMode="numeric"
+            value={freeBaseStr}
+            onChange={e => setFreeBaseStr(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+            placeholder="Ej: 400"
+            style={inputStyle}
+          />
+          <div style={{
+            marginTop: 8, padding: '10px 12px', borderRadius: 10,
+            background: T.copper[50], border: `1px solid ${T.copper[100]}`,
+            fontSize: 12, color: T.copper[700], lineHeight: 1.5,
+          }}>
+            La cajera vende por monto o por unidades. Ej: con valor base {fmtCOP(freeBase || 400)},
+            ${((freeBase || 400) * 5).toLocaleString('es-CO')} = 5 unidades. Si el monto no concuerda,
+            el sistema le ofrece las opciones válidas más cercanas.
+          </div>
         </div>
       ) : (
       <>

@@ -365,21 +365,24 @@ export default function NewSale({
     }
   }
 
-  // Confirmar monto del producto de venta libre (agregar nuevo o editar existente)
-  function handleConfirmFreeAmount(amount) {
+  // Confirmar venta libre. Recibe { units, unitPrice }: con valor base son las
+  // unidades reales y el valor base; sin valor base (legacy) es 1 × el monto.
+  // El total de la línea = qty * unitPrice, así que el reporte queda con las
+  // unidades vendidas.
+  function handleConfirmFreeAmount({ units, unitPrice }) {
     if (!freeAmountTarget) return
-    const num = Number(amount)
-    if (!num || num < 400) return
+    const u = Number(units) || 0
+    const up = Number(unitPrice) || 0
+    if (u <= 0 || up <= 0) return
     const { product, editingKey } = freeAmountTarget
 
     if (editingKey) {
-      // Edición de un item del carrito: solo actualiza unitPrice
       setCart(prev => prev.map(it =>
-        it.key === editingKey ? { ...it, unitPrice: num } : it
+        it.key === editingKey ? { ...it, qty: u, unitPrice: up } : it
       ))
     } else {
       // Nuevo item: cada agregado de venta libre es una línea independiente
-      // (no agrupar como qty++) porque pueden ser montos distintos del mismo producto.
+      // (no agrupar) porque pueden ser montos distintos del mismo producto.
       setCart(prev => [
         ...prev,
         {
@@ -387,8 +390,8 @@ export default function NewSale({
           productId: product.id,
           source: product.source,
           name: product.name,
-          qty: 1,
-          unitPrice: num,
+          qty: u,
+          unitPrice: up,
           freeAmount: true,
         },
       ])
@@ -1410,10 +1413,17 @@ export default function NewSale({
                 onPlus={() => updateQty(it.key, +1)}
                 onRemove={() => removeItem(it.key)}
                 onEditKitchen={() => handleEditKitchenItem(it)}
-                onEditAmount={hidePrices ? undefined : () => setFreeAmountTarget({
-                  product: { id: it.productId, source: it.source, name: it.name },
-                  editingKey: it.key,
-                })}
+                onEditAmount={hidePrices ? undefined : () => {
+                  // Buscar el producto vivo del catálogo para traer su valor
+                  // base (freeUnitPrice); si no está (borrado), cae a legacy.
+                  const catalogProduct = catalog.find(
+                    p => String(p.id) === String(it.productId) && p.source === it.source
+                  )
+                  setFreeAmountTarget({
+                    product: catalogProduct || { id: it.productId, source: it.source, name: it.name },
+                    editingKey: it.key,
+                  })
+                }}
               />
             ))}
           </Card>
@@ -1531,17 +1541,21 @@ export default function NewSale({
         />
       )}
 
-      {freeAmountTarget && (
-        <FreeAmountModal
-          product={freeAmountTarget.product}
-          isEditing={!!freeAmountTarget.editingKey}
-          initialAmount={freeAmountTarget.editingKey
-            ? cart.find(it => it.key === freeAmountTarget.editingKey)?.unitPrice
-            : null}
-          onCancel={() => setFreeAmountTarget(null)}
-          onConfirm={handleConfirmFreeAmount}
-        />
-      )}
+      {freeAmountTarget && (() => {
+        const editItem = freeAmountTarget.editingKey
+          ? cart.find(it => it.key === freeAmountTarget.editingKey)
+          : null
+        return (
+          <FreeAmountModal
+            product={freeAmountTarget.product}
+            isEditing={!!freeAmountTarget.editingKey}
+            initialUnits={editItem ? editItem.qty : null}
+            initialAmount={editItem ? editItem.qty * editItem.unitPrice : null}
+            onCancel={() => setFreeAmountTarget(null)}
+            onConfirm={handleConfirmFreeAmount}
+          />
+        )
+      })()}
 
       {paymentOpen && (
         <PaymentModal
@@ -2332,7 +2346,11 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
             {item.name}
           </div>
           <div style={{ fontSize: 11, color: T.copper[700], marginTop: 2, fontWeight: 600, letterSpacing: 0.3 }}>
-            {hidePrices ? 'VENTA LIBRE · LA CAJERA PONE EL PRECIO' : 'VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR'}
+            {hidePrices
+              ? 'VENTA LIBRE · LA CAJERA PONE EL PRECIO'
+              : item.qty > 1
+                ? `VENTA LIBRE · ${item.qty} u × ${fmtCOP(item.unitPrice)}`
+                : 'VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR'}
           </div>
         </div>
 
@@ -2347,7 +2365,7 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
               fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
             }}
           >
-            {fmtCOP(item.unitPrice)}
+            {fmtCOP(item.qty * item.unitPrice)}
           </button>
         )}
 
@@ -2784,95 +2802,213 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: ¿De cuánto? (productos de venta libre, ej: "Pan")
 // ──────────────────────────────────────────────────────────────
-function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfirm }) {
-  const MIN = 400
-  const [str, setStr] = useState(initialAmount ? String(initialAmount) : '')
-  const num = Number(str) || 0
-  const valid = num >= MIN
+function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCancel, onConfirm }) {
+  const base = Number(product.freeUnitPrice) || 0
+  const hasBase = base > 0
 
   function sanitize(raw) {
     return raw.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
   }
 
-  function handleConfirm() {
+  // ── Modo SIN valor base (compatibilidad): solo monto, qty 1 ──
+  // (Productos de venta libre antiguos a los que aún no se les puso valor base.)
+  const LEGACY_MIN = 400
+  const [legacyStr, setLegacyStr] = useState(
+    !hasBase && initialAmount ? String(initialAmount) : ''
+  )
+
+  // ── Modo CON valor base: monto ⇄ unidades sincronizados ──
+  const [amountStr, setAmountStr] = useState(
+    hasBase && initialUnits ? String(Number(initialUnits) * base) : ''
+  )
+
+  function setFromAmount(raw) {
+    setAmountStr(sanitize(raw))
+  }
+  function setFromUnits(raw) {
+    const u = Number(sanitize(raw)) || 0
+    setAmountStr(u > 0 ? String(u * base) : '')
+  }
+
+  if (!hasBase) {
+    const num = Number(legacyStr) || 0
+    const valid = num >= LEGACY_MIN
+    return (
+      <ModalOverlay onClose={onCancel}>
+        <div onClick={e => e.stopPropagation()} style={modalCard()}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
+            {isEditing ? `Cambiar monto · ${product.name}` : `${product.name}`}
+          </div>
+          <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, textAlign: 'center' }}>
+            ¿De cuánto?
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              border: `2px solid ${valid ? T.copper[400] : T.neutral[200]}`,
+              borderRadius: 16, background: '#fff', padding: '8px 16px',
+            }}>
+              <span style={{ paddingRight: 6, color: T.neutral[500], fontSize: 24, fontWeight: 700 }}>$</span>
+              <input
+                type="text" inputMode="numeric" autoFocus
+                value={legacyStr}
+                onChange={e => setLegacyStr(sanitize(e.target.value))}
+                placeholder="0"
+                style={{
+                  width: 160, padding: '6px 0', border: 'none', outline: 'none',
+                  fontFamily: 'inherit', fontSize: 32, fontWeight: 800,
+                  color: T.neutral[900], background: 'transparent',
+                  fontVariantNumeric: 'tabular-nums', letterSpacing: -1, textAlign: 'center',
+                }}
+              />
+            </div>
+          </div>
+          {legacyStr && num > 0 && num < LEGACY_MIN && (
+            <div style={{
+              marginBottom: 12, padding: '8px 12px', borderRadius: 10,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
+              fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+            }}>
+              Monto mínimo: ${LEGACY_MIN.toLocaleString('es-CO')}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
+            <button
+              onClick={() => valid && onConfirm({ units: 1, unitPrice: num })}
+              disabled={!valid}
+              style={{
+                ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
+                flex: 1.4, color: valid ? '#fff' : T.neutral[400],
+                cursor: valid ? 'pointer' : 'not-allowed',
+                boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
+              }}
+            >
+              {isEditing ? 'Cambiar' : 'Agregar'}
+            </button>
+          </div>
+        </div>
+      </ModalOverlay>
+    )
+  }
+
+  // ── Modo CON valor base ──
+  const amount = Number(amountStr) || 0
+  const units = amount / base
+  const isMultiple = amount > 0 && amount % base === 0
+  const valid = amount >= base && isMultiple
+  const unitsStr = isMultiple ? String(units) : ''
+
+  // Opciones cercanas cuando el monto no es múltiplo del valor base.
+  const floorU = Math.floor(amount / base)
+  const lowU = Math.max(1, floorU)
+  const highU = floorU + 1
+  const showMismatch = amount > 0 && !isMultiple
+
+  function confirm() {
     if (!valid) return
-    onConfirm(num)
+    onConfirm({ units, unitPrice: base })
   }
 
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={modalCard()}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
-          {isEditing ? `Cambiar monto · ${product.name}` : `${product.name}`}
+          {isEditing ? `Cambiar · ${product.name}` : `${product.name}`}
         </div>
-        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, textAlign: 'center' }}>
-          ¿De cuánto?
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16, textAlign: 'center' }}>
+          Valor base: <b style={{ color: T.copper[700] }}>{fmtCOP(base)}</b> por unidad
         </div>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          marginBottom: 14,
-        }}>
-          <div style={{
-            display: 'flex', alignItems: 'center',
-            border: `2px solid ${valid ? T.copper[400] : T.neutral[200]}`,
-            borderRadius: 16, background: '#fff',
-            padding: '8px 16px',
-            transition: 'border-color 0.15s',
-          }}>
-            <span style={{ paddingRight: 6, color: T.neutral[500], fontSize: 24, fontWeight: 700 }}>$</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              autoFocus
-              value={str}
-              onChange={e => setStr(sanitize(e.target.value))}
-              placeholder="0"
-              style={{
-                width: 160, padding: '6px 0', border: 'none', outline: 'none',
-                fontFamily: 'inherit', fontSize: 32, fontWeight: 800,
-                color: T.neutral[900], background: 'transparent',
-                fontVariantNumeric: 'tabular-nums', letterSpacing: -1,
-                textAlign: 'center',
-              }}
-            />
+        {/* Dos entradas sincronizadas: monto y unidades */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], marginBottom: 4, textAlign: 'center' }}>MONTO</div>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `2px solid ${valid ? T.copper[400] : showMismatch ? T.bad : T.neutral[200]}`,
+              borderRadius: 14, background: '#fff', padding: '6px 10px',
+            }}>
+              <span style={{ color: T.neutral[500], fontSize: 20, fontWeight: 700 }}>$</span>
+              <input
+                type="text" inputMode="numeric" autoFocus
+                value={amountStr}
+                onChange={e => setFromAmount(e.target.value)}
+                placeholder="0"
+                style={{
+                  width: '100%', padding: '4px 0', border: 'none', outline: 'none',
+                  fontFamily: 'inherit', fontSize: 26, fontWeight: 800,
+                  color: T.neutral[900], background: 'transparent',
+                  fontVariantNumeric: 'tabular-nums', textAlign: 'center',
+                }}
+              />
+            </div>
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], marginBottom: 4, textAlign: 'center' }}>UNIDADES</div>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `2px solid ${valid ? T.copper[400] : T.neutral[200]}`,
+              borderRadius: 14, background: '#fff', padding: '6px 10px',
+            }}>
+              <input
+                type="text" inputMode="numeric"
+                value={unitsStr}
+                onChange={e => setFromUnits(e.target.value)}
+                placeholder="0"
+                style={{
+                  width: '100%', padding: '4px 0', border: 'none', outline: 'none',
+                  fontFamily: 'inherit', fontSize: 26, fontWeight: 800,
+                  color: T.neutral[900], background: 'transparent',
+                  fontVariantNumeric: 'tabular-nums', textAlign: 'center',
+                }}
+              />
+            </div>
           </div>
         </div>
 
-        {/* Sugerencias rápidas */}
-        <div style={{
-          display: 'flex', gap: 6, marginBottom: 14, justifyContent: 'center', flexWrap: 'wrap',
-        }}>
-          {[500, 1000, 2000, 5000, 10000].map(s => (
-            <button
-              key={s}
-              onClick={() => setStr(String(s))}
-              style={{
-                padding: '6px 12px', borderRadius: 999,
-                background: T.neutral[100], color: T.neutral[700],
-                border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                fontSize: 12, fontWeight: 700,
-              }}
-            >
-              ${s.toLocaleString('es-CO')}
-            </button>
-          ))}
-        </div>
-
-        {str && num > 0 && num < MIN && (
+        {/* Resumen / validación */}
+        {valid && (
           <div style={{
-            marginBottom: 12, padding: '8px 12px', borderRadius: 10,
-            background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-            fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+            background: '#E8F4E8', border: `1px solid #C2DDC1`, color: T.ok,
+            fontSize: 13, fontWeight: 700, textAlign: 'center',
           }}>
-            Monto mínimo: ${MIN.toLocaleString('es-CO')}
+            {units} {units === 1 ? 'unidad' : 'unidades'} · {fmtCOP(amount)}
+          </div>
+        )}
+
+        {showMismatch && (
+          <div style={{
+            marginBottom: 12, padding: '12px', borderRadius: 12,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`,
+          }}>
+            <div style={{ fontSize: 12.5, color: T.bad, fontWeight: 700, textAlign: 'center', marginBottom: 8, lineHeight: 1.4 }}>
+              {fmtCOP(amount)} no concuerda con el valor base de {fmtCOP(base)}. ¿Cuál quieres?
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setAmountStr(String(lowU * base))}
+                style={mismatchOptStyle()}
+              >
+                {fmtCOP(lowU * base)}<br/>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>{lowU} {lowU === 1 ? 'unidad' : 'unidades'}</span>
+              </button>
+              <button
+                onClick={() => setAmountStr(String(highU * base))}
+                style={mismatchOptStyle()}
+              >
+                {fmtCOP(highU * base)}<br/>
+                <span style={{ fontSize: 11, fontWeight: 600 }}>{highU} unidades</span>
+              </button>
+            </div>
           </div>
         )}
 
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
           <button
-            onClick={handleConfirm}
+            onClick={confirm}
             disabled={!valid}
             style={{
               ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
@@ -2888,6 +3024,17 @@ function FreeAmountModal({ product, isEditing, initialAmount, onCancel, onConfir
       </div>
     </ModalOverlay>
   )
+}
+
+function mismatchOptStyle() {
+  return {
+    flex: 1, padding: '10px', borderRadius: 10,
+    background: '#fff', color: T.copper[700],
+    border: `1.5px solid ${T.copper[300]}`,
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 14, fontWeight: 800, lineHeight: 1.3,
+    fontVariantNumeric: 'tabular-nums',
+  }
 }
 
 // ──────────────────────────────────────────────────────────────

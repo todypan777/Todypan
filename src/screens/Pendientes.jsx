@@ -12,7 +12,7 @@ import {
   resolveOpeningDispute,
 } from '../cashSessions'
 import { watchAllSales } from '../sales'
-import { patchCashierProduct } from '../products'
+import { patchCashierProduct, deleteCashierProduct } from '../products'
 import {
   watchPendingChangeRequests,
   approveChangeRequest,
@@ -526,7 +526,11 @@ function ChangeRequestsSection({ requests, adminUid }) {
     <>
       <Section title="Solicitudes de cambio en productos" count={requests.length} tone="copper">
         {requests.map((r, i) => {
+          const isDelete = r.kind === 'delete'
           const nameChanged = (r.requestedName || '') !== (r.currentName || '')
+          const freeChanged = (r.currentFreeAmount === true) !== (r.requestedFreeAmount === true)
+          const baseChanged = r.requestedFreeAmount === true
+            && (Number(r.currentFreeUnitPrice) || 0) !== (Number(r.requestedFreeUnitPrice) || 0)
           const branches = getData().branches || []
           const priceChanges = branches.filter(b => {
             const cur = Number(r.currentPricesByBranch?.[String(b.id)] || 0)
@@ -546,10 +550,17 @@ function ChangeRequestsSection({ requests, adminUid }) {
                 }}>
                   {r.currentName || 'Producto'}
                 </div>
-                <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2 }}>
-                  {nameChanged && <>Nombre · </>}
-                  {priceChanges.length > 0 && <>{priceChanges.length} precio{priceChanges.length === 1 ? '' : 's'}</>}
-                  {!nameChanged && priceChanges.length === 0 && 'Sin cambios'}
+                <div style={{ fontSize: 11.5, color: isDelete ? T.bad : T.neutral[600], marginTop: 2, fontWeight: isDelete ? 700 : 400 }}>
+                  {isDelete ? (
+                    'Eliminar producto'
+                  ) : (
+                    <>
+                      {nameChanged && <>Nombre · </>}
+                      {(freeChanged || baseChanged) && <>Venta libre · </>}
+                      {priceChanges.length > 0 && <>{priceChanges.length} precio{priceChanges.length === 1 ? '' : 's'}</>}
+                      {!nameChanged && !freeChanged && !baseChanged && priceChanges.length === 0 && 'Sin cambios'}
+                    </>
+                  )}
                   {r.cashierName && ` · ${r.cashierName}`}
                 </div>
               </div>
@@ -578,7 +589,14 @@ function ChangeRequestModal({ request, adminUid, onCancel, onResolved }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
+  const isDelete = request.kind === 'delete'
   const nameChanged = (request.requestedName || '') !== (request.currentName || '')
+  const curFree = request.currentFreeAmount === true
+  const reqFree = request.requestedFreeAmount === true
+  const freeChanged = curFree !== reqFree
+  const curBase = Number(request.currentFreeUnitPrice) || 0
+  const reqBase = Number(request.requestedFreeUnitPrice) || 0
+  const baseChanged = reqFree && curBase !== reqBase
 
   async function handleApprove() {
     if (busy) return
@@ -587,6 +605,7 @@ function ChangeRequestModal({ request, adminUid, onCancel, onResolved }) {
       await approveChangeRequest(request, {
         adminUid,
         updateCashierProduct: patchCashierProduct,
+        deleteCashierProduct,
       })
       onResolved()
     } catch (err) {
@@ -617,71 +636,119 @@ function ChangeRequestModal({ request, adminUid, onCancel, onResolved }) {
           {request.cashierName} · {request.branchName || 'Sin nombre'}
         </ModalSub>
 
-        {/* Nombre */}
-        <div style={{
-          padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-            Nombre
+        {isDelete ? (
+          /* Solicitud de ELIMINACIÓN */
+          <div style={{
+            padding: '14px', borderRadius: 12,
+            background: '#FBE9E5', border: `1px solid #F0C8BE`, marginBottom: 12,
+          }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: T.bad, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+              Eliminar producto
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.neutral[900], marginBottom: 4 }}>
+              {request.currentName || 'Producto'}
+            </div>
+            <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5 }}>
+              Si apruebas, el producto se elimina del catálogo de forma permanente.
+            </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{
-              fontSize: 13.5, color: nameChanged ? T.neutral[500] : T.neutral[800],
-              textDecoration: nameChanged ? 'line-through' : 'none',
+        ) : (
+          <>
+            {/* Nombre */}
+            <div style={{
+              padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
             }}>
-              {request.currentName || '—'}
-            </span>
-            {nameChanged && (
-              <>
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke={T.copper[500]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                <span style={{ fontSize: 14, fontWeight: 700, color: T.copper[700] }}>
-                  {request.requestedName}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Precios */}
-        <div style={{
-          padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
-            Precios por panadería
-          </div>
-          {branches.map(b => {
-            const cur = Number(request.currentPricesByBranch?.[String(b.id)] || 0)
-            const req = Number(request.requestedPricesByBranch?.[String(b.id)] || 0)
-            const changed = cur !== req
-            return (
-              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
-                <span style={{ flex: 1, fontSize: 12.5, color: T.neutral[600] }}>{b.name}</span>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+                Nombre
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span style={{
-                  fontSize: 13, color: changed ? T.neutral[500] : T.neutral[800],
-                  textDecoration: changed ? 'line-through' : 'none',
-                  fontVariantNumeric: 'tabular-nums',
+                  fontSize: 13.5, color: nameChanged ? T.neutral[500] : T.neutral[800],
+                  textDecoration: nameChanged ? 'line-through' : 'none',
                 }}>
-                  {cur > 0 ? fmtCOP(cur) : '—'}
+                  {request.currentName || '—'}
                 </span>
-                {changed && (
+                {nameChanged && (
                   <>
-                    <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke={T.copper[500]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
-                    <span style={{
-                      fontSize: 14, fontWeight: 700, color: T.copper[700],
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>
-                      {req > 0 ? fmtCOP(req) : '—'}
+                    <span style={{ fontSize: 14, fontWeight: 700, color: T.copper[700] }}>
+                      {request.requestedName}
                     </span>
                   </>
                 )}
               </div>
-            )
-          })}
-        </div>
+            </div>
+
+            {/* Venta libre / valor base */}
+            {(reqFree || freeChanged) && (
+              <div style={{
+                padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+                  Venta libre
+                </div>
+                <div style={{ fontSize: 13.5, color: T.neutral[800] }}>
+                  {freeChanged
+                    ? (reqFree ? 'Pasa a venta libre' : 'Deja de ser venta libre')
+                    : 'Venta libre'}
+                  {reqFree && (
+                    <> · valor base{' '}
+                      {baseChanged && curBase > 0 && (
+                        <span style={{ textDecoration: 'line-through', color: T.neutral[500], fontVariantNumeric: 'tabular-nums' }}>
+                          {fmtCOP(curBase)}{' '}
+                        </span>
+                      )}
+                      <b style={{ color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(reqBase)}</b>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Precios (solo si NO queda en venta libre) */}
+            {!reqFree && (
+              <div style={{
+                padding: '12px 14px', borderRadius: 12, background: T.neutral[50], marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+                  Precios por panadería
+                </div>
+                {branches.map(b => {
+                  const cur = Number(request.currentPricesByBranch?.[String(b.id)] || 0)
+                  const req = Number(request.requestedPricesByBranch?.[String(b.id)] || 0)
+                  const changed = cur !== req
+                  return (
+                    <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0' }}>
+                      <span style={{ flex: 1, fontSize: 12.5, color: T.neutral[600] }}>{b.name}</span>
+                      <span style={{
+                        fontSize: 13, color: changed ? T.neutral[500] : T.neutral[800],
+                        textDecoration: changed ? 'line-through' : 'none',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}>
+                        {cur > 0 ? fmtCOP(cur) : '—'}
+                      </span>
+                      {changed && (
+                        <>
+                          <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                            <path d="M3 7 H11 M8 4 L11 7 L8 10" stroke={T.copper[500]} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          <span style={{
+                            fontSize: 14, fontWeight: 700, color: T.copper[700],
+                            fontVariantNumeric: 'tabular-nums',
+                          }}>
+                            {req > 0 ? fmtCOP(req) : '—'}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
+        )}
 
         {/* Motivo */}
         {request.reason && (
@@ -709,13 +776,13 @@ function ChangeRequestModal({ request, adminUid, onCancel, onResolved }) {
           </button>
           <button onClick={handleApprove} disabled={busy} style={{
             flex: 1.4, padding: '12px', borderRadius: 12,
-            background: T.ok, color: '#fff',
+            background: isDelete ? T.bad : T.ok, color: '#fff',
             border: 'none', cursor: busy ? 'wait' : 'pointer', fontFamily: 'inherit',
             fontSize: 14, fontWeight: 700,
-            boxShadow: `0 3px 10px ${T.ok}44`,
+            boxShadow: `0 3px 10px ${(isDelete ? T.bad : T.ok)}44`,
             opacity: busy ? 0.7 : 1,
           }}>
-            {busy ? 'Guardando...' : 'Aprobar cambio'}
+            {busy ? 'Guardando...' : isDelete ? 'Eliminar producto' : 'Aprobar cambio'}
           </button>
         </div>
       </ModalCard>

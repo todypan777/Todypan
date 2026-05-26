@@ -179,7 +179,12 @@ function ChangeRequestModal({
   cashierUid, cashierName,
   onCancel, onSent,
 }) {
+  const MIN_BASE = 100
   const [name, setName] = useState(product.name || '')
+  const [freeAmount, setFreeAmount] = useState(product.freeAmount === true)
+  const [baseStr, setBaseStr] = useState(
+    product.freeUnitPrice && Number(product.freeUnitPrice) > 0 ? String(product.freeUnitPrice) : ''
+  )
   const [priceInputs, setPriceInputs] = useState(() => {
     const init = {}
     ;(branches || []).forEach(b => {
@@ -214,6 +219,10 @@ function ChangeRequestModal({
   }, [priceInputs])
 
   // Detectar si hay algún cambio respecto al producto actual
+  const requestedBase = Number(baseStr) || 0
+  const curFree = product.freeAmount === true
+  const curBase = Number(product.freeUnitPrice) || 0
+
   const nameChanged = (name || '').trim() !== (product.name || '').trim()
   const pricesChanged = useMemo(() => {
     const cur = product.pricesByBranch || {}
@@ -224,9 +233,13 @@ function ChangeRequestModal({
     }
     return false
   }, [product.pricesByBranch, requestedPrices])
+  const freeChanged = freeAmount !== curFree
+  const baseChanged = freeAmount && requestedBase !== curBase
 
-  const hasChanges = nameChanged || pricesChanged
-  const canSubmit = !busy && hasChanges && (name || '').trim().length >= 2 && !existingReq
+  const hasChanges = nameChanged || freeChanged || baseChanged || (!freeAmount && pricesChanged)
+  // En venta libre exigimos un valor base válido.
+  const baseValid = !freeAmount || requestedBase >= MIN_BASE
+  const canSubmit = !busy && hasChanges && (name || '').trim().length >= 2 && baseValid && !existingReq
 
   function handleSubmit() {
     if (!canSubmit) return
@@ -238,10 +251,15 @@ function ChangeRequestModal({
       createChangeRequest({
         productId: product.id,
         source: product.source || 'admin',
+        kind: 'edit',
         currentName: product.name || '',
         requestedName: name.trim(),
         currentPricesByBranch: product.pricesByBranch || {},
-        requestedPricesByBranch: requestedPrices,
+        requestedPricesByBranch: freeAmount ? {} : requestedPrices,
+        currentFreeAmount: curFree,
+        requestedFreeAmount: freeAmount,
+        currentFreeUnitPrice: curBase,
+        requestedFreeUnitPrice: freeAmount ? requestedBase : 0,
         cashierUid, cashierName,
         branchId, branchName,
         reason,
@@ -249,6 +267,35 @@ function ChangeRequestModal({
       onSent()
     } catch (err) {
       console.error('[changeReq] create failed:', err)
+      setError('No se pudo enviar la solicitud. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  function handleRequestDelete() {
+    if (busy || existingReq) return
+    setBusy(true)
+    setError(null)
+    try {
+      createChangeRequest({
+        productId: product.id,
+        source: product.source || 'admin',
+        kind: 'delete',
+        currentName: product.name || '',
+        requestedName: product.name || '',
+        currentPricesByBranch: product.pricesByBranch || {},
+        requestedPricesByBranch: product.pricesByBranch || {},
+        currentFreeAmount: curFree,
+        requestedFreeAmount: curFree,
+        currentFreeUnitPrice: curBase,
+        requestedFreeUnitPrice: curBase,
+        cashierUid, cashierName,
+        branchId, branchName,
+        reason: reason || 'Solicitud de eliminación',
+      })
+      onSent()
+    } catch (err) {
+      console.error('[changeReq] delete request failed:', err)
       setError('No se pudo enviar la solicitud. Intenta de nuevo.')
       setBusy(false)
     }
@@ -288,45 +335,112 @@ function ChangeRequestModal({
 
         <div style={{ height: 12 }} />
 
-        <FieldLabel>Precios por panadería</FieldLabel>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {(branches || []).map(b => {
-            const cur = Number(product.pricesByBranch?.[String(b.id)]) || 0
-            const req = Number(priceInputs[String(b.id)]) || 0
-            const changed = cur !== req
-            return (
-              <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  flex: 1, fontSize: 13, fontWeight: 600, color: T.neutral[700],
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                }}>
-                  {b.name}
-                </div>
-                <div style={{
-                  flex: 1, maxWidth: 160, display: 'flex', alignItems: 'center',
-                  border: `1.5px solid ${changed ? T.copper[400] : T.neutral[200]}`,
-                  borderRadius: 12, background: '#fff',
-                }}>
-                  <span style={{ paddingLeft: 12, color: T.neutral[500], fontSize: 14, fontWeight: 600 }}>$</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={priceInputs[String(b.id)] || ''}
-                    onChange={e => setPriceFor(b.id, e.target.value)}
-                    placeholder="0"
-                    disabled={busy || !!existingReq}
-                    style={{
-                      width: '100%', padding: '10px 12px 10px 6px', border: 'none', outline: 'none',
-                      fontFamily: 'inherit', fontSize: 15, color: T.neutral[900],
-                      background: 'transparent', borderRadius: 12,
-                      fontVariantNumeric: 'tabular-nums', fontWeight: 600,
-                    }}
-                  />
-                </div>
+        {/* Toggle venta libre */}
+        <button
+          onClick={() => !busy && !existingReq && setFreeAmount(v => !v)}
+          disabled={busy || !!existingReq}
+          style={{
+            width: '100%', padding: '12px 14px', marginBottom: 12,
+            background: freeAmount ? T.copper[50] : '#fff',
+            border: `1.5px solid ${freeAmount ? T.copper[400] : T.neutral[200]}`,
+            borderRadius: 12, cursor: busy || existingReq ? 'default' : 'pointer',
+            fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+          }}
+        >
+          <div style={{
+            width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+            background: freeAmount ? T.copper[500] : T.neutral[100],
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {freeAmount && (
+              <svg width="14" height="14" viewBox="0 0 14 14">
+                <path d="M3 7 L6 10 L11 4" stroke="#fff" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: freeAmount ? T.copper[700] : T.neutral[800] }}>
+              Venta libre (ej: pan)
+            </div>
+            <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2, lineHeight: 1.4 }}>
+              El cliente dice de cuánto quiere. Se registra por unidades según el valor base.
+            </div>
+          </div>
+        </button>
+
+        {freeAmount ? (
+          <>
+            <FieldLabel>Valor base por unidad</FieldLabel>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              border: `1.5px solid ${baseChanged ? T.copper[400] : T.neutral[200]}`,
+              borderRadius: 12, background: '#fff', maxWidth: 200,
+            }}>
+              <span style={{ paddingLeft: 12, color: T.neutral[500], fontSize: 14, fontWeight: 600 }}>$</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={baseStr}
+                onChange={e => setBaseStr(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+                placeholder="0"
+                disabled={busy || !!existingReq}
+                style={{
+                  width: '100%', padding: '10px 12px 10px 6px', border: 'none', outline: 'none',
+                  fontFamily: 'inherit', fontSize: 15, color: T.neutral[900],
+                  background: 'transparent', borderRadius: 12,
+                  fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+                }}
+              />
+            </div>
+            {!baseValid && (baseStr !== '') && (
+              <div style={{ fontSize: 11.5, color: T.bad, marginTop: 6, fontWeight: 600 }}>
+                El valor base debe ser de al menos ${MIN_BASE.toLocaleString('es-CO')}.
               </div>
-            )
-          })}
-        </div>
+            )}
+          </>
+        ) : (
+          <>
+            <FieldLabel>Precios por panadería</FieldLabel>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(branches || []).map(b => {
+                const cur = Number(product.pricesByBranch?.[String(b.id)]) || 0
+                const req = Number(priceInputs[String(b.id)]) || 0
+                const changed = cur !== req
+                return (
+                  <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{
+                      flex: 1, fontSize: 13, fontWeight: 600, color: T.neutral[700],
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {b.name}
+                    </div>
+                    <div style={{
+                      flex: 1, maxWidth: 160, display: 'flex', alignItems: 'center',
+                      border: `1.5px solid ${changed ? T.copper[400] : T.neutral[200]}`,
+                      borderRadius: 12, background: '#fff',
+                    }}>
+                      <span style={{ paddingLeft: 12, color: T.neutral[500], fontSize: 14, fontWeight: 600 }}>$</span>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={priceInputs[String(b.id)] || ''}
+                        onChange={e => setPriceFor(b.id, e.target.value)}
+                        placeholder="0"
+                        disabled={busy || !!existingReq}
+                        style={{
+                          width: '100%', padding: '10px 12px 10px 6px', border: 'none', outline: 'none',
+                          fontFamily: 'inherit', fontSize: 15, color: T.neutral[900],
+                          background: 'transparent', borderRadius: 12,
+                          fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
 
         <div style={{ height: 12 }} />
 
@@ -369,6 +483,22 @@ function ChangeRequestModal({
             {busy ? 'Enviando...' : 'Enviar solicitud'}
           </button>
         </div>
+
+        {/* Solicitar eliminación — también la confirma el admin */}
+        <button
+          onClick={handleRequestDelete}
+          disabled={busy || !!existingReq}
+          style={{
+            width: '100%', marginTop: 12, padding: '11px', borderRadius: 12,
+            background: 'transparent', color: T.bad,
+            border: `1px solid ${T.bad}55`,
+            cursor: busy || existingReq ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+            opacity: busy || existingReq ? 0.5 : 1,
+          }}
+        >
+          Solicitar eliminación del producto
+        </button>
       </div>
     </ModalOverlay>
   )

@@ -1337,6 +1337,16 @@ export default function NewSale({
                         Mesa {fmtCOP(p.priceMesa || 0)} · Llevar {fmtCOP(p.priceLlevar || p.priceMesa || 0)}
                       </div>
                     )}
+                    {isFreeAmount && !hidePrices && (
+                      <div style={{
+                        fontSize: 11, color: T.neutral[500], marginTop: 1,
+                        letterSpacing: 0.3,
+                      }}>
+                        {Number(p.freeUnitPrice) > 0
+                          ? `Base ${fmtCOP(p.freeUnitPrice)} por unidad`
+                          : 'Sin valor base · se pide al vender'}
+                      </div>
+                    )}
                   </div>
                   {isLunchItem ? (
                     <div style={{

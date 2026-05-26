@@ -25,6 +25,10 @@ import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
 
 const WHATSAPP_NUMBER = '573241878756'  // Colombia (57) + 324 1878756
 
+// Recargo (una sola vez al total) cuando el cliente paga por transferencia
+// (Nequi/Daviplata). Pago en efectivo no tiene recargo.
+const TRANSFER_SURCHARGE = 500
+
 export default function PublicMenu() {
   const today = useBogotaDate()
   const [dailyMenu, setDailyMenu] = useState(null)
@@ -98,10 +102,16 @@ export default function PublicMenu() {
   )
   const hasAnything = corriente.available || !!special || anyAddonAvailable
 
+  // Subtotal = suma de los items. El total final suma el recargo si el
+  // cliente eligió pagar por Nequi/Daviplata.
   const total = useMemo(
     () => cart.reduce((s, it) => s + Number(it.price || 0), 0),
     [cart]
   )
+  // Forma de pago: null = aún no elige (obligatorio antes de enviar).
+  const [paymentMethod, setPaymentMethod] = useState(null) // 'cash' | 'transfer'
+  const surcharge = paymentMethod === 'transfer' ? TRANSFER_SURCHARGE : 0
+  const grandTotal = total + surcharge
 
   function addCorriente(payload) {
     setCart(prev => [...prev, { kind: 'corriente', ...payload }])
@@ -123,14 +133,16 @@ export default function PublicMenu() {
   const [sendState, setSendState] = useState('idle')
 
   async function sendOrder() {
-    if (cart.length === 0 || sendState === 'sending') return
+    // Exigimos que el cliente elija forma de pago antes de enviar.
+    if (cart.length === 0 || !paymentMethod || sendState === 'sending') return
     setSendState('sending')
+    const payment = { paymentMethod, surcharge, subtotal: total, total: grandTotal }
     // 1) Guardar el pedido en Firestore para que el admin pueda confirmarlo
     //    con un solo tap desde el link del WhatsApp. Si falla, igual lo
     //    mandamos por WhatsApp sin link — el admin lo arma a mano.
     let orderId = null
     try {
-      orderId = await createCustomerOrder({ cart, total })
+      orderId = await createCustomerOrder({ cart, total: grandTotal, ...payment })
     } catch (err) {
       console.warn('[PublicMenu] no se pudo guardar customerOrder:', err?.message || err)
     }
@@ -138,13 +150,14 @@ export default function PublicMenu() {
     const confirmUrl = orderId
       ? `${window.location.origin}/comanda/${orderId}`
       : null
-    const msg = buildOrderMessage(cart, confirmUrl)
+    const msg = buildOrderMessage(cart, confirmUrl, payment)
     const url = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`
     window.open(url, '_blank') || (window.location.href = url)
     // 3) Pantalla de "enviado" — limpia el carrito y le confirma al cliente
     //    que el pedido ya está en camino sin que tenga que adivinar.
     setSendState('sent')
     setCart([])
+    setPaymentMethod(null)
   }
   function requestMenu() {
     const msg = 'Hola, buenos días. Quisiera saber a qué hora estaría disponible el menú de hoy para hacer mi pedido. Muchas gracias.'
@@ -223,6 +236,18 @@ export default function PublicMenu() {
               />
             )}
 
+            {/* Selector de forma de pago — obligatorio antes de enviar.
+                Nequi/Daviplata suma un recargo único al total. */}
+            {cart.length > 0 && (
+              <PaymentSelector
+                value={paymentMethod}
+                onChange={setPaymentMethod}
+                surcharge={TRANSFER_SURCHARGE}
+                subtotal={total}
+                grandTotal={grandTotal}
+              />
+            )}
+
             {/* El ESPECIAL va primero (cuando hay) para destacarlo —
                 lleva el mismo formato grande del corriente con tonos
                 dorados/warm que lo distinguen. */}
@@ -269,8 +294,9 @@ export default function PublicMenu() {
           contenedor de arriba ya considera su altura (~96px). */}
       {cart.length > 0 && sendState !== 'sent' && hasAnything && (
         <SendBigButton
-          total={total}
+          total={grandTotal}
           sending={sendState === 'sending'}
+          needsPayment={!paymentMethod}
           onSend={sendOrder}
         />
       )}
@@ -847,11 +873,100 @@ function addonDisplayMeta(item) {
   }
 }
 
+// ─── Selector de forma de pago ───────────────────────────────────
+// Obligatorio antes de enviar. Efectivo = sin recargo; Nequi/Daviplata
+// suma un recargo único (TRANSFER_SURCHARGE) al total.
+function PaymentSelector({ value, onChange, surcharge, subtotal, grandTotal }) {
+  const options = [
+    { id: 'cash', emoji: '💵', label: 'Efectivo', hint: 'Sin recargo' },
+    { id: 'transfer', emoji: '📲', label: 'Nequi / Daviplata', hint: `+ ${fmtCOP(surcharge)}` },
+  ]
+  return (
+    <div style={{
+      marginBottom: 18, borderRadius: 22, background: '#fff',
+      border: `1.5px solid ${T.copper[200]}`,
+      boxShadow: '0 4px 18px rgba(184,122,86,0.10)',
+      overflow: 'hidden',
+      animation: 'pmCardIn 0.4s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      <div style={{
+        padding: '14px 18px 4px',
+        fontSize: 11.5, fontWeight: 800, color: T.copper[700],
+        letterSpacing: 0.5, textTransform: 'uppercase',
+      }}>
+        ¿Cómo vas a pagar?
+      </div>
+      <div style={{ padding: '8px 12px 12px', display: 'flex', gap: 10 }}>
+        {options.map(opt => {
+          const selected = value === opt.id
+          return (
+            <button
+              key={opt.id}
+              onClick={() => onChange(opt.id)}
+              aria-pressed={selected}
+              style={{
+                flex: 1, padding: '14px 10px', borderRadius: 16,
+                background: selected ? T.copper[50] : '#fff',
+                border: `2px solid ${selected ? T.copper[500] : T.neutral[200]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
+            >
+              <span style={{ fontSize: 24, lineHeight: 1 }}>{opt.emoji}</span>
+              <span style={{
+                fontSize: 13.5, fontWeight: 800,
+                color: selected ? T.copper[700] : T.neutral[800],
+                letterSpacing: -0.2, textAlign: 'center', lineHeight: 1.2,
+              }}>
+                {opt.label}
+              </span>
+              <span style={{
+                fontSize: 11.5, fontWeight: 700,
+                color: opt.id === 'transfer' ? T.warn : T.neutral[500],
+                fontVariantNumeric: 'tabular-nums',
+              }}>
+                {opt.hint}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Desglose del recargo solo cuando eligen transferencia, para que
+          el cliente vea claro de dónde sale el total. */}
+      {value === 'transfer' && (
+        <div style={{
+          padding: '0 18px 14px',
+          display: 'flex', flexDirection: 'column', gap: 4,
+          fontSize: 12.5, color: T.neutral[600],
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Subtotal</span><span>{fmtCOP(subtotal)}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Recargo Nequi/Daviplata</span><span>{fmtCOP(surcharge)}</span>
+          </div>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            marginTop: 4, paddingTop: 6, borderTop: `1px solid ${T.neutral[100]}`,
+            fontWeight: 900, color: T.neutral[900], fontSize: 14,
+          }}>
+            <span>Total</span><span>{fmtCOP(grandTotal)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Botón flotante "Enviar pedido" ─────────────────────────────
 // Fijo al fondo del viewport con un wrapper que tiene gradient para
 // que el contenido detrás no choque visualmente. El padding-bottom del
 // contenedor del contenido en PublicMenu deja espacio para que no tape.
-function SendBigButton({ total, sending, onSend }) {
+function SendBigButton({ total, sending, needsPayment, onSend }) {
+  const disabled = sending || needsPayment
   return (
     <div style={{
       position: 'fixed', left: 0, right: 0, bottom: 0,
@@ -870,21 +985,22 @@ function SendBigButton({ total, sending, onSend }) {
         pointerEvents: 'auto',
       }}>
         <button
-          onClick={sending ? undefined : onSend}
-          disabled={sending}
+          onClick={disabled ? undefined : onSend}
+          disabled={disabled}
           style={{
             width: '100%', padding: '18px',
             borderRadius: 18,
-            background: sending ? T.neutral[400] : '#25D366', color: '#fff',
-            border: 'none', cursor: sending ? 'wait' : 'pointer', fontFamily: 'inherit',
+            background: disabled ? T.neutral[400] : '#25D366', color: '#fff',
+            border: 'none', cursor: sending ? 'wait' : (needsPayment ? 'not-allowed' : 'pointer'),
+            fontFamily: 'inherit',
             fontSize: 16, fontWeight: 900, letterSpacing: -0.2,
-            boxShadow: sending ? 'none' : '0 8px 24px rgba(37,211,102,0.45)',
+            boxShadow: disabled ? 'none' : '0 8px 24px rgba(37,211,102,0.45)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
             // Doble animación: halo expansivo (pmPulseSend) + latido sutil
             // del botón (pmHeartbeat) para atraer la atención sin marear.
             // Los tiempos están desfasados (2s vs 2.4s) para que el patrón
-            // no se sienta repetitivo mecánico.
-            animation: sending
+            // no se sienta repetitivo mecánico. Sin animación si está bloqueado.
+            animation: disabled
               ? 'none'
               : 'pmPulseSend 1.8s ease-out infinite, pmHeartbeat 2.4s ease-in-out infinite',
           }}
@@ -899,6 +1015,8 @@ function SendBigButton({ total, sending, onSend }) {
               }}/>
               Enviando…
             </>
+          ) : needsPayment ? (
+            <>👆 Elige cómo vas a pagar</>
           ) : (
             <>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff">
@@ -1078,7 +1196,7 @@ const CAT_LABEL = {
   especial: 'Especial',
 }
 
-function buildOrderMessage(cart, confirmUrl = null) {
+function buildOrderMessage(cart, confirmUrl = null, payment = null) {
   const lines = []
   lines.push('Hola, quiero hacer un pedido para llevar:')
   lines.push('')
@@ -1124,7 +1242,19 @@ function buildOrderMessage(cart, confirmUrl = null) {
     })
     lines.push('')
   }
-  const total = cart.reduce((s, it) => s + Number(it.price || 0), 0)
+  const subtotal = cart.reduce((s, it) => s + Number(it.price || 0), 0)
+  const surcharge = Number(payment?.surcharge) || 0
+  const total = subtotal + surcharge
+  // Forma de pago + desglose. Si hay recargo, mostramos subtotal y recargo
+  // para que el cobro quede claro tanto para el cliente como para el admin.
+  if (payment?.paymentMethod) {
+    const payLabel = payment.paymentMethod === 'transfer' ? 'Nequi / Daviplata' : 'Efectivo'
+    lines.push(`Forma de pago: ${payLabel}`)
+  }
+  if (surcharge > 0) {
+    lines.push(`Subtotal: ${fmtCOP(subtotal)}`)
+    lines.push(`Recargo Nequi/Daviplata: ${fmtCOP(surcharge)}`)
+  }
   lines.push(`TOTAL: ${fmtCOP(total)}`)
   // Link de confirmación (solo si guardamos el pedido en Firestore). Al
   // admin le llega como parte del mismo WhatsApp; un tap y el pedido entra

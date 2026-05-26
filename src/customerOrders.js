@@ -42,7 +42,10 @@ import { getClientTimestamp } from './utils/network'
 //       note?: string,           // observaciones del cliente
 //       price: number,           // total del item (unitPrice * quantity para addons)
 //     }]
-//     total: number
+//     subtotal: number          // suma de los items, sin recargo
+//     surcharge: number         // recargo por pago (Nequi/Daviplata), 0 si efectivo
+//     paymentMethod: 'cash' | 'transfer' | null
+//     total: number             // subtotal + surcharge
 //     createdAt, createdAtClient
 //     confirmedBy?, confirmedByName?, confirmedAt?
 //     tabId?, orderIds?, customerName?
@@ -52,7 +55,7 @@ const ordersCol = () => collection(firestoreDb, 'customerOrders')
 const orderRef = (id) => doc(firestoreDb, 'customerOrders', id)
 
 /** Crea un pedido pendiente de confirmación del admin. Devuelve el id. */
-export async function createCustomerOrder({ cart, total }) {
+export async function createCustomerOrder({ cart, total, subtotal, surcharge, paymentMethod }) {
   // Sanitizamos lo que se guarda — solo los campos que necesitamos. Evita
   // que cualquier basura del cliente termine en Firestore.
   const validAddonTypes = new Set(['soup', 'egg', 'protein'])
@@ -106,9 +109,19 @@ export async function createCustomerOrder({ cart, total }) {
     return out
   })
 
+  // Forma de pago elegida por el cliente. 'transfer' (Nequi/Daviplata) suma
+  // un recargo al total; 'cash' no. Cualquier otra cosa se guarda como null.
+  const validPayment = paymentMethod === 'transfer' ? 'transfer'
+    : paymentMethod === 'cash' ? 'cash'
+    : null
+  const surchargeNum = Number(surcharge) || 0
+  const totalNum = Number(total) || 0
   const data = {
     cart: cleanCart,
-    total: Number(total) || 0,
+    total: totalNum,
+    subtotal: Number(subtotal) || (totalNum - surchargeNum),
+    surcharge: surchargeNum,
+    paymentMethod: validPayment,
     status: 'pending',
     createdAt: serverTimestamp(),
     createdAtClient: getClientTimestamp(),

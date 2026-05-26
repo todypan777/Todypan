@@ -185,6 +185,45 @@ function OrderSummary({ order }) {
       {(order.cart || []).map((item, i) => (
         <OrderItemRow key={i} item={item} index={i} isLast={i === order.cart.length - 1} />
       ))}
+
+      {/* Forma de pago + desglose del recargo (Nequi/Daviplata). Solo
+          mostramos subtotal/recargo cuando hubo recargo, para no ensuciar
+          los pedidos en efectivo. */}
+      {order.paymentMethod && (
+        <div style={{
+          marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.neutral[100]}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.neutral[600] }}>
+            Forma de pago
+          </span>
+          <span style={{
+            fontSize: 12.5, fontWeight: 800,
+            color: order.paymentMethod === 'transfer' ? T.warn : T.neutral[800],
+            padding: '3px 10px', borderRadius: 999,
+            background: order.paymentMethod === 'transfer' ? '#FFF7E6' : T.neutral[50],
+            border: `1px solid ${order.paymentMethod === 'transfer' ? '#F4E0BC' : T.neutral[200]}`,
+          }}>
+            {order.paymentMethod === 'transfer' ? '📲 Nequi / Daviplata' : '💵 Efectivo'}
+          </span>
+        </div>
+      )}
+
+      {Number(order.surcharge) > 0 && (
+        <div style={{
+          marginTop: 8,
+          display: 'flex', flexDirection: 'column', gap: 4,
+          fontSize: 12.5, color: T.neutral[600], fontVariantNumeric: 'tabular-nums',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Subtotal</span><span>{fmtCOP(order.subtotal ?? ((order.total || 0) - order.surcharge))}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Recargo Nequi/Daviplata</span><span>{fmtCOP(order.surcharge)}</span>
+          </div>
+        </div>
+      )}
+
       <div style={{
         marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.neutral[100]}`,
         display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',

@@ -193,6 +193,10 @@ function PublishedMenuCard({ today, resolved, special, especialItems, corriente,
       setPromptCopied(true)
       setPromptError(null)
       setTimeout(() => setPromptCopied(false), 2400)
+      // Abrimos Gemini en pestaña nueva para que solo reste pegar (Ctrl+V) y enviar.
+      // El navegador bloquea escribir directo en el campo de otro sitio, así que
+      // el prompt va por el portapapeles.
+      window.open('https://gemini.google.com/app', '_blank', 'noopener,noreferrer')
     } catch (err) {
       console.error('[menu] copy prompt failed:', err)
       setPromptError('No pudimos copiar. Intenta de nuevo.')
@@ -304,9 +308,9 @@ function PublishedMenuCard({ today, resolved, special, especialItems, corriente,
           )}
 
           {/* Atajo para generar imagen del menú con IA externa.
-              Copia un prompt parametrizado con el menú de hoy ya inyectado;
-              la cocinera/admin lo pega en ChatGPT / Midjourney / Gemini y
-              obtiene la imagen para WhatsApp / redes. */}
+              Copia un prompt parametrizado con el menú de hoy ya inyectado y
+              abre Gemini en pestaña nueva; la cocinera/admin solo pega y envía
+              para obtener la imagen para WhatsApp / redes. */}
           <div style={{
             marginTop: 10, paddingTop: 12,
             borderTop: `1px dashed ${T.copper[100]}`,
@@ -323,17 +327,17 @@ function PublishedMenuCard({ today, resolved, special, especialItems, corriente,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 transition: 'background 0.15s, border-color 0.15s, color 0.15s',
               }}
-              aria-label="Copiar prompt para generar imagen del menú con IA"
+              aria-label="Copiar prompt y abrir Gemini para generar imagen del menú"
             >
               {promptCopied
-                ? <>✓ Copiado al portapapeles</>
-                : <>🎨 Copiar prompt para imagen IA</>}
+                ? <>✓ Copiado · abriendo Gemini…</>
+                : <>🎨 Generar imagen en Gemini</>}
             </button>
             <div style={{
               fontSize: 11, color: T.neutral[500], marginTop: 6,
               textAlign: 'center', lineHeight: 1.4,
             }}>
-              Pegalo en ChatGPT, Midjourney o Gemini para generar la imagen del día.
+              Copiamos el prompt y abrimos Gemini. Solo pega (Ctrl+V o mantén presionado → Pegar) y envía.
             </div>
             {promptError && (
               <div style={{

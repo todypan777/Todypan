@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
-import { getData, setProductPriceForBranch } from '../db'
+import { getData, setProductPriceForBranch, updateProduct } from '../db'
 import { useBogotaDate, useBogotaHour } from '../utils/useBogotaDate'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
   createCashierProduct,
   setCashierProductPriceForBranch,
+  patchCashierProduct,
   getProductPrice,
 } from '../products'
 import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
@@ -369,12 +370,24 @@ export default function NewSale({
   // unidades reales y el valor base; sin valor base (legacy) es 1 × el monto.
   // El total de la línea = qty * unitPrice, así que el reporte queda con las
   // unidades vendidas.
-  function handleConfirmFreeAmount({ units, unitPrice }) {
+  function handleConfirmFreeAmount({ units, unitPrice, newBase }) {
     if (!freeAmountTarget) return
     const u = Number(units) || 0
     const up = Number(unitPrice) || 0
     if (u <= 0 || up <= 0) return
     const { product, editingKey } = freeAmountTarget
+
+    // Si la cajera definió el valor base que faltaba, lo guardamos en el
+    // producto (valor faltante → directo, igual que el primer precio). Así
+    // queda registrado para inventario y no se vuelve a preguntar.
+    if (newBase && Number(newBase) > 0) {
+      try {
+        if (product.source === 'admin') updateProduct(product.id, { freeUnitPrice: Number(newBase) })
+        else patchCashierProduct(product.id, { freeUnitPrice: Number(newBase) }).catch(() => {})
+      } catch (e) {
+        console.warn('[freeAmount] no se pudo guardar el valor base:', e?.message || e)
+      }
+    }
 
     if (editingKey) {
       setCart(prev => prev.map(it =>
@@ -2802,24 +2815,23 @@ function FirstTimePriceModal({ product, branchName, onCancel, onConfirm }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: ¿De cuánto? (productos de venta libre, ej: "Pan")
 // ──────────────────────────────────────────────────────────────
-function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCancel, onConfirm }) {
-  const base = Number(product.freeUnitPrice) || 0
-  const hasBase = base > 0
+function FreeAmountModal({ product, isEditing, initialUnits, onCancel, onConfirm }) {
+  const MIN_BASE = 100
+  const productBase = Number(product.freeUnitPrice) || 0
+  const baseFromProduct = productBase > 0
 
   function sanitize(raw) {
     return raw.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
   }
 
-  // ── Modo SIN valor base (compatibilidad): solo monto, qty 1 ──
-  // (Productos de venta libre antiguos a los que aún no se les puso valor base.)
-  const LEGACY_MIN = 400
-  const [legacyStr, setLegacyStr] = useState(
-    !hasBase && initialAmount ? String(initialAmount) : ''
-  )
+  // Si el producto NO tiene valor base aún, la cajera lo define aquí (se guarda
+  // en el producto, igual que el "primer precio"). Si ya lo tiene, se usa fijo.
+  const [baseStr, setBaseStr] = useState(baseFromProduct ? String(productBase) : '')
+  const base = baseFromProduct ? productBase : (Number(baseStr) || 0)
+  const baseReady = base >= MIN_BASE
 
-  // ── Modo CON valor base: monto ⇄ unidades sincronizados ──
   const [amountStr, setAmountStr] = useState(
-    hasBase && initialUnits ? String(Number(initialUnits) * base) : ''
+    baseFromProduct && initialUnits ? String(Number(initialUnits) * productBase) : ''
   )
 
   function setFromAmount(raw) {
@@ -2827,87 +2839,24 @@ function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCa
   }
   function setFromUnits(raw) {
     const u = Number(sanitize(raw)) || 0
-    setAmountStr(u > 0 ? String(u * base) : '')
+    setAmountStr(u > 0 && base > 0 ? String(u * base) : '')
   }
 
-  if (!hasBase) {
-    const num = Number(legacyStr) || 0
-    const valid = num >= LEGACY_MIN
-    return (
-      <ModalOverlay onClose={onCancel}>
-        <div onClick={e => e.stopPropagation()} style={modalCard()}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4, textAlign: 'center' }}>
-            {isEditing ? `Cambiar monto · ${product.name}` : `${product.name}`}
-          </div>
-          <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 18, textAlign: 'center' }}>
-            ¿De cuánto?
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
-            <div style={{
-              display: 'flex', alignItems: 'center',
-              border: `2px solid ${valid ? T.copper[400] : T.neutral[200]}`,
-              borderRadius: 16, background: '#fff', padding: '8px 16px',
-            }}>
-              <span style={{ paddingRight: 6, color: T.neutral[500], fontSize: 24, fontWeight: 700 }}>$</span>
-              <input
-                type="text" inputMode="numeric" autoFocus
-                value={legacyStr}
-                onChange={e => setLegacyStr(sanitize(e.target.value))}
-                placeholder="0"
-                style={{
-                  width: 160, padding: '6px 0', border: 'none', outline: 'none',
-                  fontFamily: 'inherit', fontSize: 32, fontWeight: 800,
-                  color: T.neutral[900], background: 'transparent',
-                  fontVariantNumeric: 'tabular-nums', letterSpacing: -1, textAlign: 'center',
-                }}
-              />
-            </div>
-          </div>
-          {legacyStr && num > 0 && num < LEGACY_MIN && (
-            <div style={{
-              marginBottom: 12, padding: '8px 12px', borderRadius: 10,
-              background: '#FBE9E5', border: `1px solid #F0C8BE`, color: T.bad,
-              fontSize: 12.5, fontWeight: 600, textAlign: 'center',
-            }}>
-              Monto mínimo: ${LEGACY_MIN.toLocaleString('es-CO')}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={onCancel} style={btnSecondary()}>Cancelar</button>
-            <button
-              onClick={() => valid && onConfirm({ units: 1, unitPrice: num })}
-              disabled={!valid}
-              style={{
-                ...btnPrimary(valid ? T.copper[500] : T.neutral[200]),
-                flex: 1.4, color: valid ? '#fff' : T.neutral[400],
-                cursor: valid ? 'pointer' : 'not-allowed',
-                boxShadow: valid ? '0 3px 10px rgba(184,122,86,0.3)' : 'none',
-              }}
-            >
-              {isEditing ? 'Cambiar' : 'Agregar'}
-            </button>
-          </div>
-        </div>
-      </ModalOverlay>
-    )
-  }
-
-  // ── Modo CON valor base ──
   const amount = Number(amountStr) || 0
-  const units = amount / base
-  const isMultiple = amount > 0 && amount % base === 0
-  const valid = amount >= base && isMultiple
+  const units = base > 0 ? amount / base : 0
+  const isMultiple = base > 0 && amount > 0 && amount % base === 0
+  const valid = baseReady && amount >= base && isMultiple
   const unitsStr = isMultiple ? String(units) : ''
 
   // Opciones cercanas cuando el monto no es múltiplo del valor base.
-  const floorU = Math.floor(amount / base)
+  const floorU = base > 0 ? Math.floor(amount / base) : 0
   const lowU = Math.max(1, floorU)
   const highU = floorU + 1
-  const showMismatch = amount > 0 && !isMultiple
+  const showMismatch = baseReady && amount > 0 && !isMultiple
 
   function confirm() {
     if (!valid) return
-    onConfirm({ units, unitPrice: base })
+    onConfirm({ units, unitPrice: base, newBase: baseFromProduct ? null : base })
   }
 
   return (
@@ -2917,10 +2866,47 @@ function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCa
           {isEditing ? `Cambiar · ${product.name}` : `${product.name}`}
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16, textAlign: 'center' }}>
-          Valor base: <b style={{ color: T.copper[700] }}>{fmtCOP(base)}</b> por unidad
+          {baseFromProduct
+            ? <>Valor base: <b style={{ color: T.copper[700] }}>{fmtCOP(productBase)}</b> por unidad</>
+            : 'Este producto aún no tiene valor base'}
         </div>
 
-        {/* Dos entradas sincronizadas: monto y unidades */}
+        {/* Pedir el valor base si falta (se guarda en el producto) */}
+        {!baseFromProduct && (
+          <div style={{
+            marginBottom: 14, padding: '12px', borderRadius: 12,
+            background: T.copper[50], border: `1px solid ${T.copper[200]}`,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: T.copper[700], marginBottom: 6 }}>
+              Valor base por unidad (ej: pan a $400)
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              border: `1.5px solid ${baseReady ? T.copper[400] : T.neutral[200]}`,
+              borderRadius: 12, background: '#fff', maxWidth: 200,
+            }}>
+              <span style={{ paddingLeft: 12, color: T.neutral[500], fontSize: 16, fontWeight: 700 }}>$</span>
+              <input
+                type="text" inputMode="numeric" autoFocus
+                value={baseStr}
+                onChange={e => setBaseStr(sanitize(e.target.value))}
+                placeholder="0"
+                style={{
+                  width: '100%', padding: '10px 12px 10px 6px', border: 'none', outline: 'none',
+                  fontFamily: 'inherit', fontSize: 18, fontWeight: 800,
+                  color: T.neutral[900], background: 'transparent',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              />
+            </div>
+            <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 6, lineHeight: 1.4 }}>
+              Queda guardado en el producto para registrar las unidades.
+            </div>
+          </div>
+        )}
+
+        {/* Dos entradas sincronizadas: monto y unidades (solo con base lista) */}
+        {baseReady && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: T.neutral[500], marginBottom: 4, textAlign: 'center' }}>MONTO</div>
@@ -2931,7 +2917,7 @@ function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCa
             }}>
               <span style={{ color: T.neutral[500], fontSize: 20, fontWeight: 700 }}>$</span>
               <input
-                type="text" inputMode="numeric" autoFocus
+                type="text" inputMode="numeric" autoFocus={baseFromProduct}
                 value={amountStr}
                 onChange={e => setFromAmount(e.target.value)}
                 placeholder="0"
@@ -2966,6 +2952,7 @@ function FreeAmountModal({ product, isEditing, initialUnits, initialAmount, onCa
             </div>
           </div>
         </div>
+        )}
 
         {/* Resumen / validación */}
         {valid && (

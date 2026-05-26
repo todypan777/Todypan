@@ -10,6 +10,7 @@ import {
   adminCloseNonCashSession,
   discardEmptySession,
   getLatestClosedSessionForBranch,
+  sessionRoleLabel,
 } from '../cashSessions'
 import { watchSessionSales } from '../sales'
 import {
@@ -317,6 +318,7 @@ export default function ActiveTurnsCard() {
         <OpenShiftModal
           branch={openingBranch}
           allUsers={allUsers}
+          openSessions={openSessions}
           adminUid={authUser.uid}
           onCancel={() => setOpeningBranch(null)}
           onOpened={() => setOpeningBranch(null)}
@@ -328,6 +330,7 @@ export default function ActiveTurnsCard() {
         <OpenNonCashShiftModal
           branches={branches}
           allUsers={allUsers}
+          openSessions={openSessions}
           onCancel={() => setOpeningNonCash(false)}
           onOpened={() => setOpeningNonCash(false)}
         />
@@ -563,9 +566,45 @@ function BranchRow({ branch, session, isLast, onOpen, onClose, onAssist, onDisca
 }
 
 // ──────────────────────────────────────────────────────────────
+// Aviso: la persona seleccionada YA tiene turno(s) abierto(s). No bloquea —
+// abrir un segundo turno es válido (la persona podrá cambiar entre roles desde
+// su menú). Solo informa para que el admin no lo haga por error.
+// ──────────────────────────────────────────────────────────────
+function ExistingTurnsNotice({ sessions }) {
+  if (!sessions || sessions.length === 0) return null
+  return (
+    <div style={{
+      margin: '0 0 14px', padding: '10px 12px', borderRadius: 10,
+      background: '#FFF7E6', border: `1px solid #F4E0BC`,
+      display: 'flex', alignItems: 'flex-start', gap: 8,
+    }}>
+      <div style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>⚠️</div>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: '#7A5C00', lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 700 }}>
+          Esta persona ya tiene {sessions.length === 1 ? 'un turno abierto' : `${sessions.length} turnos abiertos`}:
+        </div>
+        <div style={{ marginTop: 2 }}>
+          {sessions.map(s => {
+            const { label } = sessionRoleLabel(s)
+            return (
+              <div key={s.id}>
+                • {label}{s.branchName ? ` · ${s.branchName}` : ''}
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ color: '#9A7200', marginTop: 4 }}>
+          Si abres otro, podrá cambiar entre ellos desde su menú de perfil.
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
 // MODAL: Abrir turno (admin elige cajera + monto inicial)
 // ──────────────────────────────────────────────────────────────
-function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
+function OpenShiftModal({ branch, allUsers, openSessions, adminUid, onCancel, onOpened }) {
   const cashFloor = getCashFloor(branch.id)
   const [cashierUid, setCashierUid] = useState('')
   const [amountStr, setAmountStr] = useState(String(cashFloor))
@@ -614,6 +653,10 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
   )
 
   const selectedCashier = cashiers.find(c => c.uid === cashierUid)
+  const personSessions = useMemo(
+    () => (openSessions || []).filter(s => s.cashierUid === cashierUid),
+    [openSessions, cashierUid],
+  )
   const amount = Number(amountStr) || 0
   const canConfirm = !busy && cashierUid && amount >= 0
 
@@ -692,6 +735,8 @@ function OpenShiftModal({ branch, allUsers, adminUid, onCancel, onOpened }) {
           </div>
         )}
       </Field>
+
+      <ExistingTurnsNotice sessions={personSessions} />
 
       <Field label={`Monto inicial en caja (base de ${fmtCOP(cashFloor)})`}>
         {/* Banner heredado: indica de dónde viene el monto pre-llenado para
@@ -2151,7 +2196,7 @@ function NonCashShiftRow({ session, isLast, onAssist, onClose, onDiscard }) {
 // ──────────────────────────────────────────────────────────────
 // MODAL: Abrir turno de cocina / domiciliaria-mesera
 // ──────────────────────────────────────────────────────────────
-function OpenNonCashShiftModal({ branches, allUsers, onCancel, onOpened }) {
+function OpenNonCashShiftModal({ branches, allUsers, openSessions, onCancel, onOpened }) {
   const [shiftType, setShiftType] = useState('kitchen') // 'kitchen' | 'waitress'
   const [branchId, setBranchId] = useState(branches[0]?.id || '')
   const [personUid, setPersonUid] = useState('')
@@ -2165,6 +2210,10 @@ function OpenNonCashShiftModal({ branches, allUsers, onCancel, onOpened }) {
   )
 
   const selectedPerson = people.find(p => p.uid === personUid)
+  const personSessions = useMemo(
+    () => (openSessions || []).filter(s => s.cashierUid === personUid),
+    [openSessions, personUid],
+  )
   const selectedBranch = branches.find(b => b.id === branchId)
   const canConfirm = !busy && shiftType && branchId && personUid
 
@@ -2255,6 +2304,8 @@ function OpenNonCashShiftModal({ branches, allUsers, onCancel, onOpened }) {
           </div>
         )}
       </Field>
+
+      <ExistingTurnsNotice sessions={personSessions} />
 
       {error && <ErrorBox text={error} />}
 

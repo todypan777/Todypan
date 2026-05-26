@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
-import { getData, setProductPriceForBranch, updateProduct } from '../db'
+import { getData, setProductPriceForBranch, updateProduct, watchSharedData } from '../db'
 import { useBogotaDate, useBogotaHour } from '../utils/useBogotaDate'
 import {
   watchCashierProducts,
@@ -88,6 +88,11 @@ export default function NewSale({
       ? { createdByRole: 'admin', createdByUid: authUser.uid, createdByName: assistMode.adminName }
       : { createdByRole: 'cashier' }
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
+  // Sincronización en vivo del catálogo del admin (/todypan/data): sin esto,
+  // un cambio de precio aprobado por el admin no llegaba a la tablet de la
+  // cajera hasta recargar la app.
+  const [, setSharedTick] = useState(0)
+  useEffect(() => watchSharedData(() => setSharedTick(t => t + 1)), [])
   const adminProducts = getData().products || []
   const catalog = useMemo(
     () => mergeProductCatalogs(adminProducts, cashierProducts),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { getData } from '../db'
+import { getData, watchSharedData } from '../db'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
@@ -24,6 +24,9 @@ export default function ProductCatalogPanel({
 }) {
   const [cashierProducts, setCashierProducts] = useState([])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+  // Catálogo admin en vivo (ver watchSharedData).
+  const [, setSharedTick] = useState(0)
+  useEffect(() => watchSharedData(() => setSharedTick(t => t + 1)), [])
 
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState('all') // 'all' | 'normal' | 'free'

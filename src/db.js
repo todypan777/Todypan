@@ -1,5 +1,5 @@
 import { firestoreDb } from './firebase'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
 
 // ─── Refs ─────────────────────────────────────────────────────
 const LOCAL_KEY = 'todypan_v1'
@@ -135,6 +135,31 @@ export async function initDB() {
 }
 
 export function getData() { return _data || defaultData() }
+
+/**
+ * Suscripción EN VIVO al doc compartido /todypan/data. Necesaria porque los
+ * productos del admin (y demás datos compartidos) viven aquí y antes solo se
+ * leían una vez al arrancar: un cambio del admin (ej. aprobar el nuevo precio
+ * de un producto) NO llegaba a la tablet de la cajera hasta recargar la app.
+ *
+ * Cada snapshot refresca `_data` y la caché local, y avisa por callback para
+ * que la UI se vuelva a pintar. Ignora los snapshots de nuestras PROPIAS
+ * escrituras aún sin confirmar (hasPendingWrites): ya tenemos ese estado en
+ * memoria y re-aplicarlo solo causaría parpadeo.
+ */
+export function watchSharedData(callback) {
+  return onSnapshot(
+    FS_REF,
+    snap => {
+      if (!snap.exists()) return
+      if (snap.metadata.hasPendingWrites) return // eco de nuestra propia escritura
+      _data = migrate(snap.data())
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+      if (typeof callback === 'function') callback(_data)
+    },
+    err => console.warn('[TodyPan] watchSharedData:', err?.message || err),
+  )
+}
 
 function persist() {
   if (!_data) return

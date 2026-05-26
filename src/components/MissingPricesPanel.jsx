@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
-import { getData, setProductPriceForBranch } from '../db'
+import { getData, setProductPriceForBranch, watchSharedData } from '../db'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
@@ -22,6 +22,8 @@ import {
 export default function MissingPricesPanel({ branchId, branchName, branches, onClose }) {
   const [cashierProducts, setCashierProducts] = useState([])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+  const [, setSharedTick] = useState(0)
+  useEffect(() => watchSharedData(() => setSharedTick(t => t + 1)), [])
 
   const adminProducts = getData().products || []
   const catalog = useMemo(

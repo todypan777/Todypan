@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { T } from '../tokens'
 import { UserAvatar } from '../components/Atoms'
 import { signOut } from '../auth'
+import RoleSwitcher from '../components/RoleSwitcher'
 import {
   CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig, resolveDailyMenu,
@@ -37,7 +38,7 @@ import {
 //                       top bar por una con flecha de volver y oculta el
 //                       avatar/logout.
 // ──────────────────────────────────────────────────────────────
-export default function CookApp({ authUser, userDoc, assistMode }) {
+export default function CookApp({ authUser, userDoc, assistMode, availableSessions, currentSessionId, onSwitchSession }) {
   const [tab, setTab] = useState('today')
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
@@ -219,6 +220,9 @@ export default function CookApp({ authUser, userDoc, assistMode }) {
           userDoc={userDoc}
           onCancel={() => setMenuOpen(false)}
           onSignOut={() => { setMenuOpen(false); setConfirmSignOut(true) }}
+          availableSessions={availableSessions}
+          currentSessionId={currentSessionId}
+          onSwitchSession={onSwitchSession}
         />
       )}
 
@@ -1785,7 +1789,7 @@ function formatElapsed(secs) {
 // ──────────────────────────────────────────────────────────────
 // Avatar menu y sign-out (solo cocinera, no admin asistiendo)
 // ──────────────────────────────────────────────────────────────
-function AvatarMenuOverlay({ authUser, userDoc, onCancel, onSignOut }) {
+function AvatarMenuOverlay({ authUser, userDoc, onCancel, onSignOut, availableSessions, currentSessionId, onSwitchSession }) {
   return (
     <ModalOverlay onClose={onCancel}>
       <div onClick={e => e.stopPropagation()} style={{
@@ -1812,6 +1816,15 @@ function AvatarMenuOverlay({ authUser, userDoc, onCancel, onSignOut }) {
             </div>
           </div>
         </div>
+
+        {/* Cambiar de rol (solo si la cuenta tiene 2+ turnos abiertos) */}
+        <RoleSwitcher
+          sessions={availableSessions}
+          currentId={currentSessionId}
+          onSwitch={onSwitchSession}
+          onAfterSwitch={onCancel}
+        />
+
         <ContactSupportButton
           variant="menu"
           reason="Algo no funciona en la app de cocina"

@@ -11,6 +11,7 @@ import { setupAudioUnlock, playOrderReadySound } from '../utils/notificationSoun
 import OpenTabsBubbles from '../components/OpenTabsBubbles'
 import NewSale from './NewSale'
 import { CashierTaskList } from './CashierApp'
+import RoleSwitcher from '../components/RoleSwitcher'
 
 /**
  * App de la MESERA / domiciliaria.
@@ -29,7 +30,7 @@ import { CashierTaskList } from './CashierApp'
  *   - assistMode (opt): por ahora no se usa (el admin no asiste meseras), pero
  *     se respeta para ocultar "Cerrar sesión" si algún día se habilita.
  */
-export default function WaitressApp({ authUser, userDoc, session, assistMode }) {
+export default function WaitressApp({ authUser, userDoc, session, assistMode, availableSessions, currentSessionId, onSwitchSession }) {
   const isAssist = !!assistMode
 
   // Caja abierta de la panadería de la mesera (donde se enganchan sus mesas).
@@ -157,6 +158,20 @@ export default function WaitressApp({ authUser, userDoc, session, assistMode }) 
               agregar más. La cajera las cobra.
             </div>
           </>
+        )}
+
+        {/* Cambiar de rol (solo si la cuenta tiene 2+ turnos abiertos) */}
+        {!isAssist && Array.isArray(availableSessions) && availableSessions.length >= 2 && (
+          <div style={{
+            marginTop: 18, background: '#fff', borderRadius: 14,
+            border: `1px solid ${T.neutral[100]}`, overflow: 'hidden',
+          }}>
+            <RoleSwitcher
+              sessions={availableSessions}
+              currentId={currentSessionId}
+              onSwitch={onSwitchSession}
+            />
+          </div>
         )}
 
         {!isAssist && (

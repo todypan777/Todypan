@@ -75,6 +75,51 @@ export function watchMyOpenSession(uid, callback) {
 }
 
 /**
+ * Suscripción a TODAS las sesiones abiertas del usuario actual. Una cuenta
+ * puede tener más de una si el admin le asignó dos roles a la vez (ej. caja +
+ * cocina). Devuelve el array completo ordenado por apertura (estable para
+ * elegir un default). La usa StaffApp para permitir cambiar de rol.
+ *
+ * En error NO llamamos callback (igual criterio que watchMyOpenSession):
+ * mantenemos el último valor para no expulsar al empleado a "sin turno" por un
+ * hipo de red.
+ */
+export function watchMyOpenSessions(uid, callback) {
+  if (!uid) { callback([]); return () => {} }
+  const q = query(
+    sessionsCol(),
+    where('status', '==', 'open'),
+    where('cashierUid', '==', uid),
+  )
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => {
+        const ta = a.openedAt?.toMillis?.() ?? a.openedAtClient ?? 0
+        const tb = b.openedAt?.toMillis?.() ?? b.openedAtClient ?? 0
+        return ta - tb
+      })
+      callback(list)
+    },
+    err => {
+      console.error('[cashSessions] watchMyOpenSessions error (manteniendo último valor):', err?.message || err)
+    },
+  )
+}
+
+/**
+ * Etiqueta legible del rol funcional de una sesión (para el selector de rol).
+ * Devuelve { key, label, icon }.
+ */
+export function sessionRoleLabel(session) {
+  const type = session?.type || 'cash'
+  if (type === 'kitchen') return { key: 'kitchen', label: 'Cocina', icon: '🍳' }
+  if (type === 'waitress') return { key: 'waitress', label: 'Mesera / Domiciliaria', icon: '🍽️' }
+  return { key: 'cash', label: 'Caja', icon: '🧾' }
+}
+
+/**
  * Suscripción a la sesión de CAJA abierta de una panadería (única por D5).
  * La usa la mesera para enganchar sus mesas/almuerzos a la caja de su
  * panadería. callback(session | null).

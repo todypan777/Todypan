@@ -5,7 +5,8 @@ import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
 import { signOut } from '../auth'
 import { getData } from '../db'
-import { watchMyOpenSession, confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
+import { confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
+import RoleSwitcher from '../components/RoleSwitcher'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses, updateCashExpense, deleteCashExpense } from '../cashExpenses'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
@@ -32,26 +33,10 @@ import {
 
 // ──────────────────────────────────────────────────────────────
 // Wrapper top-level (D25): el admin abre y cierra los turnos.
-// Si la cajera tiene sesión open → POS. Si no → "sin turno asignado".
+// La sesión activa la decide StaffApp y llega por prop (puede haber 2+ turnos
+// en la cuenta; aquí siempre recibimos UNO de tipo caja, ya garantizado open).
 // ──────────────────────────────────────────────────────────────
-export default function CashierApp({ authUser, userDoc }) {
-  const [mySession, setMySession] = useState(undefined) // undefined=loading
-
-  useEffect(() => watchMyOpenSession(authUser.uid, setMySession), [authUser.uid])
-
-  // Anti-deadlock del modo ahorro: mientras NO haya turno abierto, la red DEBE
-  // seguir conectada para poder recibir la apertura que hace el admin. Con el
-  // ahorro activo Firestore quedaba desconectado y el aviso de "turno abierto"
-  // nunca llegaba → la cajera se quedaba atascada en "sin turno" sin forma de
-  // apagar el ahorro desde esa pantalla. Reconectamos mientras espera; al abrir
-  // el turno volvemos a respetar su preferencia de ahorro.
-  useEffect(() => {
-    if (mySession === undefined) return // aún cargando
-    if (!isDataSaverEnabled()) return // sin ahorro: nada que forzar
-    if (mySession) applyDataSaverOnBoot().catch(() => {})
-    else ensureNetworkForWaiting().catch(() => {})
-  }, [mySession])
-
+export default function CashierApp({ authUser, userDoc, session, availableSessions, currentSessionId, onSwitchSession }) {
   // Desbloquea el audio al primer tap. Necesario para que el sonido de
   // llamada de cocina suene en iOS (Safari bloquea audio sin gesto previo).
   useEffect(() => { setupAudioUnlock() }, [])
@@ -61,9 +46,18 @@ export default function CashierApp({ authUser, userDoc }) {
   // Blinda la cola offline de ventas/gastos/mesas contra el borrado del SO.
   useEffect(() => { requestPersistentStorage() }, [])
 
-  if (mySession === undefined) {
-    return <LoadingScreen label="Verificando turno..." />
-  }
+  // Modo ahorro: con turno de caja activo respetamos la preferencia de la
+  // cajera (desconectar la red si está activa). EXCEPCIÓN: mientras la apertura
+  // siga 'pending', mantenemos la red conectada — confirmOpeningAmount /
+  // reportOpeningDispute usan `await updateDoc`, que se colgaría sin red. Una
+  // vez confirmada, ya todo lo que escribe la cajera es fire-and-forget y el
+  // ahorro puede desconectar sin colgar nada.
+  const openingPending = session.openingConfirmation?.status === 'pending'
+  useEffect(() => {
+    if (!isDataSaverEnabled()) return
+    if (openingPending) ensureNetworkForWaiting().catch(() => {})
+    else applyDataSaverOnBoot().catch(() => {})
+  }, [openingPending])
 
   return (
     <div style={{
@@ -74,21 +68,20 @@ export default function CashierApp({ authUser, userDoc }) {
       <CashierTopBar
         authUser={authUser}
         userDoc={userDoc}
-        session={mySession}
+        session={session}
         branches={getData().branches || []}
+        availableSessions={availableSessions}
+        currentSessionId={currentSessionId}
+        onSwitchSession={onSwitchSession}
       />
 
       <ConnectivityBanner />
       <StorageHealthBanner />
 
-      {mySession ? (
-        mySession.openingConfirmation?.status === 'pending' ? (
-          <ConfirmOpeningScreen session={mySession} userDoc={userDoc} authUser={authUser} />
-        ) : (
-          <ActiveSession session={mySession} userDoc={userDoc} authUser={authUser} />
-        )
+      {session.openingConfirmation?.status === 'pending' ? (
+        <ConfirmOpeningScreen session={session} userDoc={userDoc} authUser={authUser} />
       ) : (
-        <NoShiftAssigned userDoc={userDoc} />
+        <ActiveSession session={session} userDoc={userDoc} authUser={authUser} />
       )}
     </div>
   )
@@ -224,51 +217,6 @@ function StorageHealthBanner() {
             ? 'Con poco espacio y modo ahorro activo, tus ventas sin subir podrían perderse. Sincroniza seguido y libera espacio en el celular.'
             : 'Podría borrar lo guardado sin conexión. Libera espacio en el celular para no perder ventas ni gastos.'}
         </div>
-      </div>
-    </div>
-  )
-}
-
-// ──────────────────────────────────────────────────────────────
-// PANTALLA: Sin turno asignado
-// La cajera ve esto hasta que el admin le abra un turno desde su panel.
-// ──────────────────────────────────────────────────────────────
-function NoShiftAssigned({ userDoc }) {
-  const firstName = userDoc?.nombre || 'Hola'
-  return (
-    <div style={{
-      padding: '60px 24px 40px', maxWidth: 480, margin: '0 auto',
-      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 18,
-    }}>
-      <div style={{
-        width: 96, height: 96, borderRadius: 999,
-        background: T.copper[50], border: `1px solid ${T.copper[100]}`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}>
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-          <circle cx="12" cy="12" r="9" stroke={T.copper[600]} strokeWidth="1.6" fill="none"/>
-          <path d="M12 7 V12 L15 14" stroke={T.copper[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-        </svg>
-      </div>
-      <div style={{
-        fontSize: 22, fontWeight: 800, color: T.neutral[900],
-        letterSpacing: -0.4, textAlign: 'center', lineHeight: 1.25,
-      }}>
-        {firstName}, no tienes turno asignado
-      </div>
-      <div style={{
-        fontSize: 14, color: T.neutral[600], textAlign: 'center',
-        lineHeight: 1.55, maxWidth: 340,
-      }}>
-        El administrador te abrirá el turno desde su panel cuando estés lista para empezar.
-      </div>
-      <div style={{
-        marginTop: 6, padding: '12px 16px', borderRadius: 14,
-        background: T.neutral[100],
-        fontSize: 12.5, color: T.neutral[600], textAlign: 'center',
-        maxWidth: 320, lineHeight: 1.5,
-      }}>
-        Esta pantalla se actualiza sola en cuanto admin abra tu turno.
       </div>
     </div>
   )
@@ -493,25 +441,10 @@ function ConfirmOpeningScreen({ session, userDoc, authUser }) {
   )
 }
 
-function LoadingScreen({ label }) {
-  return (
-    <div style={{
-      minHeight: '100dvh', background: T.neutral[50],
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flexDirection: 'column', gap: 14,
-    }}>
-      <div style={{ fontSize: 48 }}>🥖</div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: T.copper[500], letterSpacing: 0.3 }}>
-        {label}
-      </div>
-    </div>
-  )
-}
-
 // ──────────────────────────────────────────────────────────────
 // Top bar (avatar + nombre + cerrar sesión)
 // ──────────────────────────────────────────────────────────────
-function CashierTopBar({ authUser, userDoc, session, branches }) {
+function CashierTopBar({ authUser, userDoc, session, branches, availableSessions, currentSessionId, onSwitchSession }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -563,6 +496,9 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
           onOpenCatalog={() => { setMenuOpen(false); setCatalogOpen(true) }}
           onToggleDataSaver={(intent) => { setMenuOpen(false); setDataSaverConfirm(intent) }}
           onSignOut={() => { setMenuOpen(false); setConfirmSignOut(true) }}
+          availableSessions={availableSessions}
+          currentSessionId={currentSessionId}
+          onSwitchSession={onSwitchSession}
         />
       )}
 
@@ -594,7 +530,7 @@ function CashierTopBar({ authUser, userDoc, session, branches }) {
   )
 }
 
-function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onToggleDataSaver, onSignOut }) {
+function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onToggleDataSaver, onSignOut, availableSessions, currentSessionId, onSwitchSession }) {
   const { enabled: dataSaverOn } = useDataSaver()
   return (
     <ModalOverlay onClose={onCancel}>
@@ -623,6 +559,14 @@ function AvatarMenu({ authUser, userDoc, onCancel, onOpenCatalog, onToggleDataSa
             </div>
           </div>
         </div>
+
+        {/* Cambiar de rol (solo si la cuenta tiene 2+ turnos abiertos) */}
+        <RoleSwitcher
+          sessions={availableSessions}
+          currentId={currentSessionId}
+          onSwitch={onSwitchSession}
+          onAfterSwitch={onCancel}
+        />
 
         {/* Opciones */}
         <button onClick={onOpenCatalog} style={menuItemStyle()}>

@@ -712,6 +712,7 @@ function PersonalManager({ employees, onRefresh, initialEmpId, onClearEmpId, onB
   const [showPending, setShowPending] = useState(false)
   const [approvingUser, setApprovingUser] = useState(null)
   const [confirmUserAction, setConfirmUserAction] = useState(null)
+  const [photoView, setPhotoView] = useState(null) // { url, name } para ver la foto en grande
 
   useEffect(() => watchAllUsers(setUsers), [])
 
@@ -791,14 +792,23 @@ function PersonalManager({ employees, onRefresh, initialEmpId, onClearEmpId, onB
                   display: 'flex', alignItems: 'center', gap: 12,
                   borderBottom: i < rows.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
                 }}>
-                <div style={{
-                  width: 40, height: 40, borderRadius: 999,
-                  background: T.copper[50],
-                  color: T.copper[700],
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontWeight: 700, fontSize: 14, flexShrink: 0,
-                }}>
-                  {x.emp.name.split(' ').map(p => p[0]).slice(0, 2).join('')}
+                <div
+                  onClick={(e) => {
+                    if (x.linkedUser?.photoURL) {
+                      e.stopPropagation()
+                      setPhotoView({ url: x.linkedUser.photoURL, name: x.emp.name })
+                    }
+                  }}
+                  style={{ flexShrink: 0, cursor: x.linkedUser?.photoURL ? 'zoom-in' : 'default' }}
+                >
+                  <UserAvatar
+                    user={{
+                      photoURL: x.linkedUser?.photoURL || null,
+                      displayName: x.emp.name,
+                      email: x.linkedUser?.email,
+                    }}
+                    size={40}
+                  />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: T.neutral[800] }}>
@@ -859,6 +869,41 @@ function PersonalManager({ employees, onRefresh, initialEmpId, onClearEmpId, onB
           }}
         />
       )}
+
+      {photoView && (
+        <PhotoLightbox
+          url={photoView.url}
+          name={photoView.name}
+          onClose={() => setPhotoView(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Visor de foto en grande (tocar para cerrar). Para fotos de Google subimos la
+// resolución (=sNNN-c) para que se vea nítida al ampliarla.
+function PhotoLightbox({ url, name, onClose }) {
+  const bigUrl = /=s\d+(-c)?$/.test(url) ? url.replace(/=s\d+(-c)?$/, '=s512-c') : url
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.88)',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center', gap: 16, padding: 24,
+    }}>
+      <img
+        src={bigUrl}
+        alt={name}
+        referrerPolicy="no-referrer"
+        onClick={e => e.stopPropagation()}
+        style={{
+          maxWidth: '92vw', maxHeight: '78vh', borderRadius: 18,
+          objectFit: 'contain', boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+        }}
+      />
+      <div style={{ color: '#fff', fontSize: 16, fontWeight: 700 }}>{name}</div>
+      <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12.5 }}>Toca para cerrar</div>
     </div>
   )
 }

@@ -26,6 +26,7 @@ export default function ProductCatalogPanel({
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
   const [query, setQuery] = useState('')
+  const [typeFilter, setTypeFilter] = useState('all') // 'all' | 'normal' | 'free'
   const [editing, setEditing] = useState(null)
 
   const adminProducts = getData().products || []
@@ -36,9 +37,12 @@ export default function ProductCatalogPanel({
 
   const filtered = useMemo(() => {
     const q = normalizeName(query)
-    if (!q) return catalog
-    return catalog.filter(p => normalizeName(p.name).includes(q))
-  }, [catalog, query])
+    let list = catalog
+    if (typeFilter === 'free') list = list.filter(p => p.freeAmount === true)
+    else if (typeFilter === 'normal') list = list.filter(p => p.freeAmount !== true)
+    if (q) list = list.filter(p => normalizeName(p.name).includes(q))
+    return list
+  }, [catalog, query, typeFilter])
 
   return (
     <div style={{
@@ -97,6 +101,33 @@ export default function ProductCatalogPanel({
                 background: 'transparent',
               }}
             />
+          </div>
+
+          {/* Filtro por tipo */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            {[
+              { id: 'all', label: 'Todos' },
+              { id: 'normal', label: 'Normales' },
+              { id: 'free', label: 'Venta libre' },
+            ].map(opt => {
+              const active = typeFilter === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => setTypeFilter(opt.id)}
+                  style={{
+                    flex: 1, padding: '8px 6px', borderRadius: 999,
+                    background: active ? T.copper[500] : '#fff',
+                    color: active ? '#fff' : T.neutral[600],
+                    border: `1.5px solid ${active ? T.copper[500] : T.neutral[200]}`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 12.5, fontWeight: 700,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
           </div>
         </div>
       </div>

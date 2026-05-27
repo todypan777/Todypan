@@ -12,6 +12,7 @@ const defaultIncomeCats = [
   { id: 'domicilios',       label: 'Domicilios' },
   { id: 'mayorista',        label: 'Venta mayorista' },
   { id: 'sobra_caja',       label: 'Sobra de cierre' },
+  { id: 'ingreso_caja',     label: 'Ingreso de caja' },
 ]
 
 const defaultExpenseCats = {
@@ -76,6 +77,10 @@ function migrate(d) {
   // Migrar: agregar 'sobra_caja' si falta (apps con datos previos)
   if (Array.isArray(d.incomeCats) && !d.incomeCats.some(c => c.id === 'sobra_caja')) {
     d.incomeCats = [...d.incomeCats, { id: 'sobra_caja', label: 'Sobra de cierre' }]
+  }
+  // Migrar: agregar 'ingreso_caja' si falta (ingresos de caja de la cajera)
+  if (Array.isArray(d.incomeCats) && !d.incomeCats.some(c => c.id === 'ingreso_caja')) {
+    d.incomeCats = [...d.incomeCats, { id: 'ingreso_caja', label: 'Ingreso de caja' }]
   }
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
   // Migración legacy: si quedó la categoría 'nomina', la quitamos

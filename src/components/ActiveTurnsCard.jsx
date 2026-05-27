@@ -18,6 +18,12 @@ import {
   approveCashExpense,
   rejectCashExpense,
 } from '../cashExpenses'
+import {
+  watchSessionIncomes,
+  approveCashIncome,
+  rejectCashIncome,
+} from '../cashIncomes'
+import { registerDebtorPayment } from '../debtors'
 import { watchAllUsers } from '../users'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
@@ -795,6 +801,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   // Datos en vivo del turno
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
+  const [incomes, setIncomes] = useState([])
   // openTabs activas de la cajera — si quedan pendientes al cerrar, el admin
   // debe decidir qué hacer con ellas (transferir a próxima cajera o eliminar).
   const [pendingTabs, setPendingTabs] = useState([])
@@ -804,10 +811,12 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
 
   useEffect(() => watchSessionSales(session.id, setSales), [session.id])
   useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
+  useEffect(() => watchSessionIncomes(session.id, setIncomes), [session.id])
   useEffect(() => watchOpenTabsForSession(session.id, setPendingTabs), [session.id])
 
-  // Decisiones tentativas del admin sobre gastos pendientes
+  // Decisiones tentativas del admin sobre gastos / ingresos pendientes
   const [expenseDecisions, setExpenseDecisions] = useState({})
+  const [incomeDecisions, setIncomeDecisions] = useState({})
 
   // Si la sesión es legacy pending_close (cajera ya declaró), pre-llenar con su declaración
   const cashierLegacyDeclared = session.declaredClosingCash
@@ -861,11 +870,24 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   )
   const pendingExpensesCount = expenses.filter(e => effectiveStatus(e) === 'pending').length
 
+  function effectiveIncomeStatus(inc) {
+    if (inc.status === 'approved' || inc.status === 'rejected') return inc.status
+    const dec = incomeDecisions[inc.id]
+    if (dec === 'approve') return 'approved'
+    if (dec === 'reject') return 'rejected'
+    return 'pending'
+  }
+  const approvedIncomeTotal = incomes.reduce((acc, e) =>
+    effectiveIncomeStatus(e) === 'approved' ? acc + (Number(e.amount) || 0) : acc, 0
+  )
+  const pendingIncomesCount = incomes.filter(e => effectiveIncomeStatus(e) === 'pending').length
+
   const cashFloor = getCashFloor(session.branchId)
   const openingFloat = Number(session.openingFloat) || 0
   const baseAtOpen = session.openingSource?.type === 'empty' ? cashFloor : 0
   const declared = Number(declaredStr) || 0
-  const expectedCash = baseAtOpen + openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal
+  // Un INGRESO de caja suma al efectivo esperado (entró plata); un gasto resta.
+  const expectedCash = baseAtOpen + openingFloat + (salesByMethod.efectivo || 0) - approvedExpenseTotal + approvedIncomeTotal
   const difference = declared - expectedCash
   const hasShortage = difference < 0
   const hasSurplus = difference > 0
@@ -881,12 +903,16 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   function setDecision(expenseId, decision) {
     setExpenseDecisions(prev => ({ ...prev, [expenseId]: decision }))
   }
+  function setIncomeDecision(incomeId, decision) {
+    setIncomeDecisions(prev => ({ ...prev, [incomeId]: decision }))
+  }
 
   // Validación
   const canConfirm =
     !busy &&
     declaredStr.trim() !== '' &&
     pendingExpensesCount === 0 &&
+    pendingIncomesCount === 0 &&
     (pendingTabs.length === 0 || !!tabsDecision)
 
   async function handleConfirm() {
@@ -913,6 +939,52 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
           await approveCashExpense(exp.id, { reviewedBy: adminUid, movementId })
         } else if (dec === 'reject') {
           await rejectCashExpense(exp.id, { reviewedBy: adminUid, reviewNote: null })
+        }
+      }
+
+      // 2. Aplicar decisiones de ingresos pendientes
+      for (const inc of incomes) {
+        if (inc.status !== 'pending') continue
+        const dec = incomeDecisions[inc.id]
+        if (dec === 'approve') {
+          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          let movementId = null
+          let debtorPaymentApplied = false
+          if (inc.debtorId) {
+            // Abono a una deuda: la venta a crédito YA se contabilizó como
+            // ingreso cuando se hizo (modelo devengado). Aquí solo bajamos la
+            // deuda — NO creamos otro movimiento de ingreso (sería doble conteo).
+            // Igual suma al cuadre porque el efectivo entró físicamente.
+            try {
+              await registerDebtorPayment(inc.debtorId, {
+                amount: inc.amount,
+                method: 'efectivo',
+                date: today,
+                registeredBy: adminUid,
+                note: `Abono registrado en caja por ${inc.cashierName || 'cajera'}`,
+              })
+              debtorPaymentApplied = true
+            } catch (err) {
+              console.warn('[CloseSessionModal] no se pudo abonar la deuda del ingreso:', err?.message || err)
+            }
+          } else {
+            // Ingreso que no es abono (préstamo, devolución, otro): es plata
+            // nueva → se registra como movimiento de ingreso.
+            movementId = addMovement({
+              type: 'income',
+              amount: inc.amount,
+              date: today,
+              note: inc.description,
+              cat: 'ingreso_caja',
+              branch: inc.branchId || 'both',
+              origin: 'caja',
+              sessionId: inc.sessionId || null,
+              cashierName: inc.cashierName,
+            })
+          }
+          await approveCashIncome(inc.id, { reviewedBy: adminUid, movementId, debtorPaymentApplied })
+        } else if (dec === 'reject') {
+          await rejectCashIncome(inc.id, { reviewedBy: adminUid, reviewNote: null })
         }
       }
 
@@ -1088,6 +1160,32 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         </div>
       )}
 
+      {/* Ingresos del turno */}
+      <SectionLabel>
+        Ingresos del turno · {incomes.length}
+        {pendingIncomesCount > 0 && (
+          <span style={{ color: T.warn, marginLeft: 6 }}>
+            ({pendingIncomesCount} sin decidir)
+          </span>
+        )}
+      </SectionLabel>
+      {incomes.length === 0 ? (
+        <div style={emptyBlockStyle}>Sin ingresos en este turno</div>
+      ) : (
+        <div style={{ marginBottom: 14, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {incomes.map(e => (
+            <IncomeReviewRow
+              key={e.id}
+              income={e}
+              effectiveStatus={effectiveIncomeStatus(e)}
+              onApprove={() => setIncomeDecision(e.id, 'approve')}
+              onReject={() => setIncomeDecision(e.id, 'reject')}
+              disabled={busy}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Conteo físico (lo cuenta el ADMIN) */}
       <SectionLabel>Cuenta física en caja</SectionLabel>
       <div style={{
@@ -1213,6 +1311,16 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
           fontSize: 12.5, fontWeight: 600, textAlign: 'center',
         }}>
           Decide aprobar o rechazar todos los gastos antes de cerrar.
+        </div>
+      )}
+
+      {pendingIncomesCount > 0 && (
+        <div style={{
+          margin: '0 0 10px', padding: '10px 12px', borderRadius: 10,
+          background: '#FFF7E6', border: `1px solid #F4E0BC`, color: T.warn,
+          fontSize: 12.5, fontWeight: 600, textAlign: 'center',
+        }}>
+          Decide aprobar o rechazar todos los ingresos antes de cerrar.
         </div>
       )}
 
@@ -1734,6 +1842,90 @@ function ExpenseRow({ expense, effectiveStatus, onApprove, onReject, disabled })
           flexShrink: 0,
         }}>
           {isApproved ? 'Antes' : 'Antes'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+// Fila de ingreso en el cierre (espejo de ExpenseRow). Verde, monto en +, y
+// si está enlazado a un deudor avisa que aprobarlo abonará esa deuda.
+function IncomeReviewRow({ income, effectiveStatus, onApprove, onReject, disabled }) {
+  const isApproved = effectiveStatus === 'approved'
+  const isRejected = effectiveStatus === 'rejected'
+  const isPending = effectiveStatus === 'pending'
+  const wasFinal = income.status === 'approved' || income.status === 'rejected'
+
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 10,
+      background: isApproved ? '#E8F4E8' : isRejected ? '#FBE9E5' : T.neutral[50],
+      border: `1px solid ${isApproved ? '#C2DDC1' : isRejected ? '#F0C8BE' : T.neutral[100]}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {income.description}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+          <span style={{ color: T.ok, fontWeight: 700 }}>+{fmtCOP(income.amount)}</span>
+          {income.photoUrl && (
+            <a href={income.photoUrl} target="_blank" rel="noreferrer" style={{
+              marginLeft: 8, color: T.copper[600], fontWeight: 600,
+              textDecoration: 'underline', fontSize: 11,
+            }}>
+              📎 ver foto
+            </a>
+          )}
+        </div>
+        {income.debtorName && (
+          <div style={{ fontSize: 11, color: '#2E6B43', fontWeight: 600, marginTop: 3 }}>
+            🤝 Al aprobar, abona {fmtCOP(income.amount)} a la deuda de {income.debtorName}
+          </div>
+        )}
+      </div>
+      {isPending && (
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={onReject} disabled={disabled} style={{
+            padding: '5px 10px', borderRadius: 8,
+            background: 'transparent', color: T.bad,
+            border: `1px solid ${T.bad}55`,
+            cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Rechazar
+          </button>
+          <button onClick={onApprove} disabled={disabled} style={{
+            padding: '5px 10px', borderRadius: 8,
+            background: T.ok, color: '#fff',
+            border: 'none', cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 11.5, fontWeight: 700,
+          }}>
+            Aprobar
+          </button>
+        </div>
+      )}
+      {(isApproved || isRejected) && !wasFinal && (
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: isApproved ? T.ok : T.bad, color: '#fff',
+          fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          {isApproved ? '✓ Aprobado' : '✗ Rechazado'}
+        </span>
+      )}
+      {wasFinal && (
+        <span style={{
+          padding: '3px 8px', borderRadius: 999,
+          background: T.neutral[100], color: T.neutral[600],
+          fontSize: 10.5, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          Antes
         </span>
       )}
     </div>

@@ -44,6 +44,15 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'transferencias', label: 'Transferencias', desc: 'Confirma las ventas por Nequi y Daviplata del día',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M4 7 H15 M12 4 L15 7 L12 10" stroke={T.copper[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M16 13 H5 M8 16 L5 13 L8 10" stroke={T.copper[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'tasks', label: 'Tareas', desc: 'Asigna pendientes a tus cajeras',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

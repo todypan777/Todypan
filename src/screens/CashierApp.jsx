@@ -9,6 +9,8 @@ import { confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
 import RoleSwitcher from '../components/RoleSwitcher'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses, updateCashExpense, deleteCashExpense } from '../cashExpenses'
+import { createCashIncome, watchSessionIncomes, updateCashIncome, deleteCashIncome } from '../cashIncomes'
+import { watchDebtors, normalizeName } from '../debtors'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
 import { watchLiveOrdersForSession } from '../kitchenOrders'
@@ -809,11 +811,14 @@ export function ActiveSession({
   const [newSaleOpen, setNewSaleOpen] = useState(false)
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
+  const [incomeOpen, setIncomeOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false) // pantalla "Mis ventas" (Fase 9)
   const [boredomOpen, setBoredomOpen] = useState(false) // panel "¿estás aburrida?"
   const [cashierProducts, setCashierProducts] = useState([])
   const [sessionSales, setSessionSales] = useState([])
   const [sessionExpenses, setSessionExpenses] = useState([])
+  const [sessionIncomes, setSessionIncomes] = useState([])
+  const [debtors, setDebtors] = useState([])
   const [reportSale, setReportSale] = useState(null)
   const [myTasks, setMyTasks] = useState([])
   // Pedido web pendiente (solo asistir): se consume al abrir/cerrar el primer
@@ -860,6 +865,14 @@ export function ActiveSession({
     const unsub = watchSessionExpenses(session.id, setSessionExpenses)
     return unsub
   }, [session.id])
+
+  useEffect(() => {
+    const unsub = watchSessionIncomes(session.id, setSessionIncomes)
+    return unsub
+  }, [session.id])
+
+  // Deudores para enlazar un ingreso que es abono a una deuda.
+  useEffect(() => watchDebtors(setDebtors), [])
 
   useEffect(() => {
     const unsub = watchTasksForCashier(scopeUid, setMyTasks)
@@ -963,8 +976,24 @@ export function ActiveSession({
         Nueva venta
       </button>
 
-      {/* Botones secundarios: Gasto de caja + Mis ventas */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+      {/* Botones secundarios: Ingreso + Gasto de caja, y Mis ventas */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+        <button
+          onClick={() => setIncomeOpen(true)}
+          style={{
+            padding: '13px 10px', borderRadius: 14,
+            background: '#fff', color: T.neutral[700],
+            border: `1.5px solid ${T.neutral[200]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 13, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <path d="M3 15 L7 11 L11 14 L17 6 M17 6 H12 M17 6 V11" stroke={T.ok} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Ingreso de caja
+        </button>
         <button
           onClick={() => setExpenseOpen(true)}
           style={{
@@ -977,28 +1006,28 @@ export function ActiveSession({
           }}
         >
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <path d="M3 17 H17 M3 14 L7 10 L11 13 L17 5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d="M3 5 L7 9 L11 6 L17 14 M17 14 H12 M17 14 V9" stroke={T.bad} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
           Gasto de caja
         </button>
-        <button
-          onClick={() => setHistoryOpen(true)}
-          style={{
-            padding: '13px 10px', borderRadius: 14,
-            background: '#fff', color: T.neutral[700],
-            border: `1.5px solid ${T.neutral[200]}`,
-            cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 13, fontWeight: 700,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="7.5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
-            <path d="M10 5 V10 L13 12" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          Mis ventas
-        </button>
       </div>
+      <button
+        onClick={() => setHistoryOpen(true)}
+        style={{
+          width: '100%', padding: '13px 10px', borderRadius: 14, marginBottom: 14,
+          background: '#fff', color: T.neutral[700],
+          border: `1.5px solid ${T.neutral[200]}`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 13, fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="7.5" stroke={T.neutral[600]} strokeWidth="1.7" fill="none"/>
+          <path d="M10 5 V10 L13 12" stroke={T.neutral[600]} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        Mis ventas
+      </button>
 
       {/* Banner sorpresa: aparece solo si hay productos sin precio en esta panaderia.
           NO revela de qué se trata — la cajera lo descubre al tocar. */}
@@ -1086,6 +1115,28 @@ export function ActiveSession({
                 key={e.id}
                 expense={e}
                 isLast={i === sessionExpenses.length - 1}
+              />
+            ))}
+          </Card>
+        </div>
+      )}
+
+      {/* Ingresos del turno */}
+      {sessionIncomes.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: T.neutral[500],
+            letterSpacing: 0.5, textTransform: 'uppercase',
+            margin: '0 4px 8px',
+          }}>
+            Ingresos de caja del turno
+          </div>
+          <Card padding={0} style={{ overflow: 'hidden' }}>
+            {sessionIncomes.map((e, i) => (
+              <IncomeRow
+                key={e.id}
+                income={e}
+                isLast={i === sessionIncomes.length - 1}
               />
             ))}
           </Card>
@@ -1181,6 +1232,18 @@ export function ActiveSession({
           assistMode={assistMode}
           expenses={sessionExpenses}
           onCancel={() => setExpenseOpen(false)}
+        />
+      )}
+
+      {incomeOpen && (
+        <CashIncomeScreen
+          session={session}
+          authUser={authUser}
+          userDoc={userDoc}
+          assistMode={assistMode}
+          incomes={sessionIncomes}
+          debtors={debtors}
+          onCancel={() => setIncomeOpen(false)}
         />
       )}
 
@@ -2209,6 +2272,784 @@ function ExpenseNumberField({ label, value, onChange, disabled }) {
             fontVariantNumeric: 'tabular-nums', fontWeight: 600,
           }}
         />
+      </div>
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════
+// INGRESOS DE CAJA (espejo de los gastos)
+// Plata que ENTRA a la caja fuera de las ventas: abono a una deuda, préstamo,
+// devolución, etc. Mismo flujo que los gastos (pending → admin aprueba al
+// cerrar), misma cola offline. Diferencias: SUMA al cuadre y puede enlazarse a
+// un deudor para que el admin abone esa deuda al aprobar.
+// ══════════════════════════════════════════════════════════════
+function CashIncomeScreen({ session, authUser, userDoc, assistMode, incomes = [], debtors = [], onCancel }) {
+  const [form, setForm] = useState(null) // null | { editing: null } | { editing: inc }
+  const [deletingId, setDeletingId] = useState(null)
+
+  const unsyncedCount = incomes.filter(e => e._pendingWrite).length
+
+  function handleDelete(id) {
+    deleteCashIncome(id)
+    setDeletingId(null)
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 60,
+      background: T.neutral[50],
+      display: 'flex', flexDirection: 'column',
+      animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '14px 16px', background: '#fff',
+        borderBottom: `1px solid ${T.neutral[100]}`,
+        display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
+      }}>
+        <button onClick={onCancel} aria-label="Volver" style={{
+          width: 36, height: 36, borderRadius: 999, border: 'none',
+          background: T.neutral[100], cursor: 'pointer', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M15 6 L9 12 L15 18" stroke={T.neutral[700]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+            Ingresos de caja
+          </div>
+          <div style={{
+            fontSize: 11, color: T.neutral[500],
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {session.branchName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()}
+          </div>
+        </div>
+      </div>
+
+      {/* Contenido */}
+      <div style={{
+        flex: 1, overflowY: 'auto', width: '100%',
+        padding: '18px 16px 40px', maxWidth: 540, margin: '0 auto',
+      }}>
+        <button
+          onClick={() => setForm({ editing: null })}
+          style={{
+            width: '100%', padding: '18px', borderRadius: 18,
+            background: T.ok, color: '#fff', border: 'none',
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 16, fontWeight: 800, letterSpacing: -0.2,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            boxShadow: '0 6px 18px rgba(74,143,94,0.35)', marginBottom: 16,
+          }}
+        >
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <circle cx="11" cy="11" r="9" stroke="#fff" strokeWidth="2" fill="none"/>
+            <path d="M11 7 V15 M7 11 H15" stroke="#fff" strokeWidth="2.2" strokeLinecap="round"/>
+          </svg>
+          Registrar nuevo ingreso
+        </button>
+
+        {unsyncedCount > 0 && (
+          <div style={{
+            padding: '11px 14px', borderRadius: 12, marginBottom: 16,
+            background: '#FFF4DD', border: `1px solid #F0D699`,
+            fontSize: 12.5, color: '#8A5E12', fontWeight: 500, lineHeight: 1.5,
+          }}>
+            ⏳ Tienes {unsyncedCount} ingreso(s) sin subir. Conéctate y usa
+            "Sincronizar ahora" antes de cerrar el turno para que el administrador
+            los vea en el cierre.
+          </div>
+        )}
+
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          letterSpacing: 0.5, textTransform: 'uppercase', margin: '0 2px 8px',
+        }}>
+          Ingresos de este turno ({incomes.length})
+        </div>
+
+        {incomes.length === 0 ? (
+          <div style={{
+            padding: '40px 20px', textAlign: 'center',
+            color: T.neutral[400], fontSize: 13, lineHeight: 1.6,
+            background: '#fff', borderRadius: 14, border: `1px solid ${T.neutral[100]}`,
+          }}>
+            Aún no hay ingresos en este turno.<br/>
+            Toca "Registrar nuevo ingreso" para empezar.
+          </div>
+        ) : (
+          <Card padding={0} style={{ overflow: 'hidden' }}>
+            {incomes.map((inc, i) => (
+              <IncomeManageRow
+                key={inc.id}
+                income={inc}
+                isLast={i === incomes.length - 1}
+                confirmingDelete={deletingId === inc.id}
+                onEdit={() => setForm({ editing: inc })}
+                onAskDelete={() => setDeletingId(inc.id)}
+                onCancelDelete={() => setDeletingId(null)}
+                onConfirmDelete={() => handleDelete(inc.id)}
+              />
+            ))}
+          </Card>
+        )}
+      </div>
+
+      {form && (
+        <IncomeFormSheet
+          session={session}
+          authUser={authUser}
+          userDoc={userDoc}
+          assistMode={assistMode}
+          editing={form.editing}
+          debtors={debtors}
+          onClose={() => setForm(null)}
+        />
+      )}
+
+      <style>{`
+        @keyframes slideUp {
+          from { transform: translateY(100%); opacity: 0.9; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  )
+}
+
+function IncomeFormSheet({ session, authUser, userDoc, assistMode, editing, debtors = [], onClose }) {
+  const isAssist = !!assistMode
+  const isEdit = !!editing
+  const [description, setDescription] = useState(editing?.description || '')
+  const [amountStr, setAmountStr] = useState(editing?.amount != null ? String(editing.amount) : '')
+  const [debtor, setDebtor] = useState(
+    editing?.debtorId ? { id: editing.debtorId, name: editing.debtorName } : null
+  )
+  const [photoUrl, setPhotoUrl] = useState(null)
+  const [photoBlob, setPhotoBlob] = useState(null)
+  const [photoLocalPreview, setPhotoLocalPreview] = useState(null)
+  const [photoOfflineQueued, setPhotoOfflineQueued] = useState(false)
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoError, setPhotoError] = useState(null)
+  const fileInputRef = useRef(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    return () => { if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview) }
+  }, [photoLocalPreview])
+
+  const amount = Number(amountStr) || 0
+  const valid = description.trim().length >= 3 && amount > 0 && !photoUploading
+
+  async function handleFileSelected(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setPhotoError(null)
+    setPhotoUploading(true)
+    setPhotoOfflineQueued(false)
+    if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+    setPhotoLocalPreview(null)
+    setPhotoBlob(null)
+    setPhotoUrl(null)
+
+    let compressed = null
+    try {
+      compressed = await compressImage(file)
+    } catch (err) {
+      console.error(err)
+      setPhotoError(err.message || 'No pudimos procesar la foto.')
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+
+    setPhotoBlob(compressed)
+    setPhotoLocalPreview(URL.createObjectURL(compressed))
+
+    const online = typeof navigator !== 'undefined' ? navigator.onLine : true
+    if (!online) {
+      setPhotoOfflineQueued(true)
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    try {
+      const result = await uploadToImageBB(compressed)
+      setPhotoUrl(result.url)
+      setPhotoOfflineQueued(false)
+    } catch (err) {
+      console.warn('[CashIncome] upload falló, queda en cola offline:', err?.message)
+      setPhotoOfflineQueued(true)
+    } finally {
+      setPhotoUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  async function handleSave() {
+    if (!valid || busy) return
+
+    if (isEdit) {
+      setBusy(true); setError(null)
+      try {
+        updateCashIncome(editing.id, { description, amount })
+        onClose()
+      } catch (err) {
+        console.error(err)
+        setError('No pudimos guardar los cambios. Intenta de nuevo.')
+        setBusy(false)
+      }
+      return
+    }
+
+    setBusy(true); setError(null)
+    try {
+      const cashierUid = isAssist ? (session.cashierUid || authUser.uid) : authUser.uid
+      const cashierName = isAssist
+        ? (session.cashierName || 'Cajera')
+        : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
+
+      let photoLocalId = null
+      if (!photoUrl && photoBlob) photoLocalId = makePhotoLocalId()
+
+      const incomeId = await createCashIncome({
+        sessionId: session.id,
+        branchId: session.branchId,
+        branchName: session.branchName,
+        cashierUid,
+        cashierName,
+        description,
+        amount,
+        debtorId: debtor?.id || undefined,
+        debtorName: debtor?.name || undefined,
+        photoUrl: photoUrl || undefined,
+        photoLocalId: photoLocalId || undefined,
+        ...(isAssist ? {
+          recordedByUid: authUser.uid,
+          recordedByName: assistMode.adminName,
+          recordedByRole: 'admin',
+        } : {}),
+      })
+
+      if (photoLocalId && photoBlob && incomeId) {
+        try {
+          await enqueuePhoto(photoBlob, { collection: 'cashIncomes', docId: incomeId }, photoLocalId)
+        } catch (queueErr) {
+          console.warn('[CashIncome] no se pudo encolar la foto offline:', queueErr)
+        }
+      }
+      onClose()
+    } catch (err) {
+      console.error(err)
+      setError('No pudimos guardar el ingreso. Intenta de nuevo.')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div
+      onClick={busy ? undefined : onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 80,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+      }}
+    >
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 480, background: '#fff',
+        borderTopLeftRadius: 22, borderTopRightRadius: 22,
+        maxHeight: '92vh', overflowY: 'auto',
+        padding: '22px 20px 24px',
+        animation: 'slideUp 0.25s cubic-bezier(0.2,0.9,0.3,1.05)',
+      }}>
+        <div style={{ fontSize: 19, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3, marginBottom: 4 }}>
+          {isEdit ? 'Editar ingreso' : 'Registrar nuevo ingreso'}
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 16 }}>
+          {isEdit
+            ? 'Corrige la descripción o el monto. Sigue pendiente de aprobación.'
+            : 'Quedará pendiente de aprobación del administrador.'}
+        </div>
+
+        <ExpenseTextField
+          label="¿De qué fue el ingreso?"
+          value={description}
+          onChange={setDescription}
+          placeholder="Ej: Abono de Pedro a su deuda"
+          autoFocus
+          disabled={busy}
+        />
+
+        <ExpenseNumberField
+          label="Monto"
+          value={amountStr}
+          onChange={setAmountStr}
+          disabled={busy}
+        />
+
+        {/* Enlace opcional a un deudor (abono a deuda). Solo al crear. */}
+        {!isEdit && (
+          <DebtorPicker
+            debtors={debtors}
+            selected={debtor}
+            onSelect={setDebtor}
+            disabled={busy}
+          />
+        )}
+        {isEdit && editing?.debtorName && (
+          <div style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 12,
+            background: T.ok + '12', border: `1px solid ${T.ok}40`,
+            fontSize: 12.5, color: T.neutral[700],
+          }}>
+            Abono a la deuda de <b>{editing.debtorName}</b>
+          </div>
+        )}
+
+        {/* Foto opcional — solo al crear */}
+        {!isEdit && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+            Foto del comprobante (opcional)
+          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileSelected}
+            style={{ display: 'none' }}
+          />
+          {!photoUrl && !photoLocalPreview && !photoUploading && !photoError && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                background: '#fff', color: T.neutral[600],
+                border: `1.5px dashed ${T.neutral[300]}`,
+                cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              }}
+            >
+              📸 Adjuntar foto
+            </button>
+          )}
+          {photoUploading && (
+            <div style={{
+              padding: '14px', borderRadius: 12, textAlign: 'center',
+              background: T.neutral[50], border: `1.5px solid ${T.neutral[200]}`,
+              fontSize: 13, color: T.neutral[600], fontWeight: 600,
+            }}>
+              Subiendo foto...
+            </div>
+          )}
+          {photoError && !photoUploading && (
+            <div style={{
+              padding: '11px 14px', borderRadius: 12,
+              background: '#FBE9E5', border: `1px solid #F0C8BE`,
+              fontSize: 12.5, color: T.bad, fontWeight: 500,
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+            }}>
+              <span style={{ flex: 1 }}>{photoError}</span>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  padding: '6px 12px', borderRadius: 8,
+                  background: T.bad, color: '#fff', border: 'none',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                }}
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+          {(photoUrl || photoLocalPreview) && !photoUploading && (
+            <div style={{
+              borderRadius: 12, overflow: 'hidden',
+              border: `1.5px solid ${(photoUrl ? T.ok : T.warn) + '66'}`,
+              background: '#fff',
+            }}>
+              <div style={{ position: 'relative' }}>
+                <img
+                  src={photoUrl || photoLocalPreview}
+                  alt="Comprobante"
+                  style={{
+                    display: 'block', width: '100%', maxHeight: 180,
+                    objectFit: 'contain', background: T.neutral[900],
+                  }}
+                />
+                {!photoUrl && (
+                  <div style={{
+                    position: 'absolute', top: 6, right: 6,
+                    background: T.warn, color: '#fff',
+                    padding: '3px 9px', borderRadius: 999,
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: 0.3,
+                  }}>
+                    ⏳ Pendiente
+                  </div>
+                )}
+              </div>
+              {!photoUrl && photoOfflineQueued && (
+                <div style={{
+                  padding: '7px 12px',
+                  background: '#FFF7E6',
+                  borderTop: `1px solid #F4E0BC`,
+                  fontSize: 11.5, color: T.warn, fontWeight: 600,
+                }}>
+                  Sin conexion · subira al volver la red.
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  setPhotoUrl(null)
+                  setPhotoBlob(null)
+                  setPhotoOfflineQueued(false)
+                  if (photoLocalPreview) URL.revokeObjectURL(photoLocalPreview)
+                  setPhotoLocalPreview(null)
+                }}
+                style={{
+                  width: '100%', padding: '8px',
+                  background: 'transparent', border: 'none',
+                  borderTop: `1px solid ${T.neutral[100]}`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12, fontWeight: 600, color: T.neutral[600],
+                }}
+              >
+                Quitar foto
+              </button>
+            </div>
+          )}
+        </div>
+        )}
+
+        <div style={{
+          padding: '11px 14px', borderRadius: 12,
+          background: T.ok + '12', border: `1px solid ${T.ok}40`,
+          fontSize: 12.5, color: '#2E6B43', fontWeight: 500, lineHeight: 1.5,
+          marginBottom: 14,
+        }}>
+          ✓ Este monto suma a tu caja del turno. El administrador lo aprueba al cerrar
+          {debtor ? `, y abonará la deuda de ${debtor.name}.` : '.'}
+        </div>
+
+        {error && <ErrorBox text={error} />}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onClose} disabled={busy} style={btnSecondary()}>Cancelar</button>
+          <button
+            onClick={handleSave}
+            disabled={!valid || busy}
+            style={{
+              ...btnPrimary(valid && !busy ? T.ok : T.neutral[200]),
+              flex: 1.4,
+              color: valid && !busy ? '#fff' : T.neutral[400],
+              cursor: valid && !busy ? 'pointer' : 'not-allowed',
+              boxShadow: valid && !busy ? '0 3px 10px rgba(74,143,94,0.3)' : 'none',
+            }}
+          >
+            {busy ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Registrar ingreso'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Selector de deudor para enlazar un abono. Autocompleta sobre deudores
+// existentes; si la persona no está, simplemente no se enlaza (el ingreso se
+// registra igual con su descripción). El abono a la deuda lo aplica el admin
+// al aprobar el ingreso en el cierre.
+function DebtorPicker({ debtors, selected, onSelect, disabled }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+
+  const list = useMemo(() => {
+    const active = (debtors || []).filter(d => !d.mergedInto)
+    const q = normalizeName(query)
+    if (!q) return active.slice(0, 6)
+    return active.filter(d => normalizeName(d.name).includes(q)).slice(0, 8)
+  }, [debtors, query])
+
+  if (selected) {
+    return (
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+          Abono a la deuda de
+        </label>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '11px 14px', borderRadius: 12,
+          background: T.ok + '12', border: `1.5px solid ${T.ok}55`,
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900] }}>{selected.name}</div>
+            {selected.totalOwed != null && (
+              <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1 }}>
+                Debe {fmtCOP(selected.totalOwed)}
+              </div>
+            )}
+          </div>
+          <button onClick={() => { onSelect(null); setQuery('') }} disabled={disabled} style={{
+            padding: '6px 12px', borderRadius: 8, background: '#fff', color: T.neutral[600],
+            border: `1px solid ${T.neutral[200]}`, cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 12, fontWeight: 700,
+          }}>
+            Quitar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: T.neutral[600], display: 'block', marginBottom: 6 }}>
+        ¿Es abono a una deuda? (opcional)
+      </label>
+      <div style={{
+        border: `1.5px solid ${open ? T.ok : T.neutral[200]}`,
+        borderRadius: 12, background: '#fff',
+      }}>
+        <input
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          onFocus={() => setOpen(true)}
+          placeholder="Busca el deudor (déjalo vacío si no aplica)"
+          disabled={disabled}
+          style={{
+            width: '100%', padding: '12px 14px', border: 'none', outline: 'none',
+            fontFamily: 'inherit', fontSize: 14, color: T.neutral[900],
+            background: 'transparent', borderRadius: 12,
+          }}
+        />
+      </div>
+      {open && list.length > 0 && (
+        <div style={{
+          marginTop: 6, border: `1px solid ${T.neutral[200]}`, borderRadius: 12,
+          background: '#fff', overflow: 'hidden', maxHeight: 200, overflowY: 'auto',
+        }}>
+          {list.map((d, i) => (
+            <button
+              key={d.id}
+              onClick={() => { onSelect({ id: d.id, name: d.name, totalOwed: d.totalOwed }); setOpen(false) }}
+              style={{
+                width: '100%', padding: '10px 14px', textAlign: 'left',
+                background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                borderBottom: i < list.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: T.neutral[900] }}>{d.name}</span>
+              <span style={{ fontSize: 11.5, color: T.neutral[500], fontVariantNumeric: 'tabular-nums' }}>
+                debe {fmtCOP(d.totalOwed || 0)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && query.trim() && list.length === 0 && (
+        <div style={{ marginTop: 6, fontSize: 11.5, color: T.neutral[500], padding: '0 4px' }}>
+          No está en la lista de deudores. El ingreso se registra igual con la descripción.
+        </div>
+      )}
+    </div>
+  )
+}
+
+function IncomeManageRow({ income, isLast, confirmingDelete, onEdit, onAskDelete, onCancelDelete, onConfirmDelete }) {
+  const time = income.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+  const statusColor = { pending: T.warn, approved: T.ok, rejected: T.bad }[income.status] || T.neutral[500]
+  const statusLabel = { pending: 'Pendiente', approved: 'Aprobado', rejected: 'Rechazado' }[income.status] || income.status
+  const canManage = income.status === 'pending'
+
+  return (
+    <div style={{
+      padding: '12px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          fontVariantNumeric: 'tabular-nums', minWidth: 42, flexShrink: 0,
+        }}>
+          {timeStr}
+        </div>
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13.5, fontWeight: 600, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {income.description}
+        </div>
+        <div style={{
+          fontSize: 13.5, fontWeight: 700, color: T.ok,
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          +{fmtCOP(income.amount)}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 52, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: statusColor,
+          background: statusColor + '15',
+          padding: '2px 8px', borderRadius: 999,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+        }}>
+          {statusLabel}
+        </span>
+        {income.debtorName && (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: '#2E6B43',
+            background: T.ok + '15', padding: '2px 8px', borderRadius: 999,
+          }}>
+            🤝 {income.debtorName}
+          </span>
+        )}
+        {income._pendingWrite ? (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: '#8A5E12',
+            background: '#FFF4DD', border: '1px solid #F0D699',
+            padding: '2px 8px', borderRadius: 999,
+          }}>
+            ⏳ Sin subir
+          </span>
+        ) : (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: T.ok,
+            background: T.ok + '15', padding: '2px 8px', borderRadius: 999,
+          }}>
+            ✓ Subido
+          </span>
+        )}
+        {income.recordedByRole === 'admin' && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: '#7A5C00',
+            background: '#FFF7E6', border: '1px solid #F4E0BC',
+            padding: '2px 7px', borderRadius: 999,
+            letterSpacing: 0.3, textTransform: 'uppercase',
+          }}>
+            👤 admin{income.recordedByName ? ` · ${income.recordedByName}` : ''}
+          </span>
+        )}
+        {income.photoUrl && (
+          <a href={income.photoUrl} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: T.copper[600], textDecoration: 'none', fontWeight: 600 }}>
+            📎 Ver foto
+          </a>
+        )}
+      </div>
+
+      {canManage && (
+        <div style={{ marginLeft: 52, marginTop: 8 }}>
+          {confirmingDelete ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 12, color: T.bad, fontWeight: 600 }}>¿Eliminar este ingreso?</span>
+              <button onClick={onConfirmDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: T.bad, color: '#fff',
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+              }}>Sí, eliminar</button>
+              <button onClick={onCancelDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: T.neutral[100], color: T.neutral[700],
+                border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+              }}>No</button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button onClick={onEdit} style={{
+                padding: '5px 12px', borderRadius: 8, background: '#fff', color: T.copper[600],
+                border: `1.5px solid ${T.copper[200]}`, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}>✏️ Editar</button>
+              <button onClick={onAskDelete} style={{
+                padding: '5px 12px', borderRadius: 8, background: '#fff', color: T.bad,
+                border: `1.5px solid #F0C8BE`, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 700,
+              }}>🗑 Eliminar</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Fila compacta de ingreso (home del turno).
+function IncomeRow({ income, isLast }) {
+  const time = income.createdAt?.toDate?.()
+  const timeStr = time
+    ? time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+  const statusColor = { pending: T.warn, approved: T.ok, rejected: T.bad }[income.status] || T.neutral[500]
+  const statusLabel = { pending: 'Pendiente', approved: 'Aprobado', rejected: 'Rechazado' }[income.status] || income.status
+
+  return (
+    <div style={{
+      padding: '12px 14px',
+      borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: T.neutral[500],
+          fontVariantNumeric: 'tabular-nums', minWidth: 42, flexShrink: 0,
+        }}>
+          {timeStr}
+        </div>
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13.5, fontWeight: 600, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {income.description}
+        </div>
+        <div style={{
+          fontSize: 13.5, fontWeight: 700, color: T.ok,
+          fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+        }}>
+          +{fmtCOP(income.amount)}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 52, flexWrap: 'wrap' }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 700, color: statusColor,
+          background: statusColor + '15',
+          padding: '2px 8px', borderRadius: 999,
+          letterSpacing: 0.4, textTransform: 'uppercase',
+        }}>
+          {statusLabel}
+        </span>
+        {income.debtorName && (
+          <span style={{
+            fontSize: 10.5, fontWeight: 700, color: '#2E6B43',
+            background: T.ok + '15', padding: '2px 8px', borderRadius: 999,
+          }}>
+            🤝 {income.debtorName}
+          </span>
+        )}
+        {income.status === 'rejected' && income.reviewNote && (
+          <span style={{
+            fontSize: 11.5, color: T.bad, fontStyle: 'italic',
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {income.reviewNote}
+          </span>
+        )}
+        {income.photoUrl && (
+          <a href={income.photoUrl} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: T.copper[600], textDecoration: 'none', fontWeight: 600 }}>
+            📎 Ver foto
+          </a>
+        )}
       </div>
     </div>
   )

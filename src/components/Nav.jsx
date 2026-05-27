@@ -50,6 +50,12 @@ const MORE_TABS = [
       <path d="M14 12.5 V14 L15 14.8" stroke={c} strokeWidth="1.4" strokeLinecap="round"/>
     </svg>
   )},
+  { id: 'transferencias', label: 'Transferencias', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <path d="M4 7 H15 M12 4 L15 7 L12 10" stroke={c} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M16 13 H5 M8 16 L5 13 L8 10" stroke={c} strokeWidth="1.7" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )},
   { id: 'tasks', label: 'Tareas', icon: (c) => (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <rect x="3" y="3" width="14" height="14" rx="3" stroke={c} strokeWidth="1.6" fill="none"/>

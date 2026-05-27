@@ -9,6 +9,7 @@ import { watchClosedSessionsForDate, discardEmptySession, recomputeClosedSession
 import { watchSessionSales, editSaleItems, deleteSaleAsAdmin } from '../sales'
 import { adjustDebtorForSaleChange } from '../debtors'
 import { watchSessionExpenses } from '../cashExpenses'
+import { watchSessionIncomes } from '../cashIncomes'
 import { watchTasksCompletedInSession, watchTasksForCashier } from '../tasks'
 import { paymentIcon } from '../utils/payment'
 
@@ -240,6 +241,7 @@ function ClosureDetailModal({ session, onClose }) {
   const adminUid = authUser?.uid || null
   const [sales, setSales] = useState([])
   const [expenses, setExpenses] = useState([])
+  const [incomes, setIncomes] = useState([])
   const [completedTasks, setCompletedTasks] = useState([])
   const [pendingTasksForCashier, setPendingTasksForCashier] = useState([])
   // Borrado de turno vacío (cerrado por error, sin actividad).
@@ -249,6 +251,7 @@ function ClosureDetailModal({ session, onClose }) {
 
   useEffect(() => watchSessionSales(session.id, setSales), [session.id])
   useEffect(() => watchSessionExpenses(session.id, setExpenses), [session.id])
+  useEffect(() => watchSessionIncomes(session.id, setIncomes), [session.id])
   useEffect(() => watchTasksCompletedInSession(session.id, setCompletedTasks), [session.id])
   useEffect(() => {
     if (!session.cashierUid) { setPendingTasksForCashier([]); return undefined }
@@ -292,12 +295,18 @@ function ClosureDetailModal({ session, onClose }) {
     rejectedTotal: expenses.filter(e => e.status === 'rejected').reduce((a, e) => a + (Number(e.amount) || 0), 0),
     count: expenses.length,
   }
+  const incomesAtClose = session.incomesAtClose || {
+    approvedTotal: incomes.filter(e => e.status === 'approved').reduce((a, e) => a + (Number(e.amount) || 0), 0),
+    pendingTotal: incomes.filter(e => e.status === 'pending').reduce((a, e) => a + (Number(e.amount) || 0), 0),
+    rejectedTotal: incomes.filter(e => e.status === 'rejected').reduce((a, e) => a + (Number(e.amount) || 0), 0),
+    count: incomes.length,
+  }
 
   const cashFloor = getCashFloor(session.branchId)
   const openingFloat = Number(session.openingFloat) || 0
   const baseAtOpen = session.openingSource?.type === 'empty' ? cashFloor : 0
   const declared = Number(session.declaredClosingCash) || 0
-  const expectedCash = baseAtOpen + openingFloat + (breakdown.efectivo || 0) - (expensesAtClose.approvedTotal || 0)
+  const expectedCash = baseAtOpen + openingFloat + (breakdown.efectivo || 0) - (expensesAtClose.approvedTotal || 0) + (incomesAtClose.approvedTotal || 0)
   const difference = declared - expectedCash
   const isPending = session.status === 'pending_close'
 
@@ -321,7 +330,7 @@ function ClosureDetailModal({ session, onClose }) {
   // Al borrar, discardEmptySession limpia el descuento/movimiento que esa
   // discrepancia hubiera generado, para no dejar nada colgando.
   const realSalesCount = sales.filter(s => (s.status || 'active') !== 'deleted').length
-  const canDelete = realSalesCount === 0 && expenses.length === 0
+  const canDelete = realSalesCount === 0 && expenses.length === 0 && incomes.length === 0
 
   async function handleDeleteEmpty() {
     setDeleting(true)
@@ -395,6 +404,9 @@ function ClosureDetailModal({ session, onClose }) {
             {(expensesAtClose.approvedTotal || 0) > 0 && (
               <DetailRow label="− Gastos aprobados" value={fmtCOP(expensesAtClose.approvedTotal)} muted negative />
             )}
+            {(incomesAtClose.approvedTotal || 0) > 0 && (
+              <DetailRow label="+ Ingresos aprobados" value={fmtCOP(incomesAtClose.approvedTotal)} muted />
+            )}
             <div style={{ borderTop: `1px solid ${T.neutral[200]}`, marginTop: 8, paddingTop: 8 }}>
               <DetailRow label="Esperado" value={fmtCOP(expectedCash)} bold />
               <DetailRow label="Declaró la cajera" value={fmtCOP(declared)} bold />
@@ -447,6 +459,17 @@ function ClosureDetailModal({ session, onClose }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
               {expenses.map(e => <ExpenseDetailRow key={e.id} expense={e} />)}
             </div>
+          )}
+
+          {incomes.length > 0 && (
+            <>
+              <DetailSectionLabel>
+                Ingresos del turno · {incomesAtClose.count || 0}
+              </DetailSectionLabel>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                {incomes.map(e => <IncomeDetailRow key={e.id} income={e} />)}
+              </div>
+            </>
           )}
 
           {(completedTasks.length > 0 || unfinishedTasks.length > 0) && (
@@ -993,6 +1016,60 @@ function ExpenseDetailRow({ expense }) {
           {expense.photoUrl && (
             <a
               href={expense.photoUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={e => e.stopPropagation()}
+              style={{ color: T.copper[600], fontWeight: 600, textDecoration: 'underline' }}
+            >
+              📎 ver foto
+            </a>
+          )}
+        </div>
+      </div>
+      <div style={{
+        padding: '3px 8px', borderRadius: 999,
+        background: tone.labelColor, color: '#fff',
+        fontSize: 10, fontWeight: 700, letterSpacing: 0.3, textTransform: 'uppercase',
+        flexShrink: 0,
+      }}>
+        {tone.label}
+      </div>
+    </div>
+  )
+}
+
+function IncomeDetailRow({ income }) {
+  const isApproved = income.status === 'approved'
+  const isRejected = income.status === 'rejected'
+  const tone = isApproved
+    ? { bg: '#E8F4E8', border: '#C2DDC1', label: '✓ Aprobado', labelColor: T.ok }
+    : isRejected
+      ? { bg: '#FBE9E5', border: '#F0C8BE', label: '✗ Rechazado', labelColor: T.bad }
+      : { bg: '#FFF7E6', border: '#F4E0BC', label: 'Pendiente', labelColor: T.warn }
+
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 10,
+      background: tone.bg, border: `1px solid ${tone.border}`,
+      display: 'flex', alignItems: 'center', gap: 10,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 700, color: T.neutral[900],
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {income.description}
+        </div>
+        <div style={{ fontSize: 11.5, color: T.neutral[600], marginTop: 2, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 700, color: T.ok, fontVariantNumeric: 'tabular-nums' }}>
+            +{fmtCOP(income.amount || 0)}
+          </span>
+          {income.debtorName && (
+            <span style={{ color: '#2E6B43', fontWeight: 600 }}>🤝 abono a {income.debtorName}</span>
+          )}
+          {income.photoUrl && (
+            <a
+              href={income.photoUrl}
               target="_blank"
               rel="noreferrer"
               onClick={e => e.stopPropagation()}

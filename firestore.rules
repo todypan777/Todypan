@@ -9,7 +9,8 @@
 // de código requiera tocar reglas, se edita ESTE archivo y se entrega una copia
 // completa lista para pegar.
 //
-// Última actualización: 2026-05-21
+// Última actualización: 2026-05-27 — añadido bloque cashIncomes (ingresos de
+//   caja registrados por la cajera, espejo de cashExpenses).
 // Último cambio: rol MESERA + alineación con el modelo real de roles. Ningún
 //   empleado tiene rol permanente: todos son role:'staff' y el rol funcional
 //   (caja/cocina/mesera) lo define la sesión (cashSessions.type). Por eso se
@@ -138,6 +139,34 @@ service cloud.firestore {
 
       // La cajera puede eliminar SUS gastos mientras sigan 'pending'
       // (subió uno por error o duplicado). Aprobado/rechazado lo bloquea el admin.
+      allow delete: if isAdmin()
+                    || (isApprovedStaff()
+                        && resource.data.cashierUid == request.auth.uid
+                        && resource.data.status == 'pending');
+    }
+
+    // INGRESOS DE CAJA — espejo de cashExpenses. Plata que entra a la caja
+    // fuera de las ventas (abono a deuda, préstamo, devolución). La cajera crea
+    // y gestiona los suyos mientras sigan 'pending'; el admin aprueba/rechaza al
+    // cerrar. El abono a la deuda (si debtorId) lo aplica el admin sobre
+    // /debtors (no la cajera) — por eso aquí no se valida nada de deudores.
+    match /cashIncomes/{iid} {
+      allow read: if isApprovedAny();
+      allow create: if isApprovedStaff()
+                    && request.resource.data.cashierUid == request.auth.uid
+                    && request.resource.data.status == 'pending';
+
+      allow update: if isAdmin()
+                    || (isApprovedStaff()
+                        && resource.data.cashierUid == request.auth.uid
+                        && resource.data.status == 'pending'
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                             .hasOnly(['photoUrl', 'photoStatus', 'photoLocalId',
+                                       'photoUploadedAt', 'photoFailedAt',
+                                       'photoFailedReason',
+                                       'description', 'amount',
+                                       'editedAt', 'editedAtClient']));
+
       allow delete: if isAdmin()
                     || (isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid

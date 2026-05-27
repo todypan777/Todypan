@@ -380,7 +380,10 @@ export async function resolveClosingDiscrepancy(sessionId, { note, reviewedBy } 
 async function buildSessionSnapshot(sessionId) {
   const salesQ = query(collection(firestoreDb, 'sales'), where('sessionId', '==', sessionId))
   const expensesQ = query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', sessionId))
-  const [salesSnap, expensesSnap] = await Promise.all([getDocs(salesQ), getDocs(expensesQ)])
+  const incomesQ = query(collection(firestoreDb, 'cashIncomes'), where('sessionId', '==', sessionId))
+  const [salesSnap, expensesSnap, incomesSnap] = await Promise.all([
+    getDocs(salesQ), getDocs(expensesQ), getDocs(incomesQ),
+  ])
 
   // Para ventas con paymentSplit (pago dividido efectivo + digital), cada
   // porción se suma a su categoría para que el cuadre sea exacto. Las ventas
@@ -413,7 +416,17 @@ async function buildSessionSnapshot(sessionId) {
     expensesAtClose.count += 1
   })
 
-  return { salesBreakdown, expensesAtClose }
+  const incomesAtClose = { approvedTotal: 0, pendingTotal: 0, rejectedTotal: 0, count: 0 }
+  incomesSnap.docs.forEach(d => {
+    const e = d.data()
+    const a = Number(e.amount) || 0
+    if (e.status === 'approved') incomesAtClose.approvedTotal += a
+    else if (e.status === 'rejected') incomesAtClose.rejectedTotal += a
+    else incomesAtClose.pendingTotal += a
+    incomesAtClose.count += 1
+  })
+
+  return { salesBreakdown, expensesAtClose, incomesAtClose }
 }
 
 /**
@@ -467,6 +480,7 @@ export async function adminCloseSession(sessionId, payload = {}) {
     closeApprovedBy: payload.reviewedBy || null,
     salesBreakdown: finalSnapshot.salesBreakdown,
     expensesAtClose: finalSnapshot.expensesAtClose,
+    incomesAtClose: finalSnapshot.incomesAtClose,
   }
   if (payload.approveNote) {
     data.closeApproveNote = payload.approveNote
@@ -610,6 +624,7 @@ export async function recomputeClosedSession(sessionId, { byUid } = {}) {
   await updateDoc(ref, {
     salesBreakdown: newBreakdown,
     expensesAtClose: finalSnapshot.expensesAtClose,
+    incomesAtClose: finalSnapshot.incomesAtClose,
     expectedCash: newExpected,
     difference,
     closingDiscrepancy, // null cuando queda cuadre exacto → limpia la discrepancia
@@ -689,8 +704,8 @@ export function watchClosedSessionsForDate(dateStr, callback) {
 // gastos reales. El admin revisa el antes/después y confirma antes de escribir.
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Construye el breakdown de ventas/gastos a partir de docs ya leídos. */
-function snapshotFromDocs(saleDocs, expenseDocs) {
+/** Construye el breakdown de ventas/gastos/ingresos a partir de docs ya leídos. */
+function snapshotFromDocs(saleDocs, expenseDocs, incomeDocs = []) {
   const salesBreakdown = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
   saleDocs.forEach(s => {
     if ((s.status || 'active') === 'deleted') return
@@ -715,30 +730,40 @@ function snapshotFromDocs(saleDocs, expenseDocs) {
     else expensesAtClose.pendingTotal += a
     expensesAtClose.count += 1
   })
-  return { salesBreakdown, expensesAtClose }
+  const incomesAtClose = { approvedTotal: 0, pendingTotal: 0, rejectedTotal: 0, count: 0 }
+  incomeDocs.forEach(e => {
+    const a = Number(e.amount) || 0
+    if (e.status === 'approved') incomesAtClose.approvedTotal += a
+    else if (e.status === 'rejected') incomesAtClose.rejectedTotal += a
+    else incomesAtClose.pendingTotal += a
+    incomesAtClose.count += 1
+  })
+  return { salesBreakdown, expensesAtClose, incomesAtClose }
 }
 
-/** Lee ventas y gastos (con su ref) de varios turnos. */
+/** Lee ventas, gastos e ingresos (con su ref) de varios turnos. */
 async function readSessionsData(sessionIds) {
-  const saleRefs = [], expenseRefs = []
-  const saleDocs = [], expenseDocs = []
+  const saleRefs = [], expenseRefs = [], incomeRefs = []
+  const saleDocs = [], expenseDocs = [], incomeDocs = []
   for (const id of sessionIds) {
     const ss = await getDocs(query(collection(firestoreDb, 'sales'), where('sessionId', '==', id)))
     ss.forEach(d => { saleRefs.push(d.ref); saleDocs.push(d.data()) })
     const es = await getDocs(query(collection(firestoreDb, 'cashExpenses'), where('sessionId', '==', id)))
     es.forEach(d => { expenseRefs.push(d.ref); expenseDocs.push(d.data()) })
+    const is = await getDocs(query(collection(firestoreDb, 'cashIncomes'), where('sessionId', '==', id)))
+    is.forEach(d => { incomeRefs.push(d.ref); incomeDocs.push(d.data()) })
   }
-  return { saleRefs, expenseRefs, saleDocs, expenseDocs }
+  return { saleRefs, expenseRefs, incomeRefs, saleDocs, expenseDocs, incomeDocs }
 }
 
-function computeMergeResult(survivor, saleDocs, expenseDocs) {
-  const { salesBreakdown, expensesAtClose } = snapshotFromDocs(saleDocs, expenseDocs)
+function computeMergeResult(survivor, saleDocs, expenseDocs, incomeDocs = []) {
+  const { salesBreakdown, expensesAtClose, incomesAtClose } = snapshotFromDocs(saleDocs, expenseDocs, incomeDocs)
   const baseAtOpen = survivor.openingSource?.type === 'empty' ? CASH_FLOOR_DEFAULT : 0
   const openingFloat = Number(survivor.openingFloat) || 0
-  const expectedCash = baseAtOpen + openingFloat + (salesBreakdown.efectivo || 0) - expensesAtClose.approvedTotal
+  const expectedCash = baseAtOpen + openingFloat + (salesBreakdown.efectivo || 0) - expensesAtClose.approvedTotal + incomesAtClose.approvedTotal
   const declared = Number(survivor.declaredClosingCash) || 0
   const difference = declared - expectedCash
-  return { salesBreakdown, expensesAtClose, baseAtOpen, openingFloat, expectedCash, declared, difference }
+  return { salesBreakdown, expensesAtClose, incomesAtClose, baseAtOpen, openingFloat, expectedCash, declared, difference }
 }
 
 /**
@@ -756,8 +781,8 @@ export async function previewMergeCashSessions({ survivorId, loserIds }) {
   const survivor = sessionsById[survivorId]
   if (!survivor) throw new Error('El turno principal ya no existe.')
 
-  const { saleDocs, expenseDocs } = await readSessionsData(allIds)
-  const result = computeMergeResult(survivor, saleDocs, expenseDocs)
+  const { saleDocs, expenseDocs, incomeDocs } = await readSessionsData(allIds)
+  const result = computeMergeResult(survivor, saleDocs, expenseDocs, incomeDocs)
 
   const earliestOpenedAt = allIds
     .map(id => sessionsById[id]?.openedAt?.toMillis?.() ?? null)
@@ -796,9 +821,9 @@ export async function mergeCashSessions({ survivorId, loserIds, byUid }) {
   const survivor = sessionsById[survivorId]
   if (!survivor) throw new Error('El turno principal ya no existe.')
 
-  const { saleRefs, expenseRefs, saleDocs, expenseDocs } = await readSessionsData(allIds)
-  const { salesBreakdown, expensesAtClose, expectedCash, declared, difference } =
-    computeMergeResult(survivor, saleDocs, expenseDocs)
+  const { saleRefs, expenseRefs, incomeRefs, saleDocs, expenseDocs, incomeDocs } = await readSessionsData(allIds)
+  const { salesBreakdown, expensesAtClose, incomesAtClose, expectedCash, declared, difference } =
+    computeMergeResult(survivor, saleDocs, expenseDocs, incomeDocs)
 
   const isSurplus = difference > 0
   const isShortage = difference < 0
@@ -841,10 +866,12 @@ export async function mergeCashSessions({ survivorId, loserIds, byUid }) {
   const batch = writeBatch(firestoreDb)
   for (const ref of saleRefs) batch.update(ref, { sessionId: survivorId })
   for (const ref of expenseRefs) batch.update(ref, { sessionId: survivorId })
+  for (const ref of incomeRefs) batch.update(ref, { sessionId: survivorId })
 
   const survivorUpdate = {
     salesBreakdown,
     expensesAtClose,
+    incomesAtClose,
     expectedCash,
     difference,
     mergedFrom: loserIds,

@@ -9,6 +9,7 @@ import {
   onSnapshot,
   arrayUnion,
   getDoc,
+  deleteField,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
 import { addDocOffline } from './utils/firestoreOffline'
@@ -272,6 +273,98 @@ export function watchSalesByDate(dateStr, callback) {
       callback([])
     }
   )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Confirmación de transferencias (admin revisa Nequi/Daviplata del día)
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Admin confirma que una transferencia (nequi/daviplata) SÍ llegó a su cuenta.
+ * Marca la venta con transferConfirmation.status = 'confirmed'.
+ */
+export async function confirmTransfer(saleId, { byUid, byName, note } = {}) {
+  await updateDoc(saleRef(saleId), {
+    transferConfirmation: {
+      status: 'confirmed',
+      reviewedBy: byUid || null,
+      reviewedByName: byName || null,
+      reviewedAt: serverTimestamp(),
+      reviewedAtClient: Date.now(),
+      note: note?.trim() || null,
+    },
+  })
+}
+
+/** Deshace la confirmación (vuelve a quedar pendiente). */
+export async function unconfirmTransfer(saleId) {
+  await updateDoc(saleRef(saleId), { transferConfirmation: deleteField() })
+}
+
+/**
+ * Reclasifica una venta (típicamente marcada EFECTIVO por error) a una
+ * transferencia digital (nequi/daviplata) y la deja confirmada — el admin
+ * acaba de verificarla contra su app. Deja rastro en paymentReclass.
+ *
+ * Nota: cambia los reportes (que leen ventas en vivo). El cuadre de un turno
+ * YA cerrado queda congelado y no se recalcula solo.
+ */
+export async function reclassifySaleToTransfer(saleId, { method, byUid, byName, note } = {}) {
+  const snap = await getDoc(saleRef(saleId))
+  if (!snap.exists()) throw new Error('Venta no encontrada')
+  const sale = snap.data()
+  await updateDoc(saleRef(saleId), {
+    paymentMethod: method,
+    paymentSplit: deleteField(),
+    cashReceived: deleteField(),
+    paymentReclass: {
+      from: sale.paymentMethod || 'efectivo',
+      to: method,
+      by: byUid || null,
+      byName: byName || null,
+      at: serverTimestamp(),
+      atClient: Date.now(),
+    },
+    transferConfirmation: {
+      status: 'confirmed',
+      reviewedBy: byUid || null,
+      reviewedByName: byName || null,
+      reviewedAt: serverTimestamp(),
+      reviewedAtClient: Date.now(),
+      note: note?.trim() || null,
+      reclassified: true,
+    },
+  })
+  return { from: sale.paymentMethod || 'efectivo' }
+}
+
+/**
+ * La transferencia NO llegó: el admin la pasa a EFECTIVO (el cliente pagó en
+ * efectivo). Si era mixto, mueve toda la porción digital a efectivo.
+ */
+export async function convertTransferToCash(saleId, { byUid, byName } = {}) {
+  const snap = await getDoc(saleRef(saleId))
+  if (!snap.exists()) throw new Error('Venta no encontrada')
+  const sale = snap.data()
+  const update = {
+    paymentMethod: 'efectivo',
+    transferConfirmation: deleteField(),
+    paymentReclass: {
+      from: sale.paymentMethod || 'nequi',
+      to: 'efectivo',
+      by: byUid || null,
+      byName: byName || null,
+      at: serverTimestamp(),
+      atClient: Date.now(),
+      reason: 'transfer_not_received',
+    },
+  }
+  if (sale.paymentMethod === 'mixto' && sale.paymentSplit) {
+    const sum = Object.values(sale.paymentSplit).reduce((s, a) => s + (Number(a) || 0), 0)
+    update.paymentSplit = deleteField()
+    update.cashReceived = sum
+  }
+  await updateDoc(saleRef(saleId), update)
 }
 
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */

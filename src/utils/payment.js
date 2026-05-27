@@ -40,6 +40,19 @@ export function paymentSplitSummary(sale) {
   return parts.join(' + ')
 }
 
+/**
+ * Monto que viajó por una app digital (nequi/daviplata) en una venta.
+ * - Venta pura de ese método → el total.
+ * - Venta mixto → solo la porción de ese método dentro de paymentSplit.
+ * - Cualquier otro caso → 0.
+ */
+export function digitalAmount(sale, method) {
+  if (!sale) return 0
+  if (sale.paymentSplit) return Number(sale.paymentSplit[method]) || 0
+  if (sale.paymentMethod === method) return Number(sale.total) || 0
+  return 0
+}
+
 function shortMoney(n) {
   const abs = Math.abs(Math.round(Number(n) || 0))
   if (abs >= 1_000_000) return '$' + (abs / 1_000_000).toFixed(1).replace('.', ',') + 'M'

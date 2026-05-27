@@ -832,6 +832,9 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   // Sub-modal con detalle de ventas. Si methodFilter está seteado, solo muestra
   // ventas de ese método (efectivo / nequi / daviplata / deuda). null = todas.
   const [salesView, setSalesView] = useState(null) // null | { methodFilter: string|null }
+  // Contador de billetes/monedas: ayuda a sumar el efectivo físico por denominación.
+  const [showCounter, setShowCounter] = useState(false)
+  const [counterCounts, setCounterCounts] = useState({}) // { [denom]: cantidadStr }
 
   // Cálculos en vivo
   const activeSales = useMemo(
@@ -1205,7 +1208,40 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
           large
           autoFocus
         />
+        <button
+          onClick={() => setShowCounter(true)}
+          disabled={busy}
+          style={{
+            width: '100%', marginTop: 10, padding: '10px',
+            borderRadius: 12, background: '#fff', color: T.copper[700],
+            border: `1px solid ${T.copper[200]}`,
+            cursor: busy ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+            fontSize: 13, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+            <rect x="3" y="2" width="12" height="14" rx="2" stroke={T.copper[600]} strokeWidth="1.5"/>
+            <path d="M6 5 H12" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/>
+            <circle cx="6.5" cy="9" r="0.9" fill={T.copper[600]}/>
+            <circle cx="9" cy="9" r="0.9" fill={T.copper[600]}/>
+            <circle cx="11.5" cy="9" r="0.9" fill={T.copper[600]}/>
+            <circle cx="6.5" cy="12" r="0.9" fill={T.copper[600]}/>
+            <circle cx="9" cy="12" r="0.9" fill={T.copper[600]}/>
+            <circle cx="11.5" cy="12" r="0.9" fill={T.copper[600]}/>
+          </svg>
+          Ayúdame a contar
+        </button>
       </div>
+
+      {showCounter && (
+        <CashCounterModal
+          counts={counterCounts}
+          onChangeCounts={setCounterCounts}
+          onCancel={() => setShowCounter(false)}
+          onUse={(total) => { setDeclaredStr(String(total)); setShowCounter(false) }}
+        />
+      )}
 
       {/* Cuadre — solo si admin ya digitó algo */}
       {declaredStr.trim() !== '' && (
@@ -1677,6 +1713,118 @@ function NumInput({ value, onChange, disabled, large, autoFocus }) {
           color: T.neutral[900], fontVariantNumeric: 'tabular-nums',
         }}
       />
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// MODAL: Contar efectivo por denominación (ayuda de cuadre)
+// El admin pone cuántos billetes/monedas hay de cada denominación COP; la app
+// suma sola y al confirmar llena el campo "Cuenta física en caja".
+// ──────────────────────────────────────────────────────────────
+const COP_DENOMS = [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
+
+function CashCounterModal({ counts, onChangeCounts, onCancel, onUse }) {
+  function setCount(denom, raw) {
+    const clean = String(raw).replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, '')
+    onChangeCounts({ ...counts, [denom]: clean })
+  }
+  const total = COP_DENOMS.reduce((sum, d) => sum + d * (Number(counts[d]) || 0), 0)
+
+  return (
+    <div onClick={onCancel} style={{
+      position: 'fixed', inset: 0, zIndex: 300,
+      background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 420, background: '#fff', borderRadius: 22,
+        maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.28)',
+      }}>
+        <div style={{ padding: '18px 20px 12px', borderBottom: `1px solid ${T.neutral[100]}` }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.3 }}>
+            Contar efectivo
+          </div>
+          <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
+            Pon cuántos billetes o monedas hay de cada uno. Yo sumo.
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '6px 16px' }}>
+          {COP_DENOMS.map((d, i) => {
+            const qty = Number(counts[d]) || 0
+            const sub = d * qty
+            return (
+              <div key={d} style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0',
+                borderBottom: i < COP_DENOMS.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+              }}>
+                <div style={{
+                  width: 84, fontSize: 15, fontWeight: 700, color: T.neutral[900],
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {fmtCOP(d)}
+                </div>
+                <span style={{ color: T.neutral[400], fontSize: 14 }}>×</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={counts[d] || ''}
+                  onChange={e => setCount(d, e.target.value)}
+                  placeholder="0"
+                  style={{
+                    width: 60, textAlign: 'center',
+                    padding: '8px 6px', borderRadius: 10,
+                    border: `1.5px solid ${qty > 0 ? T.copper[300] : T.neutral[200]}`,
+                    background: '#fff', outline: 'none', fontFamily: 'inherit',
+                    fontSize: 15, fontWeight: 700, color: T.neutral[900],
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                />
+                <div style={{
+                  flex: 1, textAlign: 'right', fontSize: 14, fontWeight: 700,
+                  color: sub > 0 ? T.neutral[900] : T.neutral[300],
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
+                  {fmtCOP(sub)}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div style={{ padding: '14px 16px', borderTop: `1px solid ${T.neutral[100]}`, background: '#fff' }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12,
+          }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.neutral[700] }}>Total contado</span>
+            <span style={{ fontSize: 22, fontWeight: 800, color: T.neutral[900], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
+              {fmtCOP(total)}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button onClick={onCancel} style={{
+              flex: 1, padding: 12, borderRadius: 12, border: 'none',
+              background: T.neutral[100], color: T.neutral[700],
+              fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+            }}>Cancelar</button>
+            <button
+              onClick={() => onUse(total)}
+              disabled={total <= 0}
+              style={{
+                flex: 1.4, padding: 12, borderRadius: 12, border: 'none',
+                background: total > 0 ? T.copper[500] : T.neutral[200],
+                color: total > 0 ? '#fff' : T.neutral[400],
+                fontSize: 14, fontWeight: 700,
+                cursor: total > 0 ? 'pointer' : 'not-allowed', fontFamily: 'inherit',
+              }}
+            >
+              Usar {fmtCOP(total)}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -2320,37 +2468,48 @@ function NonCashShiftRow({ session, isLast, onAssist, onClose, onDiscard }) {
 
   return (
     <div style={{
-      padding: '12px 16px',
-      display: 'flex', alignItems: 'center', gap: 12,
+      padding: '14px 16px',
       borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
     }}>
+      {/* Encabezado: etiqueta + nombre con todo el ancho */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <span style={{
+          padding: '3px 9px', borderRadius: 999,
+          background: typeBg, color: typeColor,
+          fontSize: 10, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
+          flexShrink: 0,
+        }}>
+          {typeLabel}
+        </span>
+        <span style={{ fontSize: 11.5, color: T.neutral[500] }}>
+          desde {fmtTime(opened)}
+        </span>
+      </div>
       <div style={{
-        padding: '3px 9px', borderRadius: 999,
-        background: typeBg, color: typeColor,
-        fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase',
-        flexShrink: 0,
+        fontSize: 15, fontWeight: 700, color: T.neutral[900],
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
-        {typeLabel}
+        {session.cashierName || 'Sin nombre'}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[900] }}>
-          {session.cashierName || 'Sin nombre'}
-        </div>
-        <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
-          {session.branchName || 'Sin panadería'} · desde {fmtTime(opened)}
-        </div>
+      <div style={{
+        fontSize: 12, color: T.neutral[500], marginTop: 1, marginBottom: 12,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
+        {session.branchName || 'Sin panadería'}
       </div>
-      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+
+      {/* Acciones: fila propia, botones parejos y tocables */}
+      <div style={{ display: 'flex', gap: 8 }}>
         {onDiscard && (
           <button
             onClick={onDiscard}
             title="Cancelar turno (abierto por error)"
             style={{
-              padding: '7px 10px', borderRadius: 10,
+              flex: 1, padding: '10px', borderRadius: 12,
               background: '#fff', color: T.bad,
               border: `1px solid ${T.bad}55`,
               cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 12, fontWeight: 700,
+              fontSize: 13, fontWeight: 700,
             }}
           >
             Cancelar
@@ -2360,11 +2519,11 @@ function NonCashShiftRow({ session, isLast, onAssist, onClose, onDiscard }) {
           onClick={onAssist}
           title="Asistir (ver la pantalla de este turno)"
           style={{
-            padding: '7px 10px', borderRadius: 10,
+            flex: 1, padding: '10px', borderRadius: 12,
             background: '#fff', color: T.neutral[700],
             border: `1px solid ${T.neutral[200]}`,
             cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 12, fontWeight: 700,
+            fontSize: 13, fontWeight: 700,
           }}
         >
           Asistir
@@ -2372,10 +2531,10 @@ function NonCashShiftRow({ session, isLast, onAssist, onClose, onDiscard }) {
         <button
           onClick={onClose}
           style={{
-            padding: '7px 12px', borderRadius: 10,
+            flex: 1, padding: '10px', borderRadius: 12,
             background: T.neutral[900], color: '#fff',
             border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: 12, fontWeight: 700,
+            fontSize: 13, fontWeight: 700,
           }}
         >
           Cerrar

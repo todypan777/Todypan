@@ -241,16 +241,24 @@ export async function setDailyCorriente(_dateStr, config, { publishedBy, publish
  * Define los precios de las ADICIONES (sopa adicional, huevo, proteína
  * extra). PERSISTENTES — viven en el mismo doc fijo `corriente_config`.
  *
- * config: { addonSoupPrice, addonEggPrice, addonProteinPrice }
+ * config: {
+ *   addonSoupPriceMesa, addonSoupPriceLlevar,
+ *   addonEggPriceMesa, addonEggPriceLlevar,
+ *   addonProteinPriceMesa, addonProteinPriceLlevar,
+ * }
  *
- * Los 3 tipos de adición son fijos: 'soup' | 'egg' | 'protein'.
- * Si el precio es 0 o falsy, la adición NO se ofrece al cliente.
+ * Los 3 tipos de adición son fijos: 'soup' | 'egg' | 'protein'. Cada uno tiene
+ * precio separado para MESA y para LLEVAR. Si ambos precios de un tipo son 0,
+ * esa adición NO se ofrece.
  */
 export async function setAddonPrices(config, { publishedBy, publishedByName } = {}) {
   await setDoc(corrienteConfigRef(), {
-    addonSoupPrice:    Number(config?.addonSoupPrice) || 0,
-    addonEggPrice:     Number(config?.addonEggPrice) || 0,
-    addonProteinPrice: Number(config?.addonProteinPrice) || 0,
+    addonSoupPriceMesa:      Number(config?.addonSoupPriceMesa) || 0,
+    addonSoupPriceLlevar:    Number(config?.addonSoupPriceLlevar) || 0,
+    addonEggPriceMesa:       Number(config?.addonEggPriceMesa) || 0,
+    addonEggPriceLlevar:     Number(config?.addonEggPriceLlevar) || 0,
+    addonProteinPriceMesa:   Number(config?.addonProteinPriceMesa) || 0,
+    addonProteinPriceLlevar: Number(config?.addonProteinPriceLlevar) || 0,
     updatedAt: serverTimestamp(),
     updatedAtClient: getClientTimestamp(),
     updatedBy: publishedBy || null,
@@ -259,15 +267,25 @@ export async function setAddonPrices(config, { publishedBy, publishedByName } = 
 }
 
 /**
- * Lee los 3 precios de adiciones del doc persistente. Devuelve null para
- * los que no estén configurados (precio = 0 → no se ofrece al cliente).
+ * Lee los precios de adiciones (mesa/llevar por tipo) del doc persistente.
+ * Devuelve { soup: { mesa, llevar }, egg: {...}, protein: {...} }.
+ *
+ * Compatibilidad: si solo existe el precio viejo único (addonSoupPrice, etc.),
+ * se usa como valor para mesa Y llevar — así las configuraciones previas siguen
+ * funcionando hasta que el admin defina precios separados.
  */
 export function getAddonPrices(corrienteConfig) {
   const cfg = corrienteConfig || {}
+  const pick = (mesaKey, llevarKey, legacyKey) => {
+    const legacy = Number(cfg[legacyKey]) || 0
+    const mesa = cfg[mesaKey] != null ? (Number(cfg[mesaKey]) || 0) : legacy
+    const llevar = cfg[llevarKey] != null ? (Number(cfg[llevarKey]) || 0) : legacy
+    return { mesa, llevar }
+  }
   return {
-    soup:    Number(cfg.addonSoupPrice) || 0,
-    egg:     Number(cfg.addonEggPrice) || 0,
-    protein: Number(cfg.addonProteinPrice) || 0,
+    soup:    pick('addonSoupPriceMesa', 'addonSoupPriceLlevar', 'addonSoupPrice'),
+    egg:     pick('addonEggPriceMesa', 'addonEggPriceLlevar', 'addonEggPrice'),
+    protein: pick('addonProteinPriceMesa', 'addonProteinPriceLlevar', 'addonProteinPrice'),
   }
 }
 

@@ -247,10 +247,11 @@ export default function NewSale({
       .filter(m => m && !m.archived)
       .map(m => ({ id: m.id, name: m.name }))
   }, [dailyMenu, allMenuItems])
+  const addonHasPrice = (a) => (a?.mesa || 0) > 0 || (a?.llevar || 0) > 0
   const anyAddonAvailable = (
-    addonPrices.soup > 0 ||
-    addonPrices.egg > 0 ||
-    (addonPrices.protein > 0 && proteinOptionsForDay.length > 0)
+    addonHasPrice(addonPrices.soup) ||
+    addonHasPrice(addonPrices.egg) ||
+    (addonHasPrice(addonPrices.protein) && proteinOptionsForDay.length > 0)
   )
 
   // Catálogo virtual: UN solo producto "Almuerzo" que al tocar abre el
@@ -896,12 +897,12 @@ export default function NewSale({
       }
 
       // Paso 2: pre-procesar las adiciones antes de crear los kitchenOrders.
-      // buildLunchCommanda mergea las adiciones al primer almuerzo (como nota)
-      // o crea un "Almuerzo Especial" sintético si solo hay adiciones.
-      // El destination del sintético se ajusta al tab real (mesa o llevar).
+      // buildLunchCommanda emite las adiciones como su propia línea "Adiciones"
+      // (con su precio, ya según mesa/llevar). Respetamos su destino real; solo
+      // lo completamos con el del tab si por algún motivo faltara.
       const processedCommanda = buildLunchCommanda(lunchCommanda, lunch => lunch)
         .map(item => {
-          if (item.productName === 'Adiciones') {
+          if (item.productName === 'Adiciones' && !item.destination) {
             return { ...item, destination: targetTabKind === 'llevar' ? 'llevar' : 'mesa' }
           }
           return item
@@ -1718,6 +1719,16 @@ export default function NewSale({
           prices={addonPrices}
           hidePrices={hidePrices}
           proteinOptions={proteinOptionsForDay}
+          allowDestination={true}
+          defaultDestination={
+            isTabMode
+              ? (tab?.kind === 'llevar' ? 'llevar' : 'mesa')
+              : (() => {
+                  const withDest = lunchCommanda.filter(l => l.destination)
+                  return withDest.length > 0 && withDest.every(l => l.destination === 'llevar')
+                    ? 'llevar' : 'mesa'
+                })()
+          }
           initialType={addonsModalState === 'menu' ? null : addonsModalState}
           onCancel={() => {
             setAddonsModalState(null)
@@ -1794,9 +1805,14 @@ export default function NewSale({
 // ──────────────────────────────────────────────────────────────
 function SendCommandaModal({ state, setState, isTabMode, hidePrices, tab, openTabs, lunchCommanda, onRemoveLunch, onAddAnother, onSubmit, onBack }) {
   // Determinar kind de la tab destino.
+  // Deducir el tipo de tab a partir de los items CON destino (almuerzos y
+  // adiciones). Antes se evaluaba sobre todos los items y un addon sin
+  // destination rompía el `.every`, forzando mesa aunque el pedido fuera para
+  // llevar. Ahora cada item (almuerzo o adición) trae su destino.
+  const destItems = lunchCommanda.filter(l => l.destination === 'mesa' || l.destination === 'llevar')
   const tabKind = isTabMode
     ? (tab?.kind || 'mesa')
-    : (lunchCommanda.length > 0 && lunchCommanda.every(l => l.destination === 'llevar')
+    : (destItems.length > 0 && destItems.every(l => l.destination === 'llevar')
         ? 'llevar'
         : 'mesa')
 

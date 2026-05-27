@@ -127,27 +127,22 @@ export function buildLunchCommanda(items, mapLunch) {
   if (addons.length === 0) return lunchPayloads
 
   const addonsText = addons.map(formatAddonLine).filter(Boolean).join(' · ')
-  const addonsLabel = `Adiciones: ${addonsText}`
 
-  if (lunchPayloads.length > 0) {
-    const first = lunchPayloads[0]
-    const combinedNote = first.note
-      ? `${first.note} · ${addonsLabel}`
-      : addonsLabel
-    lunchPayloads[0] = { ...first, note: combinedNote }
-    return lunchPayloads
-  }
-
-  // Sin almuerzos → sintético como Especial.
+  // Las adiciones SIEMPRE se cobran como su propia línea "Adiciones" (vayan
+  // solas o junto a almuerzos). Antes, cuando había un almuerzo, la adición se
+  // pegaba como nota y su precio se PERDÍA (no se cobraba). Ahora cada adición
+  // ya trae su precio (según mesa/llevar) y se suman en una línea aparte.
   const totalAddonsPrice = addons.reduce((s, it) => s + (Number(it.price) || 0), 0)
   const customerNotes = addons
     .map(it => it.note?.toString().trim())
     .filter(Boolean)
     .join(' · ')
-  // Destino: heredamos del primer addon si lo tiene (cuando viene de la
-  // cajera con destination explícito), o 'llevar' por default (cliente).
-  const destination = addons[0]?.destination || 'llevar'
-  return [{
+  // Destino de la línea de adiciones: el de la propia adición (cajera lo eligió;
+  // cliente web = 'llevar'). Si por algún motivo falta, hereda del primer
+  // almuerzo o cae a 'llevar'.
+  const destination = addons[0]?.destination || lunchPayloads[0]?.destination || 'llevar'
+
+  const adicionesItem = {
     kind: 'special',
     productId: null,
     productName: 'Adiciones',
@@ -156,7 +151,8 @@ export function buildLunchCommanda(items, mapLunch) {
     description: addonsText,
     price: totalAddonsPrice,
     note: customerNotes || null,
-  }]
+  }
+  return [...lunchPayloads, adicionesItem]
 }
 
 /**

@@ -6,7 +6,7 @@ import {
   CORRIENTE_CATEGORIES,
   watchMenuItems, createMenuItem, renameMenuItem,
   archiveMenuItem, unarchiveMenuItem,
-  watchCorrienteConfig, setDailyCorriente, setAddonPrices,
+  watchCorrienteConfig, setDailyCorriente, setAddonPrices, getAddonPrices,
 } from '../../menu'
 import {
   ModalOverlay, ModalCard, ModalTitle, ModalSub, ModalActions,
@@ -311,33 +311,47 @@ function CorrientePricesCard({ config, authUser, editorName }) {
 // Si un precio es 0, esa adición NO se ofrece al cliente.
 // ──────────────────────────────────────────────────────────────
 function AddonPricesCard({ config, authUser, editorName }) {
-  const soupPrice    = Number(config?.addonSoupPrice) || 0
-  const eggPrice     = Number(config?.addonEggPrice) || 0
-  const proteinPrice = Number(config?.addonProteinPrice) || 0
-  const anyConfigured = soupPrice > 0 || eggPrice > 0 || proteinPrice > 0
+  const ap = getAddonPrices(config) // { soup:{mesa,llevar}, egg:{...}, protein:{...} }
+  const anyConfigured =
+    ap.soup.mesa > 0 || ap.soup.llevar > 0 ||
+    ap.egg.mesa > 0 || ap.egg.llevar > 0 ||
+    ap.protein.mesa > 0 || ap.protein.llevar > 0
+
+  const blank = () => ({
+    soupMesa: '', soupLlevar: '',
+    eggMesa: '', eggLlevar: '',
+    proteinMesa: '', proteinLlevar: '',
+  })
+  const fromConfig = () => ({
+    soupMesa: String(ap.soup.mesa || ''), soupLlevar: String(ap.soup.llevar || ''),
+    eggMesa: String(ap.egg.mesa || ''), eggLlevar: String(ap.egg.llevar || ''),
+    proteinMesa: String(ap.protein.mesa || ''), proteinLlevar: String(ap.protein.llevar || ''),
+  })
 
   const [editing, setEditing] = useState(false)
-  const [draftSoup, setDraftSoup] = useState(String(soupPrice || ''))
-  const [draftEgg, setDraftEgg] = useState(String(eggPrice || ''))
-  const [draftProtein, setDraftProtein] = useState(String(proteinPrice || ''))
+  const [draft, setDraft] = useState(fromConfig)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    if (!editing) {
-      setDraftSoup(String(soupPrice || ''))
-      setDraftEgg(String(eggPrice || ''))
-      setDraftProtein(String(proteinPrice || ''))
-    }
-  }, [editing, soupPrice, eggPrice, proteinPrice])
+    if (!editing) setDraft(fromConfig())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, config])
+
+  function setField(key, val) {
+    setDraft(prev => ({ ...prev, [key]: val }))
+  }
 
   async function handleSave() {
     setBusy(true); setError(null)
     try {
       await setAddonPrices({
-        addonSoupPrice:    Number(draftSoup) || 0,
-        addonEggPrice:     Number(draftEgg) || 0,
-        addonProteinPrice: Number(draftProtein) || 0,
+        addonSoupPriceMesa:      Number(draft.soupMesa) || 0,
+        addonSoupPriceLlevar:    Number(draft.soupLlevar) || 0,
+        addonEggPriceMesa:       Number(draft.eggMesa) || 0,
+        addonEggPriceLlevar:     Number(draft.eggLlevar) || 0,
+        addonProteinPriceMesa:   Number(draft.proteinMesa) || 0,
+        addonProteinPriceLlevar: Number(draft.proteinLlevar) || 0,
       }, { publishedBy: authUser?.uid, publishedByName: editorName })
       setEditing(false)
     } catch (err) {
@@ -380,27 +394,18 @@ function AddonPricesCard({ config, authUser, editorName }) {
             background: '#fff', borderRadius: 14, padding: 14,
             border: `1px solid #F4E0BC`,
           }}>
-            <FieldLabel>🥣 Sopa adicional ($)</FieldLabel>
-            <input
-              type="number" value={draftSoup}
-              onChange={e => setDraftSoup(e.target.value)}
-              placeholder="0 = no se ofrece"
-              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
-            />
-            <FieldLabel>🍳 Huevo adicional ($)</FieldLabel>
-            <input
-              type="number" value={draftEgg}
-              onChange={e => setDraftEgg(e.target.value)}
-              placeholder="0 = no se ofrece"
-              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
-            />
-            <FieldLabel>🍗 Proteína adicional ($)</FieldLabel>
-            <input
-              type="number" value={draftProtein}
-              onChange={e => setDraftProtein(e.target.value)}
-              placeholder="0 = no se ofrece"
-              style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
-            />
+            <div style={{ fontSize: 11.5, color: T.neutral[600], marginBottom: 10, lineHeight: 1.4 }}>
+              Precio para <b>mesa</b> y para <b>llevar</b> de cada adición. Deja en 0 (o vacío) lo que no se ofrezca.
+            </div>
+            <AddonEditGroup emoji="🥣" label="Sopa adicional"
+              mesa={draft.soupMesa} llevar={draft.soupLlevar}
+              onMesa={v => setField('soupMesa', v)} onLlevar={v => setField('soupLlevar', v)} />
+            <AddonEditGroup emoji="🍳" label="Huevo adicional"
+              mesa={draft.eggMesa} llevar={draft.eggLlevar}
+              onMesa={v => setField('eggMesa', v)} onLlevar={v => setField('eggLlevar', v)} />
+            <AddonEditGroup emoji="🍗" label="Proteína adicional"
+              mesa={draft.proteinMesa} llevar={draft.proteinLlevar}
+              onMesa={v => setField('proteinMesa', v)} onLlevar={v => setField('proteinLlevar', v)} />
             {error && <ErrorBox>{error}</ErrorBox>}
             <div style={{ display: 'flex', gap: 8 }}>
               <button
@@ -437,9 +442,9 @@ function AddonPricesCard({ config, authUser, editorName }) {
             border: `1px solid #F4E0BC`,
           }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <AddonPriceRow emoji="🥣" label="Sopa adicional"     price={soupPrice} />
-              <AddonPriceRow emoji="🍳" label="Huevo adicional"    price={eggPrice} />
-              <AddonPriceRow emoji="🍗" label="Proteína adicional" price={proteinPrice} />
+              <AddonPriceRow emoji="🥣" label="Sopa adicional"     mesa={ap.soup.mesa}    llevar={ap.soup.llevar} />
+              <AddonPriceRow emoji="🍳" label="Huevo adicional"    mesa={ap.egg.mesa}     llevar={ap.egg.llevar} />
+              <AddonPriceRow emoji="🍗" label="Proteína adicional" mesa={ap.protein.mesa} llevar={ap.protein.llevar} />
             </div>
             <button
               onClick={() => setEditing(true)}
@@ -473,8 +478,10 @@ function AddonPricesCard({ config, authUser, editorName }) {
   )
 }
 
-function AddonPriceRow({ emoji, label, price }) {
-  const inactive = price <= 0
+function AddonPriceRow({ emoji, label, mesa, llevar }) {
+  const m = Number(mesa) || 0
+  const l = Number(llevar) || 0
+  const inactive = m <= 0 && l <= 0
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10,
@@ -492,17 +499,72 @@ function AddonPriceRow({ emoji, label, price }) {
         </div>
         {inactive && (
           <div style={{ fontSize: 11, color: T.neutral[500], marginTop: 1 }}>
-            No se ofrece al cliente
+            No se ofrece
           </div>
         )}
       </div>
+      {!inactive && (
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <PricePill label="Mesa" value={m} />
+          <PricePill label="Llevar" value={l} />
+        </div>
+      )}
+      {inactive && (
+        <div style={{ fontSize: 15, fontWeight: 900, color: T.neutral[400], flexShrink: 0 }}>—</div>
+      )}
+    </div>
+  )
+}
+
+function PricePill({ label, value }) {
+  const on = Number(value) > 0
+  return (
+    <div style={{
+      padding: '4px 9px', borderRadius: 8,
+      background: on ? '#fff' : T.neutral[100],
+      border: `1px solid ${on ? '#F4E0BC' : T.neutral[200]}`,
+      textAlign: 'center', minWidth: 64,
+    }}>
+      <div style={{ fontSize: 9, fontWeight: 800, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase' }}>
+        {label}
+      </div>
       <div style={{
-        fontSize: 15, fontWeight: 900,
-        color: inactive ? T.neutral[400] : T.warn,
+        fontSize: 13, fontWeight: 900, color: on ? T.warn : T.neutral[400],
         fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-        flexShrink: 0,
       }}>
-        {inactive ? '—' : fmtCOP(price)}
+        {on ? fmtCOP(value) : '—'}
+      </div>
+    </div>
+  )
+}
+
+function AddonEditGroup({ emoji, label, mesa, llevar, onMesa, onLlevar }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <FieldLabel>{emoji} {label}</FieldLabel>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: T.neutral[500], marginBottom: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            🍽️ Mesa ($)
+          </div>
+          <input
+            type="number" value={mesa}
+            onChange={e => onMesa(e.target.value)}
+            placeholder="0"
+            style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: T.neutral[500], marginBottom: 4, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            📦 Llevar ($)
+          </div>
+          <input
+            type="number" value={llevar}
+            onChange={e => onLlevar(e.target.value)}
+            placeholder="0"
+            style={{ ...inputStyle(), fontSize: 15, padding: '12px 14px' }}
+          />
+        </div>
       </div>
     </div>
   )

@@ -95,10 +95,12 @@ export default function PublicMenu() {
     () => resolvedMenu.protein || [],
     [resolvedMenu]
   )
+  // El cliente del menú web siempre pide "para llevar" → solo cuenta el precio
+  // de llevar de cada adición.
   const anyAddonAvailable = (
-    addonPrices.soup > 0 ||
-    addonPrices.egg > 0 ||
-    (addonPrices.protein > 0 && proteinOptions.length > 0)
+    (addonPrices.soup?.llevar || 0) > 0 ||
+    (addonPrices.egg?.llevar || 0) > 0 ||
+    ((addonPrices.protein?.llevar || 0) > 0 && proteinOptions.length > 0)
   )
   const hasAnything = corriente.available || !!special || anyAddonAvailable
 
@@ -328,6 +330,7 @@ export default function PublicMenu() {
         <PublicAddonsModal
           prices={addonPrices}
           proteinOptions={proteinOptions}
+          allowDestination={false}
           initialType={addonsOpen === 'menu' ? null : addonsOpen}
           onCancel={() => setAddonsOpen(null)}
           onAdd={addAddon}
@@ -536,10 +539,14 @@ function EspecialCardCompact({ especialName, price, cartCount, onAdd, animDelay 
 // Pequeña, debajo del corriente. Solo aparece si la cocinera puso
 // algún precio en Catálogo. Click → abre PublicAddonsModal.
 function AddonsCardCompact({ prices, hasProteinOptions, onOpen, animDelay = 0 }) {
+  // Menú web = siempre "para llevar" → mostramos el precio de llevar.
+  const soupP = prices.soup?.llevar || 0
+  const eggP = prices.egg?.llevar || 0
+  const proteinP = prices.protein?.llevar || 0
   const chips = []
-  if (prices.soup > 0)                          chips.push({ type: 'soup',    emoji: '🥣', label: 'Sopa', price: prices.soup })
-  if (prices.egg > 0)                           chips.push({ type: 'egg',     emoji: '🍳', label: 'Huevo', price: prices.egg })
-  if (prices.protein > 0 && hasProteinOptions)  chips.push({ type: 'protein', emoji: '🍗', label: 'Proteína', price: prices.protein })
+  if (soupP > 0)                          chips.push({ type: 'soup',    emoji: '🥣', label: 'Sopa', price: soupP })
+  if (eggP > 0)                           chips.push({ type: 'egg',     emoji: '🍳', label: 'Huevo', price: eggP })
+  if (proteinP > 0 && hasProteinOptions)  chips.push({ type: 'protein', emoji: '🍗', label: 'Proteína', price: proteinP })
 
   return (
     <div style={{

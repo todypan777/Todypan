@@ -3,49 +3,56 @@ import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 
 // ──────────────────────────────────────────────────────────────────
-// Modal para que el cliente agregue ADICIONES (sopa, huevo, proteína
-// extra) al pedido. Se abre desde el botón "+ Agregar adición" en la
-// landing del menú público.
+// Modal para agregar ADICIONES (sopa, huevo, proteína extra) al pedido.
 //
-// Cada adición se agrega como item separado al carrito con:
-//   { kind: 'addon', addonType, quantity, unitPrice, price,
+// Cada adición se agrega como item separado con:
+//   { kind: 'addon', addonType, destination, quantity, unitPrice, price,
 //     proteinId?, proteinName? }
 //
-// Si la cocinera puso precio = 0 a un tipo, NO se muestra esa tarjeta.
+// Precios POR DESTINO: `prices[type]` = { mesa, llevar }. El precio cobrado
+// depende del destino elegido.
+//   - Cajera (allowDestination=true): elige Mesa o Llevar arriba; las tarjetas
+//     y precios reflejan ese destino. Si un tipo tiene precio 0 en el destino
+//     elegido, no se ofrece para ese destino.
+//   - Cliente del menú web (allowDestination=false): siempre 'llevar'.
 //
 // Props:
-//   prices: { soup, egg, protein }  → precios unitarios
-//   proteinOptions: [{id, name}]    → solo se usa si la cocinera publicó
-//                                     proteínas del día (cliente elige cuál)
-//   initialType: 'soup'|'egg'|'protein'|null → si viene definido, el
-//                modal arranca directo en el selector de cantidad para
-//                ese tipo (atajo desde los chips del card de la landing).
+//   prices: { soup:{mesa,llevar}, egg:{mesa,llevar}, protein:{mesa,llevar} }
+//   proteinOptions: [{id, name}]
+//   allowDestination: bool   → mostrar selector Mesa/Llevar (cajera)
+//   defaultDestination: 'mesa'|'llevar'
+//   initialType: 'soup'|'egg'|'protein'|null
+//   hidePrices: bool
 //   onCancel
 //   onAdd(addonItem)
 // ──────────────────────────────────────────────────────────────────
 export default function PublicAddonsModal({
   prices, proteinOptions,
+  allowDestination = true,
+  defaultDestination = 'mesa',
   initialType = null,
   hidePrices = false,
   onCancel, onAdd,
 }) {
-  // Bloquear scroll del body mientras está abierto
   useEffect(() => {
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
   }, [])
 
-  const showSoup    = prices.soup > 0
-  const showEgg     = prices.egg > 0
-  const showProtein = prices.protein > 0 && (proteinOptions?.length || 0) > 0
+  // Destino elegido. Si no se permite elegir (cliente web), siempre 'llevar'.
+  const [destination, setDestination] = useState(
+    allowDestination ? (defaultDestination === 'llevar' ? 'llevar' : 'mesa') : 'llevar'
+  )
+
+  // Precio del tipo para el destino actual.
+  const priceOf = (type) => Number(prices?.[type]?.[destination]) || 0
+
+  const showSoup    = priceOf('soup') > 0
+  const showEgg     = priceOf('egg') > 0
+  const showProtein = priceOf('protein') > 0 && (proteinOptions?.length || 0) > 0
   const anyAvailable = showSoup || showEgg || showProtein
 
-  // Estado del picker activo (qué tarjeta está expandida con su selector
-  // de cantidad). null = ninguna activa, modo "elige tipo".
-  // shape: { type: 'soup'|'egg'|'protein', qty, proteinIdx? }
-  // Si viene `initialType`, abrimos directo en ese tipo (atajo desde
-  // los chips del card del menú).
   const [active, setActive] = useState(() => {
     if (initialType === 'protein') return { type: 'protein', qty: 1, proteinIdx: 0 }
     if (initialType === 'soup' || initialType === 'egg') return { type: initialType, qty: 1 }
@@ -53,42 +60,33 @@ export default function PublicAddonsModal({
   })
 
   function startAddon(type) {
-    if (type === 'protein') {
-      setActive({ type: 'protein', qty: 1, proteinIdx: 0 })
-    } else {
-      setActive({ type, qty: 1 })
-    }
+    if (type === 'protein') setActive({ type: 'protein', qty: 1, proteinIdx: 0 })
+    else setActive({ type, qty: 1 })
   }
 
   function confirmAddon() {
     if (!active) return
     const qty = Math.max(1, Math.min(99, Math.floor(active.qty || 1)))
+    const unit = priceOf(active.type)
     if (active.type === 'soup') {
       onAdd({
-        kind: 'addon', addonType: 'soup',
+        kind: 'addon', addonType: 'soup', destination,
         label: 'Sopa adicional',
-        quantity: qty,
-        unitPrice: prices.soup,
-        price: prices.soup * qty,
+        quantity: qty, unitPrice: unit, price: unit * qty,
       })
     } else if (active.type === 'egg') {
       onAdd({
-        kind: 'addon', addonType: 'egg',
+        kind: 'addon', addonType: 'egg', destination,
         label: 'Huevo adicional',
-        quantity: qty,
-        unitPrice: prices.egg,
-        price: prices.egg * qty,
+        quantity: qty, unitPrice: unit, price: unit * qty,
       })
     } else if (active.type === 'protein') {
       const opt = proteinOptions[active.proteinIdx] || proteinOptions[0]
       onAdd({
-        kind: 'addon', addonType: 'protein',
+        kind: 'addon', addonType: 'protein', destination,
         label: `Proteína adicional: ${opt.name}`,
-        quantity: qty,
-        unitPrice: prices.protein,
-        price: prices.protein * qty,
-        proteinId: opt.id,
-        proteinName: opt.name,
+        quantity: qty, unitPrice: unit, price: unit * qty,
+        proteinId: opt.id, proteinName: opt.name,
       })
     }
   }
@@ -130,10 +128,7 @@ export default function PublicAddonsModal({
             </svg>
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 18, fontWeight: 900, color: T.neutral[900],
-              letterSpacing: -0.3,
-            }}>
+            <div style={{ fontSize: 18, fontWeight: 900, color: T.neutral[900], letterSpacing: -0.3 }}>
               Agregar adición
             </div>
             <div style={{ fontSize: 12.5, color: T.neutral[500], marginTop: 2 }}>
@@ -141,6 +136,27 @@ export default function PublicAddonsModal({
             </div>
           </div>
         </div>
+
+        {/* Selector Mesa/Llevar (solo cajera) */}
+        {allowDestination && !active && (
+          <div style={{
+            padding: '12px 18px 0', background: '#fff',
+          }}>
+            <div style={{
+              display: 'flex', gap: 8,
+              background: T.neutral[100], borderRadius: 14, padding: 4,
+            }}>
+              <DestToggle
+                label="🍽️ Mesa" active={destination === 'mesa'}
+                onClick={() => setDestination('mesa')}
+              />
+              <DestToggle
+                label="📦 Llevar" active={destination === 'llevar'}
+                onClick={() => setDestination('llevar')}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Body */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px' }}>
@@ -151,7 +167,9 @@ export default function PublicAddonsModal({
               textAlign: 'center', color: T.neutral[500],
               fontSize: 13.5, lineHeight: 1.5,
             }}>
-              Hoy no hay adiciones disponibles. La cocinera no ha puesto los precios todavía.
+              {allowDestination
+                ? `No hay adiciones con precio para ${destination === 'mesa' ? 'mesa' : 'llevar'}. La cocinera debe ponerlo.`
+                : 'Hoy no hay adiciones disponibles. La cocinera no ha puesto los precios todavía.'}
             </div>
           )}
 
@@ -159,31 +177,22 @@ export default function PublicAddonsModal({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {showSoup && (
                 <AddonChoiceCard
-                  emoji="🥣"
-                  title="Sopa adicional"
-                  subtitle="La sopa del día"
-                  price={prices.soup}
-                  hidePrices={hidePrices}
+                  emoji="🥣" title="Sopa adicional" subtitle="La sopa del día"
+                  price={priceOf('soup')} hidePrices={hidePrices}
                   onClick={() => startAddon('soup')}
                 />
               )}
               {showEgg && (
                 <AddonChoiceCard
-                  emoji="🍳"
-                  title="Huevo adicional"
-                  subtitle="Frito o cocido (dilo en la nota)"
-                  price={prices.egg}
-                  hidePrices={hidePrices}
+                  emoji="🍳" title="Huevo adicional" subtitle="Frito o cocido (dilo en la nota)"
+                  price={priceOf('egg')} hidePrices={hidePrices}
                   onClick={() => startAddon('egg')}
                 />
               )}
               {showProtein && (
                 <AddonChoiceCard
-                  emoji="🍗"
-                  title="Proteína adicional"
-                  subtitle="Elige cuál entre las de hoy"
-                  price={prices.protein}
-                  hidePrices={hidePrices}
+                  emoji="🍗" title="Proteína adicional" subtitle="Elige cuál entre las de hoy"
+                  price={priceOf('protein')} hidePrices={hidePrices}
                   onClick={() => startAddon('protein')}
                 />
               )}
@@ -193,11 +202,12 @@ export default function PublicAddonsModal({
           {active && (
             <AddonQuantityStep
               active={active}
-              prices={prices}
+              unitPrice={priceOf(active.type)}
               proteinOptions={proteinOptions}
               hidePrices={hidePrices}
+              destination={destination}
+              allowDestination={allowDestination}
               onChange={setActive}
-              onBack={() => setActive(null)}
             />
           )}
         </div>
@@ -221,7 +231,7 @@ export default function PublicAddonsModal({
             >
               {hidePrices
                 ? '+ Agregar'
-                : `+ Agregar · ${fmtCOP(unitPriceForActive(active, prices) * Math.max(1, active.qty))}`}
+                : `+ Agregar · ${fmtCOP(priceOf(active.type) * Math.max(1, active.qty))}`}
             </button>
           </div>
         )}
@@ -241,11 +251,22 @@ export default function PublicAddonsModal({
   )
 }
 
-function unitPriceForActive(active, prices) {
-  if (active.type === 'soup') return prices.soup
-  if (active.type === 'egg') return prices.egg
-  if (active.type === 'protein') return prices.protein
-  return 0
+function DestToggle({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1, padding: '10px', borderRadius: 11,
+        background: active ? '#fff' : 'transparent',
+        color: active ? T.neutral[900] : T.neutral[500],
+        border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+        fontSize: 13.5, fontWeight: 800, letterSpacing: -0.1,
+        boxShadow: active ? '0 2px 6px rgba(0,0,0,0.08)' : 'none',
+      }}
+    >
+      {label}
+    </button>
+  )
 }
 
 // ─── Tarjeta de elegir tipo de adición ───────────────────────────
@@ -275,10 +296,7 @@ function AddonChoiceCard({ emoji, title, subtitle, price, hidePrices, onClick })
         {emoji}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          fontSize: 15.5, fontWeight: 800, color: T.neutral[900],
-          letterSpacing: -0.2,
-        }}>
+        <div style={{ fontSize: 15.5, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.2 }}>
           {title}
         </div>
         <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 2 }}>
@@ -299,8 +317,7 @@ function AddonChoiceCard({ emoji, title, subtitle, price, hidePrices, onClick })
 }
 
 // ─── Step de cantidad (y picker de proteína si aplica) ───────────
-function AddonQuantityStep({ active, prices, proteinOptions, hidePrices, onChange, onBack }) {
-  const unitPrice = unitPriceForActive(active, prices)
+function AddonQuantityStep({ active, unitPrice, proteinOptions, hidePrices, destination, allowDestination, onChange }) {
   const meta = {
     soup:    { emoji: '🥣', title: 'Sopa adicional' },
     egg:     { emoji: '🍳', title: 'Huevo adicional' },
@@ -325,23 +342,20 @@ function AddonQuantityStep({ active, prices, proteinOptions, hidePrices, onChang
           {meta.emoji}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 15.5, fontWeight: 800, color: T.neutral[900],
-            letterSpacing: -0.2,
-          }}>
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.2 }}>
             {meta.title}
           </div>
-          {!hidePrices && (
-            <div style={{
-              fontSize: 12, color: T.copper[700], marginTop: 1,
-              fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-            }}>
-              {fmtCOP(unitPrice)} c/u
-            </div>
-          )}
+          <div style={{ fontSize: 12, color: T.copper[700], marginTop: 1, fontWeight: 700 }}>
+            {allowDestination && (destination === 'mesa' ? '🍽️ Mesa' : '📦 Llevar')}
+            {!hidePrices && (
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                {allowDestination ? ' · ' : ''}{fmtCOP(unitPrice)} c/u
+              </span>
+            )}
+          </div>
         </div>
         <button
-          onClick={onBack}
+          onClick={() => onChange(null)}
           style={{
             padding: '8px 12px', borderRadius: 999,
             background: T.neutral[100], color: T.neutral[700],

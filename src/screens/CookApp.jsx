@@ -1014,22 +1014,29 @@ function TicketRow({ emoji, label, value, valueColor }) {
   )
 }
 
-// Caja "SIN [X]" con el reemplazo opcional pegado ("→ en su lugar: Huevo").
-function OmittedBox({ label, replacement }) {
+// Rojo intenso para los "Sin [X]" (omisiones). Sin burbuja: se ve igual que
+// una fila normal del menú, solo que el valor va en rojo fuerte para que salte.
+const INTENSE_RED = '#D92D20'
+
+// Fila de categoría OMITIDA. Misma estética que TicketRow (etiqueta arriba,
+// valor abajo) pero el valor en rojo intenso. Si hay reemplazo, lo pega:
+// "Sin sopa → Huevo".
+function OmittedRow({ cat, replacement }) {
   return (
-    <div style={{
-      fontSize: 16, fontWeight: 900, color: T.bad,
-      letterSpacing: 0.3, textTransform: 'uppercase',
-      background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
-      display: 'inline-block', alignSelf: 'flex-start',
-      border: `2px solid ${T.bad}55`, lineHeight: 1.35,
-    }}>
-      ⚠ {label}
-      {replacement && (
-        <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0, fontWeight: 800 }}>
-          {' → en su lugar: '}{replacement}
-        </span>
-      )}
+    <div>
+      <div style={{
+        fontSize: 12, fontWeight: 800, color: T.neutral[500],
+        letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2,
+      }}>
+        {cat.emoji} {cat.label}
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 900, color: INTENSE_RED,
+        letterSpacing: -0.1, lineHeight: 1.25,
+      }}>
+        Sin {cat.label.toLowerCase()}
+        {replacement ? ` → ${replacement}` : ''}
+      </div>
     </div>
   )
 }
@@ -1159,7 +1166,11 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
             </div>
 
             {order.kind === 'menu' && hasSelections && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px 18px',
+              }}>
                 {CORRIENTE_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
@@ -1170,20 +1181,20 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                   // PEGADO al "SIN SOPA", no suelto y pequeño en la nota.
                   if (cat.id === 'soup' && isMissing) {
                     if (!dayHadSoup) return null
-                    return <OmittedBox key={cat.id} label="SIN SOPA" replacement={repl.soup} />
+                    return <OmittedRow key={cat.id} cat={cat} replacement={repl.soup} />
                   }
 
                   if (isAlwaysServed && isMissing) {
-                    return <OmittedBox key={cat.id} label={omittedLabel(cat, servedInfo)} />
+                    return <OmittedRow key={cat.id} cat={cat} />
                   }
                   if (isAlwaysServed) return null
 
                   if (principioArr) {
-                    // Sin principio: si hay reemplazo, lo mostramos como caja
-                    // "SIN PRINCIPIO → en su lugar: X"; si no, no se muestra.
+                    // Sin principio: si hay reemplazo, lo mostramos en rojo
+                    // "Sin principio → X"; si no, no se muestra.
                     if (principioArr.length === 0) {
                       return repl.principio
-                        ? <OmittedBox key={cat.id} label="SIN PRINCIPIO" replacement={repl.principio} />
+                        ? <OmittedRow key={cat.id} cat={cat} replacement={repl.principio} />
                         : null
                     }
                     const isMixto = principioArr.length === 2
@@ -1215,11 +1226,15 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                 sintético de adiciones (selections=null) caía aquí y
                 mostraba "SIN ENSALADA" falsamente. */}
             {order.kind === 'special' && hasSelections && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: '10px 18px',
+              }}>
                 {SPECIAL_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   if (cat.id === 'salad' && (sel === null || sel === undefined)) {
-                    return <OmittedBox key={cat.id} label={omittedLabel(cat, servedInfo)} />
+                    return <OmittedRow key={cat.id} cat={cat} />
                   }
                   if (!sel) return null
                   return (
@@ -1565,53 +1580,18 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
 
                 if (cat.id === 'soup' && isMissing) {
                   if (!dayHadSoup) return null
-                  return (
-                    <div key={cat.id} style={{
-                      fontSize: 18, fontWeight: 900, color: T.bad,
-                      letterSpacing: 0.5, textTransform: 'uppercase',
-                      background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
-                      border: `2px solid ${T.bad}55`, lineHeight: 1.35,
-                    }}>
-                      ⚠ SIN SOPA
-                      {repl.soup && (
-                        <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0 }}>
-                          {' → en su lugar: '}{repl.soup}
-                        </span>
-                      )}
-                    </div>
-                  )
+                  return <OmittedRow key={cat.id} cat={cat} replacement={repl.soup} />
                 }
 
                 if (isAlwaysServed && isMissing) {
-                  return (
-                    <div key={cat.id} style={{
-                      fontSize: 20, fontWeight: 900, color: T.bad,
-                      letterSpacing: 0.5, textTransform: 'uppercase',
-                      background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
-                      border: `2px solid ${T.bad}55`,
-                    }}>
-                      ⚠ {omittedLabel(cat, servedInfo)}
-                    </div>
-                  )
+                  return <OmittedRow key={cat.id} cat={cat} />
                 }
                 if (isAlwaysServed) return null
 
                 if (principioArr) {
                   if (principioArr.length === 0) {
                     return repl.principio
-                      ? (
-                        <div key={cat.id} style={{
-                          fontSize: 18, fontWeight: 900, color: T.bad,
-                          letterSpacing: 0.5, textTransform: 'uppercase',
-                          background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
-                          border: `2px solid ${T.bad}55`, lineHeight: 1.35,
-                        }}>
-                          ⚠ SIN PRINCIPIO
-                          <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0 }}>
-                            {' → en su lugar: '}{repl.principio}
-                          </span>
-                        </div>
-                      )
+                      ? <OmittedRow key={cat.id} cat={cat} replacement={repl.principio} />
                       : null
                   }
                   const value = principioArr.length === 2
@@ -1672,17 +1652,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
               {SPECIAL_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
                 if (cat.id === 'salad' && (sel === null || sel === undefined)) {
-                  return (
-                    <div key={cat.id} style={{
-                      fontSize: 20, fontWeight: 900, color: T.bad,
-                      letterSpacing: 0.5, textTransform: 'uppercase',
-                      background: '#FBE9E5', padding: '10px 16px', borderRadius: 10,
-                      display: 'inline-block', alignSelf: 'flex-start',
-                      border: `2px solid ${T.bad}55`,
-                    }}>
-                      ⚠ {omittedLabel(cat, servedInfo)}
-                    </div>
-                  )
+                  return <OmittedRow key={cat.id} cat={cat} />
                 }
                 if (!sel) return null
                 return (

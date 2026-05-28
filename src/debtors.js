@@ -28,6 +28,30 @@ export function normalizeName(name) {
     .replace(/\s+/g, ' ')
 }
 
+/**
+ * Suma el balance real del deudor desde su historial. ESTA es la fuente de
+ * verdad. El campo `totalOwed` es un cache denormalizado que históricamente
+ * se desincronizaba por (a) clamps Math.max(0,...) que descartaban sobrepagos
+ * y (b) carreras entre lectura+escritura en addDebtSale. Usar este helper
+ * para mostrar la deuda en cualquier UI.
+ *
+ * Devuelve la deuda neta:
+ *   - positivo: el cliente debe esa cantidad.
+ *   - 0: saldado.
+ *   - negativo: el cliente tiene saldo a favor.
+ *
+ * Fallback a totalOwed si no hay historial (deudores muy viejos).
+ */
+export function computeDebtorOwed(debtor) {
+  const h = debtor?.history
+  if (!Array.isArray(h) || h.length === 0) return Number(debtor?.totalOwed) || 0
+  return h.reduce((acc, e) => {
+    if (e?.type === 'payment') return acc - (Number(e.amount) || 0)
+    if (e?.type === 'adjustment') return acc + (Number(e.delta) || 0)
+    return acc + (Number(e?.amount) || 0)
+  }, 0)
+}
+
 /** Suscripción a todos los deudores. */
 export function watchDebtors(callback) {
   const q = query(debtorsCol())
@@ -58,19 +82,21 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
     .find(d => normalizeName(d.name) === normalized)
 
   if (existing) {
-    const newTotal = (Number(existing.totalOwed) || 0) + (Number(amount) || 0)
+    const amt = Number(amount) || 0
     // Fire-and-forget: en modo ahorro `await updateDoc` se cuelga.
-    // Importante: re-calculamos `status`. Si el deudor estaba en 'paid' por
-    // haber saldado, una nueva deuda lo devuelve a 'active' — sin esto se
-    // quedaba en la pestaña "Ya pagaron" para siempre aunque debiera plata.
+    // Usamos increment() en vez de leer existing.totalOwed y sumarle el monto:
+    // el snapshot local de watchDebtors puede estar atrasado (offline, otras
+    // pestañas, otros dispositivos) y dos ventas concurrentes podían
+    // sobreescribir totalOwed perdiendo una. increment() es atómico server-side.
+    // Una venta nueva siempre activa al deudor — la cantidad real se sabe luego.
     updateDoc(debtorRef(existing.id), {
-      totalOwed: newTotal,
-      status: newTotal > 0 ? 'active' : 'paid',
+      totalOwed: increment(amt),
+      status: 'active',
       lastUpdate: serverTimestamp(),
       history: arrayUnion({
         type: 'sale',
         saleId,
-        amount: Number(amount) || 0,
+        amount: amt,
         date,
         createdAt: Date.now(),
       }),
@@ -115,8 +141,12 @@ export async function registerDebtorPayment(debtorId, payload) {
   const amount = Number(payload.amount) || 0
   if (amount <= 0) throw new Error('El monto debe ser mayor a 0')
 
-  const currentOwed = Number(debtor.totalOwed) || 0
-  const newOwed = Math.max(0, currentOwed - amount)
+  // Antes había `Math.max(0, currentOwed - amount)`: si el abono excedía la
+  // deuda, el sobrante se perdía y ventas posteriores se inflaban. Ahora
+  // usamos increment(-amount) sin clamp: si paga de más, queda saldo a favor
+  // (totalOwed negativo). El status se computa best-effort desde el snapshot;
+  // la verdad la calcula computeDebtorOwed() desde history.
+  const projectedOwed = (Number(debtor.totalOwed) || 0) - amount
 
   const paymentEntry = {
     type: 'payment',
@@ -130,13 +160,13 @@ export async function registerDebtorPayment(debtorId, payload) {
   if (payload.note) paymentEntry.note = payload.note
 
   await updateDoc(ref, {
-    totalOwed: newOwed,
+    totalOwed: increment(-amount),
     lastUpdate: serverTimestamp(),
     history: arrayUnion(paymentEntry),
-    status: newOwed === 0 ? 'paid' : 'active',
+    status: projectedOwed > 0 ? 'active' : 'paid',
   })
 
-  return { newOwed, fullyPaid: newOwed === 0 }
+  return { newOwed: projectedOwed, fullyPaid: projectedOwed <= 0 }
 }
 
 /**
@@ -152,7 +182,10 @@ export async function adjustDebtorForSaleChange(debtorId, { saleId, oldAmount, n
   const debtor = snap.data()
 
   const delta = (Number(newAmount) || 0) - (Number(oldAmount) || 0)
-  const newOwed = Math.max(0, (Number(debtor.totalOwed) || 0) + delta)
+  // Igual que registerDebtorPayment: increment() atómico sin clamp Math.max(0,...).
+  // Si el ajuste deja al deudor con saldo a favor, queda negativo en vez
+  // de descartarse silenciosamente.
+  const projectedOwed = (Number(debtor.totalOwed) || 0) + delta
 
   const adjustEntry = {
     type: 'adjustment',
@@ -167,13 +200,13 @@ export async function adjustDebtorForSaleChange(debtorId, { saleId, oldAmount, n
   }
 
   await updateDoc(ref, {
-    totalOwed: newOwed,
+    totalOwed: increment(delta),
     lastUpdate: serverTimestamp(),
     history: arrayUnion(adjustEntry),
-    status: newOwed === 0 ? 'paid' : 'active',
+    status: projectedOwed > 0 ? 'active' : 'paid',
   })
 
-  return { newOwed, delta }
+  return { newOwed: projectedOwed, delta }
 }
 
 /**
@@ -290,4 +323,36 @@ export async function mergeDebtors({ debtorIds, survivorId, finalName, byUid }) 
 /** Colección de ventas (local a este módulo, para la fusión). */
 function debtorsSalesCol() {
   return collection(firestoreDb, 'sales')
+}
+
+/**
+ * Solo admin: re-sincroniza `totalOwed` desde el historial para TODOS los
+ * deudores vivos. Repara drift acumulado por bugs viejos:
+ *   - `Math.max(0, ...)` que descartaba sobrepagos silenciosamente.
+ *   - Race condition de addDebtSale (snapshot stale + escritura absoluta).
+ *
+ * Idempotente: correrla varias veces da el mismo resultado si nadie escribió
+ * en medio. Devuelve { scanned, fixed, drifts: [{id,name,stored,real,diff}] }.
+ */
+export async function recomputeAllDebtorBalances() {
+  const snap = await getDocs(debtorsCol())
+  let scanned = 0
+  let fixed = 0
+  const drifts = []
+  for (const docSnap of snap.docs) {
+    scanned++
+    const debtor = { id: docSnap.id, ...docSnap.data() }
+    if (debtor.mergedInto) continue
+    const stored = Number(debtor.totalOwed) || 0
+    const real = computeDebtorOwed(debtor)
+    if (Math.abs(stored - real) < 0.5) continue
+    drifts.push({ id: debtor.id, name: debtor.name, stored, real, diff: stored - real })
+    fixed++
+    await updateDoc(debtorRef(debtor.id), {
+      totalOwed: real,
+      status: real > 0 ? 'active' : 'paid',
+      lastUpdate: serverTimestamp(),
+    })
+  }
+  return { scanned, fixed, drifts }
 }

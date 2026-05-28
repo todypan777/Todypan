@@ -4,13 +4,14 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
-import { watchDebtors, registerDebtorPayment, mergeDebtors } from '../debtors'
+import { watchDebtors, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances } from '../debtors'
 import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
 import { useAuth } from '../context/AuthCtx'
 
 export default function Deudores({ onBack }) {
   const isDesktop = useIsDesktop()
+  const { isAdmin } = useAuth()
   const [debtors, setDebtors] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -20,6 +21,9 @@ export default function Deudores({ onBack }) {
   const [mergeMode, setMergeMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState([])
   const [mergeModalOpen, setMergeModalOpen] = useState(false)
+  // Reparación de balances drifteados (admin-only).
+  const [repairing, setRepairing] = useState(false)
+  const [repairResult, setRepairResult] = useState(null)
 
   useEffect(() => {
     const unsub = watchDebtors(list => {
@@ -32,32 +36,56 @@ export default function Deudores({ onBack }) {
   // Deudores "vivos": excluimos los fusionados (mergedInto). Son tombstones
   // ocultos que solo existen para auditoría; no deben listarse, contarse ni
   // sumarse en ningún lado.
-  const liveDebtors = useMemo(() => debtors.filter(d => !d.mergedInto), [debtors])
+  // Enriquecemos cada deudor con `owed` = balance real desde el historial,
+  // porque `totalOwed` es un cache denormalizado que históricamente se
+  // desincronizaba (clamps de pagos, races en addDebtSale).
+  const liveDebtors = useMemo(
+    () => debtors
+      .filter(d => !d.mergedInto)
+      .map(d => ({ ...d, owed: computeDebtorOwed(d) })),
+    [debtors],
+  )
 
-  // Filtros y conteos basados ÚNICAMENTE en `totalOwed` (no en `status`).
-  // El campo `status` es solo un cache denormalizado: si por bug histórico
-  // hay deudores con totalOwed>0 y status='paid', deben aparecer como activos.
-  // La verdad es la plata pendiente, no el flag.
+  // Drift detectado: deudores cuyo totalOwed cached difiere del balance real.
+  // Solo el admin ve el botón para repararlos (escribir el real en Firestore).
+  const driftCount = useMemo(
+    () => liveDebtors.filter(d => Math.abs((Number(d.totalOwed) || 0) - d.owed) >= 0.5).length,
+    [liveDebtors],
+  )
+
+  // Filtros y conteos basados en el balance real (`owed` derivado del historial).
   const filtered = useMemo(() => {
     const list = liveDebtors.filter(d => {
-      const owed = Number(d.totalOwed) || 0
-      if (tab === 'active' && owed <= 0) return false
-      if (tab === 'paid' && owed > 0) return false
+      if (tab === 'active' && d.owed <= 0) return false
+      if (tab === 'paid' && d.owed > 0) return false
       if (search.trim()) {
         const q = search.toLowerCase().trim()
         if (!(d.name || '').toLowerCase().includes(q)) return false
       }
       return true
     })
-    list.sort((a, b) => (b.totalOwed || 0) - (a.totalOwed || 0))
+    list.sort((a, b) => b.owed - a.owed)
     return list
   }, [liveDebtors, tab, search])
 
-  const totalActive = liveDebtors
-    .filter(d => (Number(d.totalOwed) || 0) > 0)
-    .reduce((s, d) => s + (d.totalOwed || 0), 0)
-  const activeCount = liveDebtors.filter(d => (Number(d.totalOwed) || 0) > 0).length
-  const paidCount = liveDebtors.filter(d => (Number(d.totalOwed) || 0) <= 0).length
+  const totalActive = liveDebtors.filter(d => d.owed > 0).reduce((s, d) => s + d.owed, 0)
+  const activeCount = liveDebtors.filter(d => d.owed > 0).length
+  const paidCount = liveDebtors.filter(d => d.owed <= 0).length
+
+  async function handleRepair() {
+    if (!isAdmin || repairing) return
+    if (!window.confirm(`¿Recalcular el balance de ${driftCount} deudor${driftCount === 1 ? '' : 'es'} desde su historial?\n\nEsto reescribe el campo totalOwed de Firestore para que coincida con la suma real del historial. Es seguro y reversible (los movimientos no se tocan).`)) return
+    setRepairing(true); setRepairResult(null)
+    try {
+      const result = await recomputeAllDebtorBalances()
+      setRepairResult(result)
+    } catch (err) {
+      console.error('[debtors] repair error:', err)
+      setRepairResult({ error: err?.message || 'No se pudo reparar.' })
+    } finally {
+      setRepairing(false)
+    }
+  }
 
   const selectedDebtors = useMemo(
     () => liveDebtors.filter(d => selectedIds.includes(d.id)),
@@ -183,6 +211,47 @@ export default function Deudores({ onBack }) {
             Marca los nombres que son la misma persona y toca <b>Fusionar</b>.
           </div>
         )}
+
+        {/* Reparar balances desincronizados (admin) */}
+        {isAdmin && !loading && driftCount > 0 && !mergeMode && (
+          <button
+            onClick={handleRepair}
+            disabled={repairing}
+            style={{
+              marginTop: 8, width: '100%', padding: '10px',
+              borderRadius: 12,
+              background: '#FFF7E6', color: '#8A6A1A',
+              border: '1px solid #F4E0BC',
+              cursor: repairing ? 'wait' : 'pointer', fontFamily: 'inherit',
+              fontSize: 12.5, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            {repairing
+              ? 'Recalculando...'
+              : `🔧 Reparar ${driftCount} balance${driftCount === 1 ? '' : 's'} desincronizado${driftCount === 1 ? '' : 's'}`}
+          </button>
+        )}
+        {repairResult && (
+          <div style={{
+            marginTop: 6, padding: '8px 12px', borderRadius: 10,
+            background: repairResult.error ? '#FBE9E5' : '#E8F4E8',
+            border: `1px solid ${repairResult.error ? '#F0C8BE' : '#C5E0C5'}`,
+            color: repairResult.error ? T.bad : T.ok,
+            fontSize: 11.5, fontWeight: 600, lineHeight: 1.4,
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          }}>
+            <span>
+              {repairResult.error
+                ? `Error: ${repairResult.error}`
+                : `✓ ${repairResult.fixed} reparado${repairResult.fixed === 1 ? '' : 's'} de ${repairResult.scanned} revisados.`}
+            </span>
+            <button onClick={() => setRepairResult(null)} style={{
+              background: 'transparent', border: 'none', cursor: 'pointer',
+              color: 'inherit', fontSize: 14, fontWeight: 800, padding: '0 4px',
+            }}>×</button>
+          </div>
+        )}
       </div>
 
       {/* Lista de deudores */}
@@ -281,9 +350,10 @@ export default function Deudores({ onBack }) {
 // ──────────────────────────────────────────────────────────────
 function MergeModal({ debtors, onCancel, onDone }) {
   const { authUser } = useAuth()
+  // `debtors` ya viene enriquecido con `owed` (balance real desde history).
   // Superviviente sugerido: el de mayor deuda (suele ser el "real").
   const suggested = useMemo(() => {
-    return [...debtors].sort((a, b) => (Number(b.totalOwed) || 0) - (Number(a.totalOwed) || 0))[0]
+    return [...debtors].sort((a, b) => (Number(b.owed) || 0) - (Number(a.owed) || 0))[0]
   }, [debtors])
 
   const [survivorId, setSurvivorId] = useState(suggested?.id || null)
@@ -291,7 +361,7 @@ function MergeModal({ debtors, onCancel, onDone }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
 
-  const combinedOwed = debtors.reduce((s, d) => s + (Number(d.totalOwed) || 0), 0)
+  const combinedOwed = debtors.reduce((s, d) => s + (Number(d.owed) || 0), 0)
   const totalMovs = debtors.reduce((s, d) => s + (d.history?.length || 0), 0)
   const valid = finalName.trim().length >= 2 && survivorId && debtors.length >= 2
 
@@ -350,7 +420,7 @@ function MergeModal({ debtors, onCancel, onDone }) {
           <Label>Deudor principal (sobre el que se unen)</Label>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
             {[...debtors]
-              .sort((a, b) => (Number(b.totalOwed) || 0) - (Number(a.totalOwed) || 0))
+              .sort((a, b) => (Number(b.owed) || 0) - (Number(a.owed) || 0))
               .map(d => {
                 const active = d.id === survivorId
                 return (
@@ -383,7 +453,7 @@ function MergeModal({ debtors, onCancel, onDone }) {
                       </span>
                     </span>
                     <span style={{ fontSize: 12.5, fontWeight: 700, color: T.bad, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                      {fmtCOP(d.totalOwed || 0)}
+                      {fmtCOP(d.owed || 0)}
                     </span>
                   </button>
                 )
@@ -461,9 +531,10 @@ function MergeModal({ debtors, onCancel, onDone }) {
 }
 
 function DebtorRow({ debtor, isLast, onClick, selectable = false, selected = false }) {
-  // Igual que el filtro: confiamos solo en `totalOwed`. El flag `status` es
-  // un cache que puede quedar desincronizado por escrituras viejas.
-  const isPaid = (Number(debtor.totalOwed) || 0) <= 0
+  // `debtor.owed` viene enriquecido en liveDebtors (computeDebtorOwed del
+  // historial); fallback a totalOwed si por alguna razón no estuviera.
+  const owed = debtor.owed != null ? debtor.owed : (Number(debtor.totalOwed) || 0)
+  const isPaid = owed <= 0
   const initials = (debtor.name || '?').split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()
 
   return (
@@ -525,7 +596,7 @@ function DebtorRow({ debtor, isLast, onClick, selectable = false, selected = fal
               fontSize: 15, fontWeight: 800, color: T.bad,
               fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
             }}>
-              {fmtCOP(debtor.totalOwed || 0)}
+              {fmtCOP(owed)}
             </div>
             <div style={{ fontSize: 10.5, color: T.neutral[500], marginTop: 2 }}>
               debe
@@ -543,9 +614,11 @@ function DebtorRow({ debtor, isLast, onClick, selectable = false, selected = fal
 function DebtorDetailModal({ debtor, onClose }) {
   const [paying, setPaying] = useState(false)
   const [debtorSales, setDebtorSales] = useState([])
-  // Igual que el filtro: confiamos solo en `totalOwed`. El flag `status` es
-  // un cache que puede quedar desincronizado por escrituras viejas.
-  const isPaid = (Number(debtor.totalOwed) || 0) <= 0
+  // Balance real desde el historial (computeDebtorOwed). El `debtor` que llega
+  // suele venir enriquecido con `owed`; recalculamos por seguridad en caso de
+  // que el modal se haya abierto desde otro flujo.
+  const owed = debtor.owed != null ? debtor.owed : computeDebtorOwed(debtor)
+  const isPaid = owed <= 0
 
   // Cargar ventas asociadas al deudor para mostrar qué productos compró
   // en cada entry de historial.
@@ -585,7 +658,7 @@ function DebtorDetailModal({ debtor, onClose }) {
             {isPaid ? 'Deuda saldada' : 'Total adeudado'}
           </div>
           <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: -0.8, fontVariantNumeric: 'tabular-nums' }}>
-            {isPaid ? '✅ Pagado' : fmtCOP(debtor.totalOwed || 0)}
+            {isPaid ? '✅ Pagado' : fmtCOP(owed)}
           </div>
           <div style={{ fontSize: 14, fontWeight: 700, marginTop: 8 }}>
             {debtor.name}
@@ -830,7 +903,8 @@ function PaymentForm({ debtor, onCancel, onDone }) {
   const [error, setError] = useState(null)
 
   const amount = Number(amountStr) || 0
-  const totalOwed = debtor.totalOwed || 0
+  // Balance real desde el historial — no usar el cache `totalOwed`.
+  const totalOwed = debtor.owed != null ? debtor.owed : computeDebtorOwed(debtor)
   const exceeds = amount > totalOwed
   const valid = amount > 0 && !photoUploading
 

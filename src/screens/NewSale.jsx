@@ -12,7 +12,7 @@ import {
   patchCashierProduct,
   getProductPrice,
 } from '../products'
-import { watchDebtors, addDebtSale, normalizeName } from '../debtors'
+import { watchDebtors, addDebtSale, normalizeName, computeDebtorOwed } from '../debtors'
 import { createSale } from '../sales'
 import {
   watchOpenTabsForSession,
@@ -3500,7 +3500,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
                   >
                     <span>{d.name}</span>
                     <span style={{ color: T.neutral[400], fontSize: 11 }}>
-                      debe {fmtCOP(d.totalOwed)}
+                      debe {fmtCOP(computeDebtorOwed(d))}
                     </span>
                   </button>
                 ))}

@@ -10,7 +10,7 @@ import RoleSwitcher from '../components/RoleSwitcher'
 import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses, updateCashExpense, deleteCashExpense } from '../cashExpenses'
 import { createCashIncome, watchSessionIncomes, updateCashIncome, deleteCashIncome } from '../cashIncomes'
-import { watchDebtors, normalizeName } from '../debtors'
+import { watchDebtors, normalizeName, computeDebtorOwed } from '../debtors'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
 import { watchLiveOrdersForSession } from '../kitchenOrders'
@@ -2838,7 +2838,7 @@ function DebtorPicker({ debtors, selected, onSelect, disabled }) {
           {list.map((d, i) => (
             <button
               key={d.id}
-              onClick={() => { onSelect({ id: d.id, name: d.name, totalOwed: d.totalOwed }); setOpen(false) }}
+              onClick={() => { onSelect({ id: d.id, name: d.name, totalOwed: computeDebtorOwed(d) }); setOpen(false) }}
               style={{
                 width: '100%', padding: '10px 14px', textAlign: 'left',
                 background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
@@ -2848,7 +2848,7 @@ function DebtorPicker({ debtors, selected, onSelect, disabled }) {
             >
               <span style={{ fontSize: 13.5, fontWeight: 600, color: T.neutral[900] }}>{d.name}</span>
               <span style={{ fontSize: 11.5, color: T.neutral[500], fontVariantNumeric: 'tabular-nums' }}>
-                debe {fmtCOP(d.totalOwed || 0)}
+                debe {fmtCOP(computeDebtorOwed(d))}
               </span>
             </button>
           ))}

@@ -977,6 +977,63 @@ function principioToArray(value) {
   return [value]
 }
 
+// Extrae los reemplazos ("En vez de sopa/principio: + X") que viajan DENTRO de
+// la nota del almuerzo, para mostrarlos pegados al "SIN [X]" en lugar de
+// sueltos y pequeños abajo. Devuelve { soup, principio, others }.
+function parseOrderReplacements(note) {
+  const segs = (note || '').split(' · ').map(s => s.trim()).filter(Boolean)
+  let soup = null, principio = null
+  const others = []
+  for (const s of segs) {
+    let m
+    if ((m = s.match(/^En vez de sopa:\s*\+?\s*(.+)$/i))) soup = m[1].trim()
+    else if ((m = s.match(/^En vez de principio:\s*\+?\s*(.+)$/i))) principio = m[1].trim()
+    else others.push(s)
+  }
+  return { soup, principio, others }
+}
+
+// Fila de categoría del ticket: ETIQUETA arriba, valor abajo. SIEMPRE igual, así
+// no se ve a veces al lado y a veces debajo según el largo del texto.
+function TicketRow({ emoji, label, value, valueColor }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 12, fontWeight: 800, color: T.neutral[500],
+        letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2,
+      }}>
+        {emoji} {label}
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 800, color: valueColor || T.neutral[900],
+        letterSpacing: -0.1, lineHeight: 1.25,
+      }}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+// Caja "SIN [X]" con el reemplazo opcional pegado ("→ en su lugar: Huevo").
+function OmittedBox({ label, replacement }) {
+  return (
+    <div style={{
+      fontSize: 16, fontWeight: 900, color: T.bad,
+      letterSpacing: 0.3, textTransform: 'uppercase',
+      background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
+      display: 'inline-block', alignSelf: 'flex-start',
+      border: `2px solid ${T.bad}55`, lineHeight: 1.35,
+    }}>
+      ⚠ {label}
+      {replacement && (
+        <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0, fontWeight: 800 }}>
+          {' → en su lugar: '}{replacement}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function KitchenOrderRow({ order, isLast, servedInfo }) {
   const isReady = order.status === 'ready'
   const isDelivered = order.status === 'delivered'
@@ -1003,6 +1060,22 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
   const isAddonOnly = order.kind === 'special'
     && !hasSelections
     && order.productName === 'Adiciones'
+
+  // Reemplazos (sopa/principio) que vienen dentro de la nota. Los mostramos
+  // pegados al "SIN [X]" y los quitamos de la nota para no duplicar info.
+  const repl = parseOrderReplacements(order.commandaNote)
+  const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
+  const soupSel = selections?.soup
+  const soupOmitted = order.kind === 'menu' && hasSelections && (soupSel === null || soupSel === undefined)
+  const showSoupBox = soupOmitted && dayHadSoup
+  const principioArrTop = (order.kind === 'menu' && hasSelections) ? principioToArray(selections?.principio) : null
+  const principioMissing = !!principioArrTop && principioArrTop.length === 0
+  const showPrincipioBox = principioMissing && !!repl.principio
+  // Nota mostrada: sin los reemplazos que ya pintamos en las cajas SIN [X].
+  const noteSegs = [...repl.others]
+  if (repl.soup && !showSoupBox) noteSegs.unshift(`En vez de sopa: + ${repl.soup}`)
+  if (repl.principio && !showPrincipioBox) noteSegs.push(`En vez de principio: + ${repl.principio}`)
+  const displayNote = noteSegs.join(' · ') || null
 
   // Paleta por status. Los cancelados se ven en gris atenuado para que
   // la cocinera los identifique de un vistazo sin contarlos como vendidos.
@@ -1093,83 +1166,44 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                   const isAlwaysServed = !!cat.alwaysServed
                   const isMissing = sel === null || sel === undefined
 
-                  // Sopa rechazada: el cliente NO quiso sopa (y el día sí tenía).
-                  // Lo mostramos explícito; el reemplazo, si lo hay, va en la nota.
+                  // Sopa rechazada: si hay reemplazo (huevo, etc.) lo mostramos
+                  // PEGADO al "SIN SOPA", no suelto y pequeño en la nota.
                   if (cat.id === 'soup' && isMissing) {
-                    const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
                     if (!dayHadSoup) return null
-                    return (
-                      <div key={cat.id} style={{
-                        fontSize: 18, fontWeight: 900, color: T.bad,
-                        letterSpacing: 0.5, textTransform: 'uppercase',
-                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
-                        display: 'inline-block', alignSelf: 'flex-start',
-                        border: `2px solid ${T.bad}55`,
-                      }}>
-                        ⚠ SIN SOPA
-                      </div>
-                    )
+                    return <OmittedBox key={cat.id} label="SIN SOPA" replacement={repl.soup} />
                   }
 
                   if (isAlwaysServed && isMissing) {
-                    return (
-                      <div key={cat.id} style={{
-                        fontSize: 18, fontWeight: 900, color: T.bad,
-                        letterSpacing: 0.5, textTransform: 'uppercase',
-                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
-                        display: 'inline-block', alignSelf: 'flex-start',
-                        border: `2px solid ${T.bad}55`,
-                      }}>
-                        ⚠ {omittedLabel(cat, servedInfo)}
-                      </div>
-                    )
+                    return <OmittedBox key={cat.id} label={omittedLabel(cat, servedInfo)} />
                   }
                   if (isAlwaysServed) return null
 
                   if (principioArr) {
-                    if (principioArr.length === 0) return null
-                    const value = principioArr.length === 2
+                    // Sin principio: si hay reemplazo, lo mostramos como caja
+                    // "SIN PRINCIPIO → en su lugar: X"; si no, no se muestra.
+                    if (principioArr.length === 0) {
+                      return repl.principio
+                        ? <OmittedBox key={cat.id} label="SIN PRINCIPIO" replacement={repl.principio} />
+                        : null
+                    }
+                    const isMixto = principioArr.length === 2
+                    const value = isMixto
                       ? `MIXTO ${principioArr.map(p => p.name).join(' / ')}`
                       : principioArr[0].name
                     return (
-                      <div key={cat.id} style={{
-                        display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
-                      }}>
-                        <span style={{
-                          fontSize: 13, fontWeight: 800, color: T.neutral[500],
-                          minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
-                        }}>
-                          {cat.emoji} {cat.label}
-                        </span>
-                        <span style={{
-                          fontSize: 18, fontWeight: 800,
-                          color: principioArr.length === 2 ? T.copper[700] : T.neutral[900],
-                          letterSpacing: -0.1,
-                        }}>
-                          {value}
-                        </span>
-                      </div>
+                      <TicketRow
+                        key={cat.id}
+                        emoji={cat.emoji}
+                        label={cat.label}
+                        value={value}
+                        valueColor={isMixto ? T.copper[700] : undefined}
+                      />
                     )
                   }
 
                   if (!sel) return null
                   return (
-                    <div key={cat.id} style={{
-                      display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
-                    }}>
-                      <span style={{
-                        fontSize: 13, fontWeight: 800, color: T.neutral[500],
-                        minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
-                      }}>
-                        {cat.emoji} {cat.label}
-                      </span>
-                      <span style={{
-                        fontSize: 18, fontWeight: 800, color: T.neutral[900],
-                        letterSpacing: -0.1,
-                      }}>
-                        {sel.name}
-                      </span>
-                    </div>
+                    <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
                   )
                 })}
               </div>
@@ -1185,36 +1219,11 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                 {SPECIAL_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   if (cat.id === 'salad' && (sel === null || sel === undefined)) {
-                    return (
-                      <div key={cat.id} style={{
-                        fontSize: 18, fontWeight: 900, color: T.bad,
-                        letterSpacing: 0.5, textTransform: 'uppercase',
-                        background: '#FBE9E5', padding: '8px 14px', borderRadius: 10,
-                        display: 'inline-block', alignSelf: 'flex-start',
-                        border: `2px solid ${T.bad}55`,
-                      }}>
-                        ⚠ {omittedLabel(cat, servedInfo)}
-                      </div>
-                    )
+                    return <OmittedBox key={cat.id} label={omittedLabel(cat, servedInfo)} />
                   }
                   if (!sel) return null
                   return (
-                    <div key={cat.id} style={{
-                      display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap',
-                    }}>
-                      <span style={{
-                        fontSize: 13, fontWeight: 800, color: T.neutral[500],
-                        minWidth: 110, letterSpacing: 0.5, textTransform: 'uppercase',
-                      }}>
-                        {cat.emoji} {cat.label}
-                      </span>
-                      <span style={{
-                        fontSize: 18, fontWeight: 800, color: T.neutral[900],
-                        letterSpacing: -0.1,
-                      }}>
-                        {sel.name}
-                      </span>
-                    </div>
+                    <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
                   )
                 })}
               </div>
@@ -1250,14 +1259,14 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
             {/* Comentario PER-ALMUERZO. Destacado amarillo grande para que
                 la cocinera no se lo pierda — va asociado A ESTE almuerzo,
                 no al grupo. */}
-            {order.commandaNote && (
+            {displayNote && (
               <div style={{
                 marginTop: 12, padding: '12px 14px', borderRadius: 12,
                 background: '#FFF7E6', border: `1.5px solid #F4E0BC`,
                 fontSize: 16, color: '#7A5C00',
                 fontWeight: 700, fontStyle: 'italic', lineHeight: 1.4,
               }}>
-                📝 {order.commandaNote}
+                📝 {displayNote}
               </div>
             )}
 
@@ -1387,6 +1396,20 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
   const isAddonOnly = order.kind === 'special'
     && !hasSelections
     && order.productName === 'Adiciones'
+
+  // Mismos reemplazos que en la cola: "SIN SOPA → en su lugar: X" + nota limpia.
+  const repl = parseOrderReplacements(order.commandaNote)
+  const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
+  const soupSel = selections?.soup
+  const soupOmitted = order.kind === 'menu' && hasSelections && (soupSel === null || soupSel === undefined)
+  const showSoupBox = soupOmitted && dayHadSoup
+  const principioArrTop = (order.kind === 'menu' && hasSelections) ? principioToArray(selections?.principio) : null
+  const principioMissing = !!principioArrTop && principioArrTop.length === 0
+  const showPrincipioBox = principioMissing && !!repl.principio
+  const noteSegs = [...repl.others]
+  if (repl.soup && !showSoupBox) noteSegs.unshift(`En vez de sopa: + ${repl.soup}`)
+  if (repl.principio && !showPrincipioBox) noteSegs.push(`En vez de principio: + ${repl.principio}`)
+  const displayNote = noteSegs.join(' · ') || null
 
   return createPortal((
     <div
@@ -1520,7 +1543,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
               )}
             </div>
           )}
-          {order.commandaNote && (
+          {displayNote && (
             <div style={{
               marginBottom: 18,
               padding: '14px 16px', borderRadius: 14,
@@ -1528,7 +1551,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
               fontSize: 18, fontWeight: 700, color: '#7A5C00',
               fontStyle: 'italic', lineHeight: 1.4,
             }}>
-              📝 {order.commandaNote}
+              📝 {displayNote}
             </div>
           )}
 
@@ -1541,16 +1564,20 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                 const isMissing = sel === null || sel === undefined
 
                 if (cat.id === 'soup' && isMissing) {
-                  const dayHadSoup = servedInfo ? (servedInfo.soup?.length > 0) : false
                   if (!dayHadSoup) return null
                   return (
                     <div key={cat.id} style={{
-                      fontSize: 20, fontWeight: 900, color: T.bad,
+                      fontSize: 18, fontWeight: 900, color: T.bad,
                       letterSpacing: 0.5, textTransform: 'uppercase',
                       background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
-                      border: `2px solid ${T.bad}55`,
+                      border: `2px solid ${T.bad}55`, lineHeight: 1.35,
                     }}>
                       ⚠ SIN SOPA
+                      {repl.soup && (
+                        <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0 }}>
+                          {' → en su lugar: '}{repl.soup}
+                        </span>
+                      )}
                     </div>
                   )
                 }
@@ -1570,7 +1597,23 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                 if (isAlwaysServed) return null
 
                 if (principioArr) {
-                  if (principioArr.length === 0) return null
+                  if (principioArr.length === 0) {
+                    return repl.principio
+                      ? (
+                        <div key={cat.id} style={{
+                          fontSize: 18, fontWeight: 900, color: T.bad,
+                          letterSpacing: 0.5, textTransform: 'uppercase',
+                          background: '#FBE9E5', padding: '12px 18px', borderRadius: 12,
+                          border: `2px solid ${T.bad}55`, lineHeight: 1.35,
+                        }}>
+                          ⚠ SIN PRINCIPIO
+                          <span style={{ color: T.copper[700], textTransform: 'none', letterSpacing: 0 }}>
+                            {' → en su lugar: '}{repl.principio}
+                          </span>
+                        </div>
+                      )
+                      : null
+                  }
                   const value = principioArr.length === 2
                     ? `MIXTO ${principioArr.map(p => p.name).join(' / ')}`
                     : principioArr[0].name

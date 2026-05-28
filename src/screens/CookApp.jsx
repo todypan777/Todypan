@@ -994,20 +994,22 @@ function parseOrderReplacements(note) {
 }
 
 const INTENSE_RED = '#D92D20'
+const REPLACE_GREEN = '#1E8E3E' // verde fuerte para "haz esto en su lugar"
 
-// Estilos compartidos de la fila del ticket: ETIQUETA a la izquierda, valor a
-// la derecha, en la MISMA línea. Una categoría por fila. Si el valor es largo,
-// se ajusta dentro de su columna (no se descuelga abajo).
+// Estilos compartidos de la fila del ticket: ETIQUETA pegada a la IZQUIERDA y
+// valor pegado a la DERECHA (estilo cuenta de restaurante), usando todo el
+// ancho. Una categoría por fila.
 const ticketRowStyle = {
-  display: 'grid', gridTemplateColumns: '40% 1fr', columnGap: 12,
-  alignItems: 'baseline', padding: '1px 0',
+  display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+  gap: 16, padding: '1px 0',
 }
 const ticketLabelStyle = {
   fontSize: 13, fontWeight: 800, letterSpacing: 0.4,
-  textTransform: 'uppercase', lineHeight: 1.3,
+  textTransform: 'uppercase', lineHeight: 1.3, flexShrink: 0,
 }
 const ticketValueStyle = {
   fontSize: 17, fontWeight: 800, letterSpacing: -0.1, lineHeight: 1.3,
+  textAlign: 'right',
 }
 
 function TicketRow({ emoji, label, value, valueColor }) {
@@ -1023,15 +1025,19 @@ function TicketRow({ emoji, label, value, valueColor }) {
   )
 }
 
-// Fila de categoría OMITIDA: misma estructura, todo en rojo intenso. La
-// etiqueta dice "SIN [X]" y el valor muestra el reemplazo (o "—" si no hay).
+// Fila de categoría OMITIDA: la etiqueta "SIN [X]" va en ROJO (no se hace) y el
+// reemplazo a la derecha en VERDE (sí se hace) — "sopa no, huevo sí". Si no hay
+// reemplazo, muestra "—".
 function OmittedRow({ cat, replacement }) {
   return (
     <div style={ticketRowStyle}>
       <div style={{ ...ticketLabelStyle, color: INTENSE_RED, fontWeight: 900 }}>
         {cat.emoji} Sin {cat.label.toLowerCase()}
       </div>
-      <div style={{ ...ticketValueStyle, color: INTENSE_RED, fontWeight: 900 }}>
+      <div style={{
+        ...ticketValueStyle, fontWeight: 900,
+        color: replacement ? REPLACE_GREEN : T.neutral[400],
+      }}>
         {replacement || '—'}
       </div>
     </div>
@@ -1158,6 +1164,19 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                   boxShadow: '0 2px 6px rgba(232,163,61,0.4)',
                 }}>
                   📦 PARA LLEVAR
+                </span>
+              )}
+              {/* Aviso fuerte cuando la cajera CORRIGIÓ el pedido después de
+                  enviarlo, para que la cocinera lo vuelva a leer y no se equivoque. */}
+              {order.editedAt && !isCancelled && !isDelivered && (
+                <span style={{
+                  fontSize: 13, fontWeight: 900, color: '#fff',
+                  background: INTENSE_RED, border: '1px solid #B71C12',
+                  padding: '3px 11px', borderRadius: 999,
+                  letterSpacing: 0.5,
+                  boxShadow: `0 2px 6px ${INTENSE_RED}66`,
+                }}>
+                  ✏ MODIFICADO
                 </span>
               )}
             </div>
@@ -1319,17 +1338,22 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
             </div>
           </div>
 
-          <div style={{
-            flexShrink: 0,
-            padding: '12px 16px', borderRadius: 14,
-            background: palette.badgeBg,
-            color: palette.badgeColor,
-            fontSize: 13, fontWeight: 900, letterSpacing: 0.4, textTransform: 'uppercase',
-            display: 'flex', alignItems: 'center', gap: 6,
-            textDecoration: 'none',
-          }}>
-            {palette.badgeLabel}
-          </div>
+          {/* La pastilla de estado solo se muestra cuando aporta algo: listo,
+              entregado o cancelado. Mientras "cocina" (pendiente) no se muestra
+              — ya se sabe que está en preparación por estar en la lista. */}
+          {(isReady || isDelivered || isCancelled) && (
+            <div style={{
+              flexShrink: 0,
+              padding: '12px 16px', borderRadius: 14,
+              background: palette.badgeBg,
+              color: palette.badgeColor,
+              fontSize: 13, fontWeight: 900, letterSpacing: 0.4, textTransform: 'uppercase',
+              display: 'flex', alignItems: 'center', gap: 6,
+              textDecoration: 'none',
+            }}>
+              {palette.badgeLabel}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1545,6 +1569,17 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                   Razón: {order.cancelReason}
                 </div>
               )}
+            </div>
+          )}
+          {order.editedAt && !isCancelled && !isDelivered && (
+            <div style={{
+              marginBottom: 18,
+              padding: '14px 16px', borderRadius: 14,
+              background: '#FBE9E5', border: `2px solid ${INTENSE_RED}`,
+              fontSize: 16, fontWeight: 900, color: INTENSE_RED,
+              letterSpacing: 0.3,
+            }}>
+              ✏ MODIFICADO — la cajera corrigió este pedido. Vuelve a leerlo.
             </div>
           )}
           {displayNote && (

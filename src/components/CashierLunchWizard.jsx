@@ -122,7 +122,11 @@ export default function CashierLunchWizard({
   // (No hay step 'next-action': al picar destino el wizard cierra y se
   //  abre SendCommandaModal, que tiene la lista de items + chooser de
   //  seguir agregando + selector de mesa.)
-  const [step, setStep] = useState(editMode ? 'destination' : 'soup')
+  // Tanto en alta como en EDICIÓN arrancamos en 'soup' y recorremos todos los
+  // pasos con las selecciones actuales precargadas — así la cajera puede
+  // corregir CUALQUIER cosa (sopa, principio, proteína, extras, nota, destino),
+  // no solo el destino. Al final, 'destination' guarda los cambios (onSaveEdit).
+  const [step, setStep] = useState('soup')
 
   function setCategory(catId, val) {
     setSelections(prev => ({ ...prev, [catId]: val }))
@@ -198,7 +202,7 @@ export default function CashierLunchWizard({
       case 'protein':           setStep(selections.principio ? 'principio' : 'principio-replace'); break
       case 'sides-combo':       setStep('protein'); break
       case 'note':              setStep('sides-combo'); break
-      case 'destination':       editMode ? onCancel() : setStep('note'); break
+      case 'destination':       setStep('note'); break
     }
   }
 
@@ -225,7 +229,7 @@ export default function CashierLunchWizard({
           editMode={editMode}
           hidePrices={hidePrices}
           onBack={goBack}
-          canCancel={step === 'soup' || (editMode && step === 'destination')}
+          canCancel={step === 'soup'}
         />
 
         <div style={{ flex: 1, overflowY: 'auto' }}>

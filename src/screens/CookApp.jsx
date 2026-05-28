@@ -993,49 +993,46 @@ function parseOrderReplacements(note) {
   return { soup, principio, others }
 }
 
-// Fila de categoría del ticket: ETIQUETA arriba, valor abajo. SIEMPRE igual, así
-// no se ve a veces al lado y a veces debajo según el largo del texto.
+const INTENSE_RED = '#D92D20'
+
+// Estilos compartidos de la fila del ticket: ETIQUETA a la izquierda, valor a
+// la derecha, en la MISMA línea. Una categoría por fila. Si el valor es largo,
+// se ajusta dentro de su columna (no se descuelga abajo).
+const ticketRowStyle = {
+  display: 'grid', gridTemplateColumns: '40% 1fr', columnGap: 12,
+  alignItems: 'baseline', padding: '1px 0',
+}
+const ticketLabelStyle = {
+  fontSize: 13, fontWeight: 800, letterSpacing: 0.4,
+  textTransform: 'uppercase', lineHeight: 1.3,
+}
+const ticketValueStyle = {
+  fontSize: 17, fontWeight: 800, letterSpacing: -0.1, lineHeight: 1.3,
+}
+
 function TicketRow({ emoji, label, value, valueColor }) {
   return (
-    <div>
-      <div style={{
-        fontSize: 12, fontWeight: 800, color: T.neutral[500],
-        letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2,
-      }}>
+    <div style={ticketRowStyle}>
+      <div style={{ ...ticketLabelStyle, color: T.neutral[500] }}>
         {emoji} {label}
       </div>
-      <div style={{
-        fontSize: 18, fontWeight: 800, color: valueColor || T.neutral[900],
-        letterSpacing: -0.1, lineHeight: 1.25,
-      }}>
+      <div style={{ ...ticketValueStyle, color: valueColor || T.neutral[900] }}>
         {value}
       </div>
     </div>
   )
 }
 
-// Rojo intenso para los "Sin [X]" (omisiones). Sin burbuja: se ve igual que
-// una fila normal del menú, solo que el valor va en rojo fuerte para que salte.
-const INTENSE_RED = '#D92D20'
-
-// Fila de categoría OMITIDA. Misma estética que TicketRow (etiqueta arriba,
-// valor abajo) pero el valor en rojo intenso. Si hay reemplazo, lo pega:
-// "Sin sopa → Huevo".
+// Fila de categoría OMITIDA: misma estructura, todo en rojo intenso. La
+// etiqueta dice "SIN [X]" y el valor muestra el reemplazo (o "—" si no hay).
 function OmittedRow({ cat, replacement }) {
   return (
-    <div>
-      <div style={{
-        fontSize: 12, fontWeight: 800, color: T.neutral[500],
-        letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 2,
-      }}>
-        {cat.emoji} {cat.label}
+    <div style={ticketRowStyle}>
+      <div style={{ ...ticketLabelStyle, color: INTENSE_RED, fontWeight: 900 }}>
+        {cat.emoji} Sin {cat.label.toLowerCase()}
       </div>
-      <div style={{
-        fontSize: 18, fontWeight: 900, color: INTENSE_RED,
-        letterSpacing: -0.1, lineHeight: 1.25,
-      }}>
-        Sin {cat.label.toLowerCase()}
-        {replacement ? ` → ${replacement}` : ''}
+      <div style={{ ...ticketValueStyle, color: INTENSE_RED, fontWeight: 900 }}>
+        {replacement || '—'}
       </div>
     </div>
   )
@@ -1166,11 +1163,7 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
             </div>
 
             {order.kind === 'menu' && hasSelections && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                gap: '10px 18px',
-              }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {CORRIENTE_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
@@ -1226,11 +1219,7 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                 sintético de adiciones (selections=null) caía aquí y
                 mostraba "SIN ENSALADA" falsamente. */}
             {order.kind === 'special' && hasSelections && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                gap: '10px 18px',
-              }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {SPECIAL_CATEGORIES.map(cat => {
                   const sel = selections[cat.id]
                   if (cat.id === 'salad' && (sel === null || sel === undefined)) {
@@ -1571,7 +1560,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
           )}
 
           {order.kind === 'menu' && hasSelections && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {CORRIENTE_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
                 const principioArr = cat.id === 'principio' ? principioToArray(sel) : null
@@ -1594,51 +1583,24 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                       ? <OmittedRow key={cat.id} cat={cat} replacement={repl.principio} />
                       : null
                   }
-                  const value = principioArr.length === 2
+                  const isMixto = principioArr.length === 2
+                  const value = isMixto
                     ? `MIXTO ${principioArr.map(p => p.name).join(' / ')}`
                     : principioArr[0].name
                   return (
-                    <div key={cat.id} style={{
-                      display: 'flex', flexDirection: 'column', gap: 4,
-                      padding: '12px 14px', borderRadius: 12,
-                      background: principioArr.length === 2 ? T.copper[50] : T.neutral[50],
-                      border: `1px solid ${principioArr.length === 2 ? T.copper[200] : T.neutral[100]}`,
-                    }}>
-                      <span style={{
-                        fontSize: 12, fontWeight: 800, color: T.neutral[500],
-                        letterSpacing: 0.5, textTransform: 'uppercase',
-                      }}>
-                        {cat.emoji} {cat.label}
-                      </span>
-                      <span style={{
-                        fontSize: 20, fontWeight: 900,
-                        color: principioArr.length === 2 ? T.copper[700] : T.neutral[900],
-                      }}>
-                        {value}
-                      </span>
-                    </div>
+                    <TicketRow
+                      key={cat.id}
+                      emoji={cat.emoji}
+                      label={cat.label}
+                      value={value}
+                      valueColor={isMixto ? T.copper[700] : undefined}
+                    />
                   )
                 }
 
                 if (!sel) return null
                 return (
-                  <div key={cat.id} style={{
-                    display: 'flex', flexDirection: 'column', gap: 4,
-                    padding: '12px 14px', borderRadius: 12,
-                    background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
-                  }}>
-                    <span style={{
-                      fontSize: 12, fontWeight: 800, color: T.neutral[500],
-                      letterSpacing: 0.5, textTransform: 'uppercase',
-                    }}>
-                      {cat.emoji} {cat.label}
-                    </span>
-                    <span style={{
-                      fontSize: 20, fontWeight: 900, color: T.neutral[900],
-                    }}>
-                      {sel.name}
-                    </span>
-                  </div>
+                  <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
                 )
               })}
             </div>
@@ -1648,7 +1610,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
               hasSelections en lugar de selections para evitar tratar a
               una adición sintética (selections=null) como especial. */}
           {order.kind === 'special' && hasSelections && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {SPECIAL_CATEGORIES.map(cat => {
                 const sel = selections[cat.id]
                 if (cat.id === 'salad' && (sel === null || sel === undefined)) {
@@ -1656,21 +1618,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                 }
                 if (!sel) return null
                 return (
-                  <div key={cat.id} style={{
-                    display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap',
-                  }}>
-                    <span style={{
-                      fontSize: 14, fontWeight: 800, color: T.neutral[500],
-                      minWidth: 120, letterSpacing: 0.5, textTransform: 'uppercase',
-                    }}>
-                      {cat.emoji} {cat.label}
-                    </span>
-                    <span style={{
-                      fontSize: 20, fontWeight: 900, color: T.neutral[900],
-                    }}>
-                      {sel.name}
-                    </span>
-                  </div>
+                  <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
                 )
               })}
             </div>

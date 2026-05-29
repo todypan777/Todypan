@@ -8,6 +8,7 @@ import {
   CORRIENTE_CATEGORIES, SPECIAL_CATEGORIES,
   watchMenuItems, watchDailyMenu, watchCorrienteConfig, resolveDailyMenu,
 } from '../menu'
+import { BREAKFAST_CATEGORIES } from '../breakfast'
 import { useBogotaDate } from '../utils/useBogotaDate'
 import {
   watchKitchenQueue, watchKitchenArchivedForDate,
@@ -1151,6 +1152,7 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                 </>
               ) : (
                 <>
+                  {order.kind === 'breakfast' && <span>☕</span>}
                   {order.productName || 'Almuerzo'}
                   {order.kind === 'special' && <span>⭐</span>}
                 </>
@@ -1244,6 +1246,21 @@ function KitchenOrderRow({ order, isLast, servedInfo }) {
                   if (cat.id === 'salad' && (sel === null || sel === undefined)) {
                     return <OmittedRow key={cat.id} cat={cat} />
                   }
+                  if (!sel) return null
+                  return (
+                    <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
+                  )
+                })}
+              </div>
+            )}
+            {/* DESAYUNO: 4 categorías propias. Solo mostramos lo que el
+                cliente PIDIÓ — las categorías omitidas no llevan "SIN X"
+                porque en desayuno todas son opcionales por diseño y la
+                cocinera solo necesita ver qué preparar. */}
+            {order.kind === 'breakfast' && hasSelections && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {BREAKFAST_CATEGORIES.map(cat => {
+                  const sel = selections[cat.id]
                   if (!sel) return null
                   return (
                     <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
@@ -1528,7 +1545,7 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
             }}>
               {isAddonOnly
                 ? '🍲 Adición'
-                : <>{order.productName || 'Almuerzo'}{order.kind === 'special' && ' ⭐'}</>}
+                : <>{order.kind === 'breakfast' && '☕ '}{order.productName || 'Almuerzo'}{order.kind === 'special' && ' ⭐'}</>}
               {!isLlevarTab && isLlevar && (
                 <span style={{
                   marginLeft: 8,
@@ -1651,6 +1668,19 @@ function KitchenOrderDetailModal({ order, servedInfo, onClose }) {
                 if (cat.id === 'salad' && (sel === null || sel === undefined)) {
                   return <OmittedRow key={cat.id} cat={cat} />
                 }
+                if (!sel) return null
+                return (
+                  <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />
+                )
+              })}
+            </div>
+          )}
+          {/* DESAYUNO: mostrar solo lo que la cocinera prepara (las
+              categorías sin elegir simplemente no aparecen). */}
+          {order.kind === 'breakfast' && hasSelections && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {BREAKFAST_CATEGORIES.map(cat => {
+                const sel = selections[cat.id]
                 if (!sel) return null
                 return (
                   <TicketRow key={cat.id} emoji={cat.emoji} label={cat.label} value={sel.name} />

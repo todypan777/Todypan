@@ -11,7 +11,11 @@ import { createCustomerOrder } from '../customerOrders'
 import PublicLunchWizard from '../components/PublicLunchWizard'
 import PublicSpecialWizard from '../components/PublicSpecialWizard'
 import PublicAddonsModal from '../components/PublicAddonsModal'
+import PublicBreakfastWizard from '../components/PublicBreakfastWizard'
 import { formatSelection, REPLACEMENT_LABELS } from '../utils/lunchFormat'
+import {
+  watchBreakfastConfig, getBreakfastState, getBreakfastPrice,
+} from '../breakfast'
 
 // ──────────────────────────────────────────────────────────────────
 // Página pública /menu para clientes.
@@ -34,30 +38,33 @@ export default function PublicMenu() {
   const [dailyMenu, setDailyMenu] = useState(null)
   const [allItems, setAllItems] = useState([])
   const [corrienteConfig, setCorrienteConfig] = useState(null)
+  const [breakfastConfig, setBreakfastConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  // Pedido del cliente: lista de almuerzos.
+  // Pedido del cliente: lista de items.
   // shape: [{
-  //   kind: 'corriente' | 'especial',
-  //   selections?, replacements?, description?, note, price
+  //   kind: 'corriente' | 'especial' | 'breakfast' | 'addon',
+  //   selections?, replacements?, description?, note, price, comboId?, comboName?
   // }]
   const [cart, setCart] = useState([])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [specialWizardOpen, setSpecialWizardOpen] = useState(false)
+  const [breakfastWizardOpen, setBreakfastWizardOpen] = useState(false)
   // addonsOpen: null = cerrado, 'menu' = abierto en pantalla de elegir tipo,
   // 'soup'|'egg'|'protein' = abierto y saltó directo al selector de cantidad.
   const [addonsOpen, setAddonsOpen] = useState(null)
 
   // Watchers
   useEffect(() => {
-    let pending = 3
+    let pending = 4
     const finish = () => { if (--pending === 0) setLoading(false) }
     const onErr = e => { setError(e?.message || 'Error cargando el menú'); finish() }
 
     const u1 = watchDailyMenu(today, v => { setDailyMenu(v); finish() })
     const u2 = watchMenuItems(v => { setAllItems(v); finish() })
     const u3 = watchCorrienteConfig(v => { setCorrienteConfig(v); finish() })
+    const u4 = watchBreakfastConfig(v => { setBreakfastConfig(v); finish() })
 
     // Timeout de seguridad por si los watchers se demoran
     const t = setTimeout(() => setLoading(false), 6000)
@@ -66,6 +73,7 @@ export default function PublicMenu() {
       try { u1?.() } catch {}
       try { u2?.() } catch {}
       try { u3?.() } catch {}
+      try { u4?.() } catch {}
       clearTimeout(t)
     }
   }, [today])
@@ -102,7 +110,14 @@ export default function PublicMenu() {
     (addonPrices.egg?.llevar || 0) > 0 ||
     ((addonPrices.protein?.llevar || 0) > 0 && proteinOptions.length > 0)
   )
-  const hasAnything = corriente.available || !!special || anyAddonAvailable
+  // Estado del desayuno. Solo aparece en /menu si la cocinera/admin lo activó
+  // y los precios mínimos están definidos.
+  const breakfastState = useMemo(
+    () => getBreakfastState(breakfastConfig),
+    [breakfastConfig]
+  )
+  const breakfastAvailable = breakfastState.available
+  const hasAnything = corriente.available || !!special || anyAddonAvailable || breakfastAvailable
 
   // Subtotal = suma de los items. El total final suma el recargo si el
   // cliente eligió pagar por Nequi/Daviplata.
@@ -126,6 +141,10 @@ export default function PublicMenu() {
   function addAddon(payload) {
     setCart(prev => [...prev, payload])
     setAddonsOpen(null)
+  }
+  function addBreakfast(payload) {
+    setCart(prev => [...prev, payload])
+    setBreakfastWizardOpen(false)
   }
   function removeItem(i) {
     setCart(prev => prev.filter((_, idx) => idx !== i))
@@ -250,6 +269,17 @@ export default function PublicMenu() {
               />
             )}
 
+            {/* DESAYUNO arriba cuando está activo — es lo primero del día.
+                Tonos cobre cálido para diferenciarlo del especial dorado. */}
+            {breakfastAvailable && (
+              <BreakfastCardCompact
+                priceFrom={breakfastState.priceLlevarFrom}
+                cartCount={cart.length}
+                onAdd={() => setBreakfastWizardOpen(true)}
+                animDelay={80}
+              />
+            )}
+
             {/* El ESPECIAL va primero (cuando hay) para destacarlo —
                 lleva el mismo formato grande del corriente con tonos
                 dorados/warm que lo distinguen. */}
@@ -259,7 +289,7 @@ export default function PublicMenu() {
                 price={Number(special.priceLlevar || special.priceMesa || 0)}
                 cartCount={cart.length}
                 onAdd={() => setSpecialWizardOpen(true)}
-                animDelay={120}
+                animDelay={breakfastAvailable ? 160 : 120}
               />
             )}
 
@@ -322,6 +352,15 @@ export default function PublicMenu() {
           price={special.priceLlevar}
           onCancel={() => setSpecialWizardOpen(false)}
           onAdd={addEspecialFromWizard}
+        />
+      )}
+
+      {/* Wizard del desayuno (4 pasos: caldo, huevos, arroz, bebida) */}
+      {breakfastWizardOpen && breakfastAvailable && (
+        <PublicBreakfastWizard
+          config={breakfastConfig}
+          onCancel={() => setBreakfastWizardOpen(false)}
+          onAdd={addBreakfast}
         />
       )}
 
@@ -456,6 +495,69 @@ function CorrienteCardCompact({ price, cartCount, onAdd, animDelay = 0 }) {
         >
           <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
           {isFirst ? 'Agregar mi almuerzo' : 'Agregar otro almuerzo'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Tarjeta de DESAYUNO — cobre cálido, 4 pasos, precio "desde" ─
+function BreakfastCardCompact({ priceFrom, cartCount, onAdd, animDelay = 0 }) {
+  const isFirst = cartCount === 0
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 22,
+      border: `1.5px solid ${T.copper[200]}`,
+      boxShadow: '0 6px 22px rgba(184,122,86,0.12)',
+      overflow: 'hidden', marginBottom: 18,
+      animation: `pmCardIn 0.5s cubic-bezier(0.2,0.9,0.3,1.05) ${animDelay}ms backwards`,
+    }}>
+      <div style={{
+        padding: '22px 22px 18px',
+        background: `linear-gradient(140deg, #FFF7E6 0%, #fff 100%)`,
+        textAlign: 'center',
+      }}>
+        <div style={{ fontSize: 44, lineHeight: 1, marginBottom: 6 }}>☕</div>
+        <div style={{
+          fontSize: 11.5, fontWeight: 800, color: T.warn,
+          letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 4,
+        }}>
+          Desayuno
+        </div>
+        <div style={{
+          fontSize: 26, fontWeight: 900, color: T.neutral[900],
+          fontVariantNumeric: 'tabular-nums', letterSpacing: -0.8,
+          lineHeight: 1.1,
+        }}>
+          Desde {fmtCOP(priceFrom)}
+        </div>
+        <div style={{
+          fontSize: 13, color: T.neutral[600], marginTop: 6,
+          lineHeight: 1.45,
+        }}>
+          Caldo · Huevos · Arroz · Bebida — armas el tuyo paso a paso
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 16px' }}>
+        <button
+          onClick={onAdd}
+          style={{
+            width: '100%', padding: '18px',
+            background: T.warn, color: '#fff',
+            border: 'none', borderRadius: 16, cursor: 'pointer',
+            fontFamily: 'inherit', fontSize: 16, fontWeight: 800,
+            letterSpacing: -0.2,
+            boxShadow: `0 6px 18px ${T.warn}55`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+            transition: 'transform 0.1s ease',
+          }}
+          onMouseDown={e => (e.currentTarget.style.transform = 'scale(0.98)')}
+          onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        >
+          <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+          {isFirst ? 'Agregar mi desayuno' : 'Agregar otro desayuno'}
         </button>
       </div>
     </div>
@@ -671,7 +773,7 @@ function CartInline({ cart, total, onRemove }) {
             fontSize: 11.5, color: T.neutral[600], marginTop: 1,
             fontVariantNumeric: 'tabular-nums',
           }}>
-            {cart.length} {cart.length === 1 ? 'almuerzo' : 'almuerzos'} · {fmtCOP(total)}
+            {cart.length} {cart.length === 1 ? 'pedido' : 'pedidos'} · {fmtCOP(total)}
           </div>
         </div>
       </div>
@@ -692,18 +794,24 @@ function CartInline({ cart, total, onRemove }) {
 function CartItemRow({ index, item, onRemove }) {
   const isEspecial = item.kind === 'especial'
   const isAddon = item.kind === 'addon'
+  const isBreakfast = item.kind === 'breakfast'
   const addonMeta = isAddon ? addonDisplayMeta(item) : null
   const title = isAddon
     ? addonMeta.title
-    : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
+    : isBreakfast
+      ? (item.comboName || 'Desayuno')
+      : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
   const accentBg = isAddon
     ? '#FFF7E6'
+    : isBreakfast ? '#FFF7E6'
     : isEspecial ? '#FFF7E6' : T.copper[50]
   const accentBorder = isAddon
     ? '#F4E0BC'
+    : isBreakfast ? '#F4E0BC'
     : isEspecial ? '#F4E0BC' : T.copper[100]
   const accentColor = isAddon
     ? T.warn
+    : isBreakfast ? T.warn
     : isEspecial ? T.warn : T.copper[700]
 
   return (
@@ -798,7 +906,38 @@ function CartItemRow({ index, item, onRemove }) {
           </div>
         )}
 
-        {!isEspecial && !isAddon && item.selections && (
+        {/* DESAYUNO: 4 categorías (caldo/huevos/arroz/bebida) */}
+        {isBreakfast && item.selections && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+            {[
+              { id: 'caldo',  label: 'Caldo',  emoji: '🍲' },
+              { id: 'huevos', label: 'Huevos', emoji: '🥚' },
+              { id: 'arroz',  label: 'Arroz',  emoji: '🍚' },
+              { id: 'bebida', label: 'Bebida', emoji: '☕' },
+            ].map(cat => {
+              const val = item.selections[cat.id]
+              return (
+                <div key={cat.id} style={{ display: 'flex', gap: 6, fontSize: 11, lineHeight: 1.35 }}>
+                  <span style={{
+                    color: T.neutral[500], fontWeight: 700, letterSpacing: 0.2,
+                    minWidth: 78, flexShrink: 0,
+                  }}>
+                    {cat.label}
+                  </span>
+                  <span style={{
+                    flex: 1,
+                    color: val ? T.neutral[800] : T.bad,
+                    fontWeight: val ? 600 : 800, wordBreak: 'break-word',
+                  }}>
+                    {val ? val.name : `Sin ${cat.label.toLowerCase()}`}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {!isEspecial && !isAddon && !isBreakfast && item.selections && (
           <div style={{
             display: 'flex', flexDirection: 'column', gap: 2,
             marginTop: 2,
@@ -1208,9 +1347,28 @@ function buildOrderMessage(cart, confirmUrl = null, payment = null) {
   lines.push('Hola, quiero hacer un pedido para llevar:')
   lines.push('')
 
-  // Separar almuerzos de adiciones para que el mensaje quede ordenado.
-  const lunches = cart.filter(it => it.kind !== 'addon')
-  const addons  = cart.filter(it => it.kind === 'addon')
+  // Separar por tipo. Desayunos van arriba (es lo primero del día);
+  // luego almuerzos, luego adiciones.
+  const breakfasts = cart.filter(it => it.kind === 'breakfast')
+  const lunches    = cart.filter(it => it.kind !== 'addon' && it.kind !== 'breakfast')
+  const addons     = cart.filter(it => it.kind === 'addon')
+
+  breakfasts.forEach((item, idx) => {
+    const label = item.comboName || 'Desayuno'
+    lines.push(`DESAYUNO ${idx + 1} - ${label} - ${fmtCOP(item.price)}`)
+    const sel = item.selections || {}
+    const rows = [
+      { label: 'Caldo',  val: sel.caldo?.name  || 'Sin caldo' },
+      { label: 'Huevos', val: sel.huevos?.name || 'Sin huevos' },
+      { label: 'Arroz',  val: sel.arroz ? 'Con arroz y pan' : 'Sin arroz' },
+      { label: 'Bebida', val: sel.bebida?.name || 'Sin bebida' },
+    ]
+    for (const row of rows) {
+      lines.push(`  ${row.label}: ${row.val}`)
+    }
+    if (item.note) lines.push(`  Nota: ${item.note}`)
+    lines.push('')
+  })
 
   lunches.forEach((item, idx) => {
     const isEspecial = item.kind === 'especial'

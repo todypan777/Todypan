@@ -63,9 +63,30 @@ export async function createCustomerOrder({ cart, total, subtotal, surcharge, pa
     let kind = 'corriente'
     if (it.kind === 'especial') kind = 'especial'
     else if (it.kind === 'addon' && validAddonTypes.has(it.addonType)) kind = 'addon'
+    else if (it.kind === 'breakfast') kind = 'breakfast'
     const out = {
       kind,
       price: Number(it.price) || 0,
+    }
+    // Desayuno: guardamos solo selecciones válidas (caldo/huevos/arroz/bebida)
+    // + opcional comboId/comboName para que admin/cocina vean el combo aplicado.
+    if (kind === 'breakfast') {
+      if (it.selections) {
+        const sel = {}
+        if (it.selections.caldo?.id)  sel.caldo  = { id: String(it.selections.caldo.id), name: String(it.selections.caldo.name || '') }
+        if (it.selections.huevos?.id) sel.huevos = {
+          id: String(it.selections.huevos.id),
+          name: String(it.selections.huevos.name || ''),
+          ...(it.selections.huevos.isRanchero ? { isRanchero: true } : {}),
+        }
+        if (it.selections.arroz?.id)  sel.arroz  = { id: String(it.selections.arroz.id),  name: String(it.selections.arroz.name || '') }
+        if (it.selections.bebida?.id) sel.bebida = { id: String(it.selections.bebida.id), name: String(it.selections.bebida.name || '') }
+        out.selections = sel
+      }
+      if (it.comboId)   out.comboId   = String(it.comboId)
+      if (it.comboName) out.comboName = String(it.comboName)
+      if (it.note) out.note = it.note.toString().trim() || null
+      return out
     }
     if (kind === 'especial') {
       // Nuevo modelo: el especial tiene selections (soup, especial, salad)

@@ -25,11 +25,13 @@ export default function LunchTypeChooserModal({
   corrienteAvailable, corrientePrice,
   specialActive, specialDescription, specialPrice,
   addonAvailable,
+  breakfastAvailable = false, breakfastPrice = 0,
   hidePrices = false,
   onCancel,
   onPickCorriente,
   onPickSpecial,
   onPickAddon,
+  onPickBreakfast,
 }) {
   // Bloquear scroll del body mientras está abierto
   useEffect(() => {
@@ -93,6 +95,18 @@ export default function LunchTypeChooserModal({
           flex: 1, overflowY: 'auto',
           padding: '16px', display: 'flex', flexDirection: 'column', gap: 12,
         }}>
+          {breakfastAvailable && (
+            <ChoiceButton
+              emoji="☕"
+              title="Desayuno"
+              subtitle="Caldo + huevos + arroz + bebida · 4 pasos"
+              priceLabel={hidePrices ? null : `Desde ${fmtCOP(breakfastPrice)}`}
+              accentBg="#FFF7E6"
+              accentBorder="#F4E0BC"
+              accentColor={T.warn}
+              onClick={onPickBreakfast}
+            />
+          )}
           {corrienteAvailable && (
             <ChoiceButton
               emoji="🍽️"
@@ -130,7 +144,7 @@ export default function LunchTypeChooserModal({
             />
           )}
 
-          {!corrienteAvailable && !specialActive && !addonAvailable && (
+          {!corrienteAvailable && !specialActive && !addonAvailable && !breakfastAvailable && (
             <div style={{
               padding: '24px 18px', borderRadius: 16,
               background: '#fff', border: `1.5px dashed ${T.neutral[200]}`,

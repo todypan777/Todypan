@@ -5,23 +5,18 @@ import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getBogotaDateStr } from '../db'
 import { watchKitchenOrdersForDate } from '../kitchenOrders'
-import { CORRIENTE_CATEGORIES, CATEGORY_BY_ID } from '../menu'
+import { BREAKFAST_CATEGORIES, BREAKFAST_CATEGORY_BY_ID } from '../breakfast'
 
 // ──────────────────────────────────────────────────────────────
-// Pantalla "Almuerzos": estadísticas de venta del día para el admin.
-//   - Nav de fecha (mismo patrón que Registro).
-//   - Cuenta TODOS los kitchenOrders del día que no estén cancelados
-//     (pending + ready + delivered). El usuario quiere ver "lo que entró
-//     a cocina ese día" — incluye lo que aún se está cocinando.
-//   - Total general + corriente vs especial.
-//   - Por cada categoría: lista ordenada descendente con cuántas veces
-//     se pidió cada opción (carne asada 22, pollo 18, ...).
-//
-// Total combinado por panadería (sin desglose). Si en el futuro quieres
-// filtrar por sucursal, el watcher trae `branchId` y se filtra en cliente.
+// Pantalla "Desayunos": estadísticas de venta del día para el admin.
+//   - Nav de fecha (mismo patrón que Almuerzos.jsx).
+//   - Cuenta los kitchenOrders del día con kind === 'breakfast' que
+//     no estén cancelados.
+//   - Total general + cuántos combos vs armados.
+//   - Desglose por cada una de las 4 categorías (caldo, huevos, arroz, bebida).
 // ──────────────────────────────────────────────────────────────
 
-export default function Almuerzos() {
+export default function Desayunos() {
   const todayStr = getBogotaDateStr()
   const [date, setDate] = useState(todayStr)
   const [orders, setOrders] = useState([])
@@ -30,9 +25,8 @@ export default function Almuerzos() {
   useEffect(() => {
     setLoading(true)
     return watchKitchenOrdersForDate(date, list => {
-      // Solo almuerzos (kind 'menu' o 'special'). Los desayunos viven en
-      // su propia pantalla "Desayunos" para no mezclar métricas.
-      setOrders(list.filter(o => o.kind !== 'breakfast'))
+      // Solo desayunos
+      setOrders(list.filter(o => o.kind === 'breakfast'))
       setLoading(false)
     })
   }, [date])
@@ -52,9 +46,9 @@ export default function Almuerzos() {
 
   return (
     <div style={{ paddingBottom: 110 }}>
-      <ScreenHeader title="Almuerzos" subtitle="Estadísticas de venta" />
+      <ScreenHeader title="Desayunos" subtitle="Estadísticas de venta" />
 
-      {/* Navegador de fecha — mismo look que Registro para sentir continuidad */}
+      {/* Navegador de fecha */}
       <div style={{ padding: '0 16px 16px' }}>
         <div style={{
           borderRadius: 18, overflow: 'hidden',
@@ -71,7 +65,7 @@ export default function Almuerzos() {
             </button>
             <div style={{ textAlign: 'center' }}>
               <div style={{
-                fontSize: 11, fontWeight: 600, color: T.copper[300],
+                fontSize: 11, fontWeight: 600, color: '#F4E0BC',
                 letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 4,
               }}>
                 {isToday ? 'Hoy' : 'Fecha seleccionada'}
@@ -95,7 +89,6 @@ export default function Almuerzos() {
             </button>
           </div>
 
-          {/* Sub-bar con resumen rápido del día */}
           <div style={{
             padding: '10px 20px', background: T.neutral[50],
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -105,8 +98,8 @@ export default function Almuerzos() {
               {loading
                 ? 'Cargando…'
                 : stats.total === 0
-                  ? 'Sin almuerzos'
-                  : `${stats.total} ${stats.total === 1 ? 'almuerzo vendido' : 'almuerzos vendidos'}`}
+                  ? 'Sin desayunos'
+                  : `${stats.total} ${stats.total === 1 ? 'desayuno vendido' : 'desayunos vendidos'}`}
             </div>
             {stats.cancelled > 0 && (
               <div style={{ fontSize: 11.5, fontWeight: 600, color: T.neutral[500] }}>
@@ -121,22 +114,22 @@ export default function Almuerzos() {
       {isFuture ? (
         <EmptyState emoji="📅" title="Fecha futura" hint="Todavía no hay datos para ese día." />
       ) : loading ? (
-        <EmptyState emoji="🥣" title="Cargando…" hint="Buscando almuerzos del día." />
+        <EmptyState emoji="☕" title="Cargando…" hint="Buscando desayunos del día." />
       ) : stats.total === 0 ? (
         <EmptyState
-          emoji="🍽️"
-          title={isToday ? 'Aún no hay almuerzos hoy' : 'Sin ventas este día'}
+          emoji="🍳"
+          title={isToday ? 'Aún no hay desayunos hoy' : 'Sin ventas este día'}
           hint={isToday
             ? 'Cuando una cajera mande una comanda aparecerá aquí.'
-            : 'No se registraron almuerzos en esa fecha.'}
+            : 'No se registraron desayunos en esa fecha.'}
         />
       ) : (
         <>
-          {/* ── Total + breakdown corriente vs especial ── */}
+          {/* Total + breakdown combos vs armados */}
           <div style={{ padding: '0 16px 12px' }}>
             <Card padding={20} style={{ background: T.neutral[900], color: '#fff' }}>
               <div style={{
-                fontSize: 11, fontWeight: 700, color: T.copper[300],
+                fontSize: 11, fontWeight: 700, color: '#F4E0BC',
                 letterSpacing: 0.8, textTransform: 'uppercase',
               }}>
                 Total del día
@@ -148,14 +141,18 @@ export default function Almuerzos() {
               }}>
                 {stats.total}
                 <span style={{ fontSize: 18, fontWeight: 600, marginLeft: 10, color: 'rgba(255,255,255,0.7)' }}>
-                  {stats.total === 1 ? 'almuerzo' : 'almuerzos'}
+                  {stats.total === 1 ? 'desayuno' : 'desayunos'}
                 </span>
               </div>
               <div style={{
                 marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap',
               }}>
-                <SplitChip label="Corrientes" value={stats.corriente} accent={T.copper[300]} />
-                <SplitChip label="Especiales" value={stats.especial} accent="#FFD58A" emoji="⭐" />
+                {stats.combos > 0 && (
+                  <SplitChip label="Combos" value={stats.combos} accent="#FFD58A" emoji="⭐" />
+                )}
+                {stats.armados > 0 && (
+                  <SplitChip label="Armados" value={stats.armados} accent="#F4E0BC" />
+                )}
                 {stats.llevar > 0 && (
                   <SplitChip label="Para llevar" value={stats.llevar} accent="rgba(255,255,255,0.6)" emoji="📦" />
                 )}
@@ -163,22 +160,28 @@ export default function Almuerzos() {
             </Card>
           </div>
 
-          {/* ── Desglose por categoría ──
-              Una card por cada categoría con datos. Si una categoría no
-              se pidió en todo el día (raro), no se muestra. */}
-          <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {/* Especial primero si hay (es el más destacado) */}
-            {stats.byCategory.especial && (
+          {/* Combos vendidos */}
+          {stats.combosByName.length > 0 && (
+            <div style={{ padding: '0 16px 12px' }}>
               <CategoryCard
-                catId="especial"
-                breakdown={stats.byCategory.especial}
+                catEmoji="⭐"
+                catLabel="Combos vendidos"
+                breakdown={{ total: stats.combos, items: stats.combosByName }}
               />
-            )}
-            {/* Resto: en el orden de CORRIENTE_CATEGORIES para consistencia */}
-            {CORRIENTE_CATEGORIES.map(cat => {
+            </div>
+          )}
+
+          {/* Desglose por categoría */}
+          <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {BREAKFAST_CATEGORIES.map(cat => {
               const b = stats.byCategory[cat.id]
               if (!b) return null
-              return <CategoryCard key={cat.id} catId={cat.id} breakdown={b} />
+              return <CategoryCard
+                key={cat.id}
+                catEmoji={cat.emoji}
+                catLabel={cat.label}
+                breakdown={b}
+              />
             })}
           </div>
         </>
@@ -191,23 +194,18 @@ export default function Almuerzos() {
 // Stats
 // ──────────────────────────────────────────────────────────────
 
-/**
- * Recorre los orders del día y devuelve:
- *   { total, corriente, especial, llevar, cancelled, byCategory }
- *
- * byCategory: { [catId]: { total, items: [{ name, count, isCancelledOpt }] } }
- *   - 'items' viene ordenado desc por count.
- *   - 'isCancelledOpt' es para opciones tipo "Sin sopa" (cajera quitó la cat).
- */
 function computeStats(orders) {
   const out = {
     total: 0,
-    corriente: 0,
-    especial: 0,
+    combos: 0,
+    armados: 0,
     llevar: 0,
     cancelled: 0,
     byCategory: {},
+    combosByName: [],
   }
+
+  const comboCounts = {}
 
   for (const o of orders) {
     if (o.status === 'cancelled') {
@@ -216,17 +214,33 @@ function computeStats(orders) {
     }
     out.total += 1
     if (o.destination === 'llevar') out.llevar += 1
-    if (o.kind === 'special') {
-      out.especial += 1
-      addSpecialToStats(o, out)
+
+    if (o.comboId || o.comboName) {
+      out.combos += 1
+      const key = o.comboId || o.comboName
+      if (!comboCounts[key]) {
+        comboCounts[key] = { key, name: o.comboName || key, count: 0 }
+      }
+      comboCounts[key].count += 1
     } else {
-      out.corriente += 1
-      addMenuToStats(o, out)
+      out.armados += 1
+    }
+
+    const sel = o.selections || {}
+    for (const cat of BREAKFAST_CATEGORIES) {
+      const value = sel[cat.id]
+      const bucket = ensureBucket(out, cat.id)
+      if (value && value.name) {
+        bumpOption(bucket, `id:${value.id || value.name}`, value.name)
+      } else {
+        // Sin esta categoría: lo contamos como "Sin X" para que el admin vea
+        // qué se omite con frecuencia.
+        bumpOption(bucket, '__sin__', `Sin ${cat.label.toLowerCase()}`, { isSinOpt: true })
+      }
     }
   }
 
-  // Ordenar items dentro de cada categoría por count desc; "Sin X" al
-  // final aunque sea numeroso (es info distinta, no compite con opciones).
+  // Ordenar items dentro de cada categoría
   for (const catId of Object.keys(out.byCategory)) {
     const bucket = out.byCategory[catId]
     bucket.items = Object.entries(bucket.counts).map(([key, count]) => ({
@@ -234,18 +248,20 @@ function computeStats(orders) {
       name: bucket.names[key] || key,
       count,
       isSinOpt: bucket.sinKeys.has(key),
-      isMixto: bucket.mixtoKeys.has(key),
     }))
     bucket.items.sort((a, b) => {
       if (a.isSinOpt !== b.isSinOpt) return a.isSinOpt ? 1 : -1
       return b.count - a.count
     })
-    // Limpiar accumuladores internos antes de devolver.
     delete bucket.counts
     delete bucket.names
     delete bucket.sinKeys
-    delete bucket.mixtoKeys
   }
+
+  // Lista de combos vendidos ordenada desc
+  out.combosByName = Object.values(comboCounts)
+    .sort((a, b) => b.count - a.count)
+    .map(c => ({ key: c.key, name: c.name, count: c.count, isSinOpt: false }))
 
   return out
 }
@@ -257,87 +273,16 @@ function ensureBucket(out, catId) {
       counts: {},
       names: {},
       sinKeys: new Set(),
-      mixtoKeys: new Set(),
     }
   }
   return out.byCategory[catId]
 }
 
-function bumpOption(bucket, key, displayName, { isSinOpt = false, isMixto = false } = {}) {
+function bumpOption(bucket, key, displayName, { isSinOpt = false } = {}) {
   bucket.counts[key] = (bucket.counts[key] || 0) + 1
   bucket.names[key] = displayName
   if (isSinOpt) bucket.sinKeys.add(key)
-  if (isMixto) bucket.mixtoKeys.add(key)
   bucket.total += 1
-}
-
-function addMenuToStats(order, out) {
-  const sel = order.selections || {}
-  for (const cat of CORRIENTE_CATEGORIES) {
-    const value = sel[cat.id]
-    const bucket = ensureBucket(out, cat.id)
-
-    // Principio puede ser array (mixto), objeto único, o null.
-    if (cat.id === 'principio') {
-      const arr = Array.isArray(value) ? value.filter(Boolean) : (value ? [value] : [])
-      if (arr.length === 0) {
-        // Principio es opcional — si no eligió, no contamos nada (no es
-        // "Sin principio" porque la categoría misma es opcional).
-        continue
-      }
-      if (arr.length >= 2) {
-        // Mixto: una entrada propia con nombre combinado, ordenando
-        // alfabéticamente para que "X+Y" y "Y+X" cuenten igual.
-        const names = arr.map(p => p.name).sort((a, b) => a.localeCompare(b))
-        const key = `mixto:${names.join('|')}`
-        bumpOption(bucket, key, `Mixto: ${names.join(' / ')}`, { isMixto: true })
-      } else {
-        const p = arr[0]
-        bumpOption(bucket, `id:${p.id || p.name}`, p.name)
-      }
-      continue
-    }
-
-    // Resto de categorías: objeto único o null.
-    if (value && value.name) {
-      bumpOption(bucket, `id:${value.id || value.name}`, value.name)
-    } else if (cat.alwaysServed && (value === null || value === undefined)) {
-      // alwaysServed=true significa que el cliente lo recibe por defecto.
-      // Si la cajera lo quitó, eso es info útil: "Sin acompañante: 5".
-      bumpOption(bucket, '__sin__', `Sin ${cat.label.toLowerCase()}`, { isSinOpt: true })
-    }
-    // Si no es alwaysServed y viene null, no contamos nada (sopa/proteína
-    // ausentes en un corriente sería raro pero no lo inventamos).
-  }
-}
-
-function addSpecialToStats(order, out) {
-  const sel = order.selections || {}
-
-  // 1. La proteína/plato especial → categoría 'especial'.
-  const esp = sel.especial
-  const bucketEsp = ensureBucket(out, 'especial')
-  if (esp && esp.name) {
-    bumpOption(bucketEsp, `id:${esp.id || esp.name}`, esp.name)
-  } else if (order.description) {
-    // Especiales viejos sin selections.especial — usar description.
-    bumpOption(bucketEsp, `desc:${order.description.slice(0, 40)}`, order.description)
-  } else {
-    bumpOption(bucketEsp, '__sin__', 'Sin descripción', { isSinOpt: true })
-  }
-
-  // 2. Sopa y ensalada van a las MISMAS categorías que el corriente
-  //    (la cocinera publica una sola lista para ambos).
-  for (const catId of ['soup', 'salad']) {
-    const cat = CATEGORY_BY_ID[catId]
-    const value = sel[catId]
-    const bucket = ensureBucket(out, catId)
-    if (value && value.name) {
-      bumpOption(bucket, `id:${value.id || value.name}`, value.name)
-    } else if (cat?.alwaysServed && (value === null || value === undefined)) {
-      bumpOption(bucket, '__sin__', `Sin ${cat.label.toLowerCase()}`, { isSinOpt: true })
-    }
-  }
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -366,13 +311,7 @@ function SplitChip({ label, value, accent, emoji }) {
   )
 }
 
-function CategoryCard({ catId, breakdown }) {
-  // El 'especial' no existe en CATEGORY_BY_ID con su mismo label visible
-  // ("Almuerzo Especial") — usar metadata custom para que la card luzca.
-  const cat = CATEGORY_BY_ID[catId]
-  const emoji = cat?.emoji || '🍽️'
-  const label = catId === 'especial' ? 'Almuerzo Especial' : (cat?.label || catId)
-
+function CategoryCard({ catEmoji, catLabel, breakdown }) {
   return (
     <Card padding={0}>
       <div style={{
@@ -380,16 +319,16 @@ function CategoryCard({ catId, breakdown }) {
         borderBottom: `1px solid ${T.neutral[100]}`,
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
-        <span style={{ fontSize: 22, lineHeight: 1 }}>{emoji}</span>
+        <span style={{ fontSize: 22, lineHeight: 1 }}>{catEmoji}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontSize: 14.5, fontWeight: 800, color: T.neutral[900],
             letterSpacing: -0.2,
           }}>
-            {label}
+            {catLabel}
           </div>
           <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 1 }}>
-            {breakdown.total} {breakdown.total === 1 ? 'almuerzo' : 'almuerzos'}
+            {breakdown.total} {breakdown.total === 1 ? 'desayuno' : 'desayunos'}
           </div>
         </div>
       </div>
@@ -401,7 +340,6 @@ function CategoryCard({ catId, breakdown }) {
             count={it.count}
             isLast={i === breakdown.items.length - 1}
             isSinOpt={it.isSinOpt}
-            isMixto={it.isMixto}
             total={breakdown.total}
           />
         ))}
@@ -410,14 +348,11 @@ function CategoryCard({ catId, breakdown }) {
   )
 }
 
-function BreakdownRow({ name, count, total, isLast, isSinOpt, isMixto }) {
-  // Barra de proporción minimalista en el fondo para leer rápido.
+function BreakdownRow({ name, count, total, isLast, isSinOpt }) {
   const pct = total > 0 ? Math.round((count / total) * 100) : 0
   const tone = isSinOpt
     ? { name: T.bad, bar: T.bad + '18' }
-    : isMixto
-      ? { name: T.copper[700], bar: T.copper[100] + '88' }
-      : { name: T.neutral[800], bar: T.copper[100] + '55' }
+    : { name: T.neutral[800], bar: '#FFF7E6' + '88' }
 
   return (
     <div style={{
@@ -427,7 +362,6 @@ function BreakdownRow({ name, count, total, isLast, isSinOpt, isMixto }) {
       display: 'flex', alignItems: 'center', gap: 12,
       overflow: 'hidden',
     }}>
-      {/* Fondo gradiente con la proporción */}
       <div style={{
         position: 'absolute', inset: 0,
         width: `${pct}%`,

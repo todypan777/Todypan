@@ -234,8 +234,9 @@ service cloud.firestore {
     }
 
     // Lectura PÚBLICA (sin auth) para la página /menu de clientes.
-    // Cubre tanto los docs por fecha YYYY-MM-DD como `corriente_config`
-    // (precios persistentes). Las escrituras siguen reservadas.
+    // Cubre los docs por fecha YYYY-MM-DD, `corriente_config` (precios
+    // persistentes del almuerzo) y `breakfast_config` (precios + combos
+    // del desayuno). Las escrituras siguen reservadas al equipo.
     match /dailyMenu/{date} {
       allow read: if true;
       allow write: if isAdmin() || isApprovedStaff();

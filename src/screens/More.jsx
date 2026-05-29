@@ -33,6 +33,18 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'desayunos', label: 'Desayunos', desc: 'Cuántos desayunos vendidos y qué combos se pidieron',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          {/* Taza con vapor */}
+          <path d="M5 8 H15 V13 Q15 16 12 16 H8 Q5 16 5 13 Z" stroke={T.copper[600]} strokeWidth="1.6" fill="none" strokeLinejoin="round"/>
+          <path d="M15 9 H17 Q18 9 18 10 V11 Q18 12 17 12 H15" stroke={T.copper[600]} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+          <path d="M8 4 Q8 6 9 6 Q10 6 10 4" stroke={T.copper[600]} strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+          <path d="M11 4 Q11 6 12 6 Q13 6 13 4" stroke={T.copper[600]} strokeWidth="1.4" fill="none" strokeLinecap="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'deudores', label: 'Deudores', desc: 'Personas que deben y registrar pagos',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

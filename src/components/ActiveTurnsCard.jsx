@@ -62,6 +62,22 @@ const ASSIST_STORAGE_KEY = 'todypan_assist_session_id'
 // sopa/principio) se concatenan al `note` para que viajen a cocina sin
 // tocar el modelo de kitchenOrders.
 function customerOrderItemToLunchPayload(item) {
+  // Desayuno: kind 'breakfast', selections con caldo/huevos/arroz/bebida.
+  // El cliente web siempre pide para llevar.
+  if (item.kind === 'breakfast') {
+    return {
+      kind: 'breakfast',
+      productId: '__breakfast__',
+      productName: item.comboName || 'Desayuno',
+      destination: 'llevar',
+      selections: item.selections || null,
+      description: null,
+      price: Number(item.price) || 0,
+      note: (item.note || '').toString().trim() || null,
+      comboId: item.comboId || null,
+      comboName: item.comboName || null,
+    }
+  }
   const isEspecial = item.kind === 'especial'
   // Ambos (corriente y especial) pueden tener replacements en el note
   // (corriente: soup/principio, especial: solo soup).

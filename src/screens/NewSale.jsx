@@ -28,9 +28,11 @@ import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrde
 import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getSpecialState, getAddonPrices, countConsumedByItem } from '../menu'
 import CashierLunchWizard from '../components/CashierLunchWizard'
 import CashierSpecialWizard from '../components/CashierSpecialWizard'
+import CashierBreakfastWizard from '../components/CashierBreakfastWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
+import { watchBreakfastConfig, getBreakfastState } from '../breakfast'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -194,9 +196,12 @@ export default function NewSale({
   const [dailyMenu, setDailyMenu] = useState(null)
   const [allMenuItems, setAllMenuItems] = useState([])
   const [corrienteConfig, setCorrienteConfig] = useState(null)
+  // Config persistente del desayuno (precios + combos + switch active).
+  const [breakfastConfig, setBreakfastConfig] = useState(null)
   useEffect(() => watchDailyMenu(today, setDailyMenu), [today])
   useEffect(() => watchMenuItems(setAllMenuItems), [])
   useEffect(() => watchCorrienteConfig(setCorrienteConfig), [])
+  useEffect(() => watchBreakfastConfig(setBreakfastConfig), [])
 
   // Comandas de hoy → para saber cuántas porciones de cada opción ya se
   // vendieron y respetar el "quedan N" que fijó la cocinera (avisar/bloquear).
@@ -254,6 +259,14 @@ export default function NewSale({
     (addonHasPrice(addonPrices.protein) && proteinOptionsForDay.length > 0)
   )
 
+  // Estado del desayuno — el switch global y precios mínimos vienen de la
+  // config persistente. Si está available, agregamos el producto virtual
+  // "Desayuno" al catálogo.
+  const breakfastState = useMemo(
+    () => getBreakfastState(breakfastConfig),
+    [breakfastConfig]
+  )
+
   // Catálogo virtual: UN solo producto "Almuerzo" que al tocar abre el
   // chooser de tipo (corriente / especial / adición). Esto unifica el
   // flujo y permite que el cliente solo pida UNA sopa sin almuerzo
@@ -284,6 +297,29 @@ export default function NewSale({
     ]
   }, [catalog, corrienteState, specialFromDay, anyAddonAvailable])
 
+  // Catálogo enriquecido FINAL: si el desayuno está activo, lo agregamos como
+  // producto virtual aparte ("Desayuno"). Lo ponemos al principio para que la
+  // cajera lo encuentre rápido al buscar o al ver el top de la lista.
+  const enrichedCatalogWithBreakfast = useMemo(() => {
+    if (!breakfastState.available) return enrichedCatalog
+    const breakfastEntry = {
+      id: '__breakfast_chooser__',
+      source: 'breakfast',
+      name: 'Desayuno',
+      isBreakfast: true,
+      priceMesa: breakfastState.priceMesaFrom || 0,
+      priceLlevar: breakfastState.priceLlevarFrom || 0,
+    }
+    // Si ya hay almuerzo virtual, lo ponemos primero (es lo más vendido en
+    // hora pico). Si no hay almuerzo virtual, desayuno encabeza.
+    const hasLunch = enrichedCatalog.some(p => p.id === '__lunch_chooser__')
+    if (hasLunch) {
+      const [lunch, ...rest] = enrichedCatalog
+      return [lunch, breakfastEntry, ...rest]
+    }
+    return [breakfastEntry, ...enrichedCatalog]
+  }, [enrichedCatalog, breakfastState])
+
   // ── Acceso rápido a almuerzos en hora pico ──────────────────────
   // De 11am a 2:59pm (Bogotá), si la cocinera publicó menú/especial,
   // mostramos botones grandes debajo del buscador para que la cajera
@@ -301,20 +337,20 @@ export default function NewSale({
     if (!q) {
       // Sin búsqueda: las de venta libre (pan, etc.) van de primeras para que
       // la cajera las agregue rápido. El resto conserva su orden (sort estable).
-      return [...enrichedCatalog]
+      return [...enrichedCatalogWithBreakfast]
         .sort((a, b) => (b.freeAmount === true) - (a.freeAmount === true))
         .slice(0, 12)
     }
     // Ordena por relevancia: el que empieza con la búsqueda va primero,
     // el que solo la contiene va al final. Así "Pan" sale arriba aunque
     // existan "Empanada", "Panela", etc.
-    return enrichedCatalog
+    return enrichedCatalogWithBreakfast
       .map(p => ({ p, score: scoreNameMatch(normalizeName(p.name), q) }))
       .filter(x => x.score >= 0)
       .sort((a, b) => a.score - b.score || a.p.name.localeCompare(b.p.name))
       .slice(0, 30)
       .map(x => x.p)
-  }, [enrichedCatalog, query])
+  }, [enrichedCatalogWithBreakfast, query])
 
   const exactMatch = filtered.some(p => normalizeName(p.name) === normalizeName(query))
   const showCreateOption = query.trim().length >= 2 && !exactMatch
@@ -347,6 +383,13 @@ export default function NewSale({
     // (corriente / especial / adición) para que la cajera elija.
     if (product.isLunch) {
       setLunchChooserOpen(true)
+      setQuery('')
+      return
+    }
+    // "Desayuno" virtual: abre directo el wizard. Tiene un solo tipo (no hay
+    // sub-elección como en el almuerzo) así que saltamos el chooser.
+    if (product.isBreakfast) {
+      handleChooseBreakfast()
       setQuery('')
       return
     }
@@ -677,6 +720,15 @@ export default function NewSale({
     setLunchModal(null)
     setAddonsModalState('menu')
   }
+  // Abre el wizard de DESAYUNO (no hay subtipos — un solo flujo de 4 pasos).
+  function handleChooseBreakfast() {
+    setLunchChooserOpen(false)
+    setAddonsModalState(null)
+    setLunchModal({
+      kind: 'breakfast',
+      product: { name: 'Desayuno' },
+    })
+  }
 
   // Eliminar un almuerzo de la comanda en construcción (antes de enviarla a
   // cocina). Permite a la cajera corregir un error sin perder los demás.
@@ -764,6 +816,22 @@ export default function NewSale({
       return
     }
 
+    if (order.kind === 'breakfast') {
+      setLunchModal({
+        kind: 'breakfast',
+        product: { name: 'Desayuno' },
+        edit: {
+          orderId: order.id,
+          cartKey: item.key,
+          initialSelections: order.selections || {},
+          initialNote: order.commandaNote || '',
+          initialDestination: order.destination || null,
+          initialPrice: Number(order.price) || 0,
+        },
+      })
+      return
+    }
+
     // kind 'menu' — reconstruir el producto con los precios ACTUALES del
     // corriente para que pueda re-cotizar si cambia mesa↔llevar. Si el
     // corriente ya no está disponible, caemos al precio del propio pedido.
@@ -797,10 +865,23 @@ export default function NewSale({
 
     updateKitchenOrder(edit.orderId, {
       destination: payload.destination,
-      selections: payload.kind === 'menu' ? payload.selections : undefined,
+      // Tanto 'menu' como 'breakfast' usan selections para sus categorías;
+      // 'special' además puede llevar description (texto libre).
+      selections: (payload.kind === 'menu' || payload.kind === 'breakfast')
+        ? payload.selections
+        : undefined,
       description: payload.kind === 'special' ? payload.description : undefined,
       note: payload.note,
       price: payload.price,
+      // Para breakfast el productName/comboId/comboName pueden cambiar al
+      // editar (combo se aplica o se deshace). Sin esta sincronización, la
+      // cocina mostraría un header desactualizado ("Combo Costilla" para un
+      // almuerzo que ya no es combo).
+      ...(payload.kind === 'breakfast' ? {
+        productName: payload.productName,
+        comboId: payload.comboId || null,
+        comboName: payload.comboName || null,
+      } : {}),
     }).catch(err => console.warn('[NewSale] updateKitchenOrder deferred:', err?.message || err))
 
     const destLabel = payload.destination === 'llevar' ? '📦 Para llevar' : '🍽️ Mesa'
@@ -809,9 +890,14 @@ export default function NewSale({
       return {
         ...it,
         name: `${payload.productName} · ${destLabel}`,
+        // Sin esta línea, el shim mostraba el productName viejo en otros
+        // lugares que leen lunchProductName (p.ej. resúmenes del cierre).
+        lunchProductName: payload.productName,
         unitPrice: Number(payload.price) || 0,
         lunchDestination: payload.destination,
-        lunchSelections: payload.kind === 'menu' ? payload.selections : null,
+        lunchSelections: (payload.kind === 'menu' || payload.kind === 'breakfast')
+          ? payload.selections
+          : null,
         lunchDescription: payload.kind === 'special' ? payload.description : null,
         commandaNote: payload.note || null,
       }
@@ -930,6 +1016,8 @@ export default function NewSale({
           price: lunch.price,
           productId: lunch.productId,
           productName: lunch.productName,
+          comboId: lunch.comboId || null,
+          comboName: lunch.comboName || null,
           commandaId,
           // commandaNote es per-almuerzo. Mantenemos el nombre del campo
           // por backward compat con la cocina que ya lo lee.
@@ -1311,19 +1399,34 @@ export default function NewSale({
             )}
             {filtered.map((p, i) => {
               const isLunchItem = p.isLunch === true
+              const isBreakfastItem = p.isBreakfast === true
+              // Producto estructurado: almuerzo (corriente/especial chooser) o desayuno.
+              // Ambos abren wizard al tocar y tienen su propio styling, no muestran
+              // "Poner precio" como un producto normal sin precio.
+              const isStructured = isLunchItem || isBreakfastItem
               const isSpecial = p.lunchKind === 'special'
-              const isFreeAmount = !isLunchItem && p.freeAmount === true
-              const priceHere = isLunchItem
+              const isFreeAmount = !isStructured && p.freeAmount === true
+              const priceHere = isStructured
                 ? Number(p.priceMesa) || 0
                 : (isFreeAmount ? null : getProductPrice(p, branchId))
-              const needsPrice = !isLunchItem && !isFreeAmount && priceHere === null
+              const needsPrice = !isStructured && !isFreeAmount && priceHere === null
+              const structuredBg = isBreakfastItem ? '#FFF7E6'
+                : (isSpecial ? '#FFF7E6' : T.copper[50])
+              const structuredBorder = isBreakfastItem ? '#F4E0BC'
+                : (isSpecial ? '#F4E0BC' : T.copper[100])
+              const structuredAccent = isBreakfastItem ? T.warn
+                : (isSpecial ? T.warn : T.copper[700])
+              const structuredEmoji = isBreakfastItem ? '☕'
+                : (isSpecial ? '⭐' : '🍽️')
+              const structuredBadge = isBreakfastItem ? 'Desayuno'
+                : (isSpecial ? 'Especial' : 'Almuerzo')
               return (
                 <button
                   key={p.source + '_' + p.id}
                   onClick={() => handleSelectProduct(p)}
                   style={{
                     width: '100%', padding: '12px 16px',
-                    background: isLunchItem ? (isSpecial ? '#FFF7E6' : T.copper[50]) : 'transparent',
+                    background: isStructured ? structuredBg : 'transparent',
                     border: 'none',
                     borderBottom: i < filtered.length - 1 || showCreateOption ? `0.5px solid ${T.neutral[100]}` : 'none',
                     cursor: 'pointer', fontFamily: 'inherit',
@@ -1331,31 +1434,33 @@ export default function NewSale({
                     textAlign: 'left',
                   }}
                 >
-                  {isLunchItem && (
+                  {isStructured && (
                     <div style={{
                       width: 32, height: 32, borderRadius: 10, flexShrink: 0,
                       background: '#fff',
-                      border: `1px solid ${isSpecial ? '#F4E0BC' : T.copper[100]}`,
+                      border: `1px solid ${structuredBorder}`,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       fontSize: 16,
                     }}>
-                      {isSpecial ? '⭐' : '🍽️'}
+                      {structuredEmoji}
                     </div>
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
-                      fontSize: 14, fontWeight: isLunchItem ? 800 : 600,
-                      color: isLunchItem ? (isSpecial ? T.warn : T.copper[700]) : T.neutral[900],
+                      fontSize: 14, fontWeight: isStructured ? 800 : 600,
+                      color: isStructured ? structuredAccent : T.neutral[900],
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                     }}>
                       {p.name}
                     </div>
-                    {isLunchItem && !hidePrices && (
+                    {isStructured && !hidePrices && (
                       <div style={{
                         fontSize: 11, color: T.neutral[500], marginTop: 1,
                         letterSpacing: 0.3,
                       }}>
-                        Mesa {fmtCOP(p.priceMesa || 0)} · Llevar {fmtCOP(p.priceLlevar || p.priceMesa || 0)}
+                        {isBreakfastItem
+                          ? `Desde ${fmtCOP(p.priceMesa || 0)} · Llevar desde ${fmtCOP(p.priceLlevar || p.priceMesa || 0)}`
+                          : `Mesa ${fmtCOP(p.priceMesa || 0)} · Llevar ${fmtCOP(p.priceLlevar || p.priceMesa || 0)}`}
                       </div>
                     )}
                     {isFreeAmount && !hidePrices && (
@@ -1369,14 +1474,14 @@ export default function NewSale({
                       </div>
                     )}
                   </div>
-                  {isLunchItem ? (
+                  {isStructured ? (
                     <div style={{
-                      fontSize: 11, fontWeight: 700, color: isSpecial ? T.warn : T.copper[700],
+                      fontSize: 11, fontWeight: 700, color: structuredAccent,
                       background: '#fff', padding: '4px 10px', borderRadius: 999,
                       letterSpacing: 0.3, flexShrink: 0,
-                      border: `1px solid ${isSpecial ? '#F4E0BC' : T.copper[200]}`,
+                      border: `1px solid ${structuredBorder}`,
                     }}>
-                      {isSpecial ? 'Especial' : 'Almuerzo'}
+                      {structuredBadge}
                     </div>
                   ) : isFreeAmount ? (
                     <div style={{
@@ -1684,6 +1789,28 @@ export default function NewSale({
           onAdd={handleAddLunchToCommanda}
         />
       )}
+      {lunchModal?.kind === 'breakfast' && (
+        <CashierBreakfastWizard
+          currentCount={lunchCommanda.length}
+          hidePrices={hidePrices}
+          editMode={!!lunchModal.edit}
+          initialSelections={lunchModal.edit?.initialSelections || null}
+          initialNote={lunchModal.edit?.initialNote || ''}
+          initialDestination={lunchModal.edit?.initialDestination || null}
+          onSaveEdit={handleSaveKitchenEdit}
+          onCancel={() => {
+            if (lunchModal.edit) {
+              setLunchModal(null)
+              return
+            }
+            setLunchModal(null)
+            if (lunchCommanda.length > 0) {
+              openSendCommandaModal()
+            }
+          }}
+          onAdd={handleAddLunchToCommanda}
+        />
+      )}
 
       {/* Chooser de tipo: aparece al tocar "Almuerzo" del catálogo o
           al pedir "+ Otro" desde SendCommandaModal. Filtra opciones
@@ -1699,6 +1826,8 @@ export default function NewSale({
             : ''}
           specialPrice={Number(specialFromDay?.priceMesa) || 0}
           addonAvailable={anyAddonAvailable}
+          breakfastAvailable={breakfastState.available}
+          breakfastPrice={breakfastState.priceMesaFrom}
           onCancel={() => {
             setLunchChooserOpen(false)
             // Si la cajera cancela pero ya tiene almuerzos, vuelve al send
@@ -1710,6 +1839,7 @@ export default function NewSale({
           onPickCorriente={handleChooseCorriente}
           onPickSpecial={handleChooseSpecial}
           onPickAddon={handleChooseAddon}
+          onPickBreakfast={handleChooseBreakfast}
         />
       )}
 
@@ -2126,6 +2256,27 @@ function buildLunchSummary(item) {
   const rows = []
   if (item.lunchKind === 'special' && item.lunchDescription) {
     rows.push({ icon: '⭐', label: 'Especial', value: item.lunchDescription })
+  } else if (item.lunchKind === 'breakfast' && item.lunchSelections) {
+    // Desayuno: 4 categorías propias. Cualquiera puede ir vacía y se
+    // muestra como "SIN X" — la cajera debe ver claramente qué falta.
+    const sel = item.lunchSelections
+    const CATS = [
+      { id: 'caldo',  icon: '🍲', label: 'Caldo' },
+      { id: 'huevos', icon: '🥚', label: 'Huevos' },
+      { id: 'arroz',  icon: '🍚', label: 'Arroz con pan' },
+      { id: 'bebida', icon: '☕', label: 'Bebida' },
+    ]
+    for (const cat of CATS) {
+      const v = sel[cat.id]
+      if (v && v.name) {
+        rows.push({ icon: cat.icon, label: cat.label, value: v.name })
+      } else {
+        rows.push({
+          icon: cat.icon, label: cat.label,
+          value: `SIN ${cat.label.toUpperCase()}`, isSin: true,
+        })
+      }
+    }
   } else if (item.lunchKind === 'menu' && item.lunchSelections) {
     const sel = item.lunchSelections
     const ICONS = { soup: '🥣', principio: '🫘', protein: '🍗', side: '🍚', salad: '🥗', juice: '🥤' }

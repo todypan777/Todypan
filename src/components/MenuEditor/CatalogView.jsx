@@ -12,6 +12,7 @@ import {
   ModalOverlay, ModalCard, ModalTitle, ModalSub, ModalActions,
   FieldLabel, inputStyle, btnPrimary, btnSecondary, btnGhost, ErrorBox,
 } from './ui'
+import BreakfastPricesCard from './BreakfastPricesCard'
 
 // ──────────────────────────────────────────────────────────────
 // Editor del catálogo permanente + precios del corriente.
@@ -47,6 +48,11 @@ export default function CatalogView({ authUser, userDoc }) {
 
   return (
     <div style={{ padding: '16px 14px 80px' }}>
+      <BreakfastPricesCard
+        authUser={authUser}
+        editorName={editorName}
+      />
+
       <CorrientePricesCard
         config={corrienteConfig}
         authUser={authUser}

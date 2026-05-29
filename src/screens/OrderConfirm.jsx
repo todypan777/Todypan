@@ -243,9 +243,12 @@ function OrderSummary({ order }) {
 function OrderItemRow({ item, index, isLast }) {
   const isEspecial = item.kind === 'especial'
   const isAddon = item.kind === 'addon'
+  const isBreakfast = item.kind === 'breakfast'
   const title = isAddon
     ? formatAddonLine(item) || 'Adicional'
-    : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
+    : isBreakfast
+      ? (item.comboName || 'Desayuno')
+      : isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente'
   return (
     <div style={{
       padding: '10px 0',
@@ -318,7 +321,36 @@ function OrderItemRow({ item, index, isLast }) {
         </div>
       )}
 
-      {!isEspecial && !isAddon && item.selections && (
+      {isBreakfast && item.selections && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {[
+            { id: 'caldo',  label: 'Caldo' },
+            { id: 'huevos', label: 'Huevos' },
+            { id: 'arroz',  label: 'Arroz' },
+            { id: 'bebida', label: 'Bebida' },
+          ].map(cat => {
+            const val = item.selections[cat.id]
+            return (
+              <div key={cat.id} style={{ display: 'flex', gap: 6, fontSize: 11.5, lineHeight: 1.4 }}>
+                <span style={{
+                  color: T.neutral[500], fontWeight: 700,
+                  minWidth: 84, flexShrink: 0,
+                }}>
+                  {cat.label}
+                </span>
+                <span style={{
+                  flex: 1, color: val ? T.neutral[800] : T.bad,
+                  fontWeight: val ? 600 : 800, wordBreak: 'break-word',
+                }}>
+                  {val ? val.name : `Sin ${cat.label.toLowerCase()}`}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {!isEspecial && !isAddon && !isBreakfast && item.selections && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {CORRIENTE_CATEGORIES.map(cat => {
             const val = item.selections[cat.id]

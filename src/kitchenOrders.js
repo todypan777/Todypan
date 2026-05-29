@@ -56,6 +56,10 @@ function timeOf(o) {
   return o.createdAt?.toMillis?.() ?? o.createdAtClient ?? 0
 }
 
+// Tipos de orden permitidos. 'menu' y 'special' son del almuerzo; 'breakfast'
+// es el desayuno (con sus propias categorías caldo/huevos/arroz/bebida).
+const VALID_ORDER_KINDS = new Set(['menu', 'special', 'breakfast'])
+
 /** Crea una orden de cocina. Devuelve { id }. */
 export async function createKitchenOrder(payload) {
   const data = {
@@ -72,12 +76,15 @@ export async function createKitchenOrder(payload) {
     cashierUid: payload.cashierUid,
     cashierName: payload.cashierName || null,
     destination: payload.destination === 'llevar' ? 'llevar' : 'mesa',
-    kind: payload.kind === 'special' ? 'special' : 'menu',
+    kind: VALID_ORDER_KINDS.has(payload.kind) ? payload.kind : 'menu',
     selections: payload.selections || null,
     description: payload.description?.trim() || null,
     price: Number(payload.price) || 0,
     productId: payload.productId || null,
     productName: payload.productName || null,
+    // Combo aplicado (solo desayuno por ahora). null si no matcheó combo.
+    comboId: payload.comboId || null,
+    comboName: payload.comboName || null,
     commandaId: payload.commandaId,
     commandaNote: payload.commandaNote?.trim() || null,
     status: 'pending',
@@ -145,12 +152,15 @@ export async function cancelKitchenOrder(id, { reason, cancelledBy, cancelledByN
  * llamarse cuando el pedido sigue 'pending' — la UI lo verifica con el
  * estado en vivo antes de abrir el editor.
  *
- * payload: { destination, selections?, description?, note?, price }
+ * payload: { destination, selections?, description?, note?, price,
+ *            productName?, comboId?, comboName? }
  *   - destination: 'mesa' | 'llevar'
- *   - selections: objeto de categorías (solo 'menu')
+ *   - selections: objeto de categorías (menu | breakfast)
  *   - description: texto libre (solo 'special')
  *   - note: comentario per-almuerzo (se guarda en commandaNote por compat)
  *   - price: precio recalculado según el destino
+ *   - productName/comboId/comboName: solo para breakfast cuando cambia el
+ *     combo aplicado por la edición (ej. quitar la bebida deshace el combo).
  */
 export async function updateKitchenOrder(id, payload) {
   const data = {
@@ -162,6 +172,9 @@ export async function updateKitchenOrder(id, payload) {
   if (payload.selections !== undefined) data.selections = payload.selections || null
   if (payload.description !== undefined) data.description = payload.description?.trim() || null
   if (payload.note !== undefined) data.commandaNote = payload.note?.trim() || null
+  if (payload.productName !== undefined) data.productName = payload.productName || null
+  if (payload.comboId !== undefined) data.comboId = payload.comboId || null
+  if (payload.comboName !== undefined) data.comboName = payload.comboName || null
   // Fire-and-forget para modo ahorro (la cajera corrige el almuerzo offline).
   updateDoc(orderRef(id), data).catch(err =>
     console.warn('[kitchenOrders] updateKitchenOrder deferred:', err?.message || err))

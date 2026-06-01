@@ -80,6 +80,9 @@ export async function createKitchenOrder(payload) {
     selections: payload.selections || null,
     description: payload.description?.trim() || null,
     price: Number(payload.price) || 0,
+    // staff:true → almuerzo "para el personal" / apartado: cuenta porciones
+    // pero NO se cobra (price 0) y no entra al flujo de caja.
+    staff: !!payload.staff,
     productId: payload.productId || null,
     productName: payload.productName || null,
     // Combo aplicado (solo desayuno por ahora). null si no matcheó combo.
@@ -289,7 +292,12 @@ export function watchKitchenQueue(callback) {
     return onSnapshot(
       q,
       snap => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        // Excluir almuerzos "para el personal": son solo para el conteo, ya
+        // salieron físicamente, no hay nada que cocinar. (Además se marcan
+        // entregados al crearse; este filtro evita cualquier parpadeo.)
+        const list = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(o => !o.staff)
         list.sort((a, b) => timeOf(a) - timeOf(b))
         callback(list)
       },
@@ -337,7 +345,11 @@ export function watchKitchenArchivedForDate(dateStr, callback) {
     return onSnapshot(
       q,
       snap => {
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        // Excluir "para el personal": nunca estuvieron en la cola de cocina,
+        // no deben aparecer en los archivados de la cocinera.
+        const list = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(o => !o.staff)
         list.sort((a, b) => timeOf(a) - timeOf(b))
         callback(list)
       },

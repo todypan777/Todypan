@@ -51,6 +51,7 @@ export default function CashierLunchWizard({
   hidePrices = false,
   onCancel,
   onAdd,
+  onAddStaff = () => {},
   onSaveEdit = () => {},
 }) {
   const today = useBogotaDate()
@@ -64,6 +65,31 @@ export default function CashierLunchWizard({
     () => resolveDailyMenu(dailyMenu, allItems),
     [dailyMenu, allItems]
   )
+
+  // ─── Modo "Para el personal" ─────────────────────────────────────
+  // Cuando la cajera registra un almuerzo que ya salió (apartado / personal)
+  // y necesita que el conteo de porciones cuadre SIN cobrar y SIN volver a
+  // cocina a reactivar la opción. En este modo:
+  //   • Las opciones salen del CATÁLOGO COMPLETO (no solo el menú del día),
+  //     así puede elegir proteínas/principios no publicados hoy.
+  //   • Lo agotado se vuelve seleccionable (sigue mostrando el badge).
+  //   • No hay precio (se registra en $0) y el paso final es un solo botón
+  //     "Registrar para el personal".
+  const [staffMode, setStaffMode] = useState(false)
+
+  // Catálogo completo agrupado por categoría del corriente (sin archivados).
+  const fullCatalog = useMemo(() => {
+    const out = {}
+    for (const cat of CORRIENTE_CATEGORIES) {
+      out[cat.id] = allItems
+        .filter(m => m.category === cat.id && !m.archived)
+        .map(m => ({ id: m.id, name: m.name }))
+    }
+    return out
+  }, [allItems])
+
+  // Menú que ven los pasos: el del día (normal) o el catálogo completo (personal).
+  const activeMenu = staffMode ? fullCatalog : resolvedMenu
 
   // Estado de stock de un item ("quedan N" que fijó la cocinera). Usa el menú
   // y el consumo que pasa NewSale (vendidas + comanda en construcción). Si no
@@ -143,7 +169,7 @@ export default function CashierLunchWizard({
   }
 
   // ─── Payload final ───────────────────────────────────────────────
-  function buildPayload(destination) {
+  function buildPayload(destination, { staff = false } = {}) {
     const sel = {}
     for (const cat of CORRIENTE_CATEGORIES) {
       sel[cat.id] = selections[cat.id] || null
@@ -151,7 +177,8 @@ export default function CashierLunchWizard({
     const isLlevar = destination === 'llevar'
     const priceMesa = Number(product?.priceMesa || 0)
     const priceLlevar = Number(product?.priceLlevar || product?.priceMesa || 0)
-    const price = isLlevar ? priceLlevar : priceMesa
+    // En modo personal no se cobra: precio $0.
+    const price = staff ? 0 : (isLlevar ? priceLlevar : priceMesa)
 
     // Concatenar replacements al note para que viajen a cocina.
     const finalNote = buildKitchenNoteFromCustomerItem({
@@ -167,6 +194,7 @@ export default function CashierLunchWizard({
       selections: sel,
       price,
       note: finalNote,
+      staff,
     }
   }
 
@@ -179,6 +207,11 @@ export default function CashierLunchWizard({
     // abrirá SendCommandaModal con la lista de items y el selector de mesa.
     // Desde ahí la cajera puede agregar más almuerzos o enviar la comanda.
     onAdd(buildPayload(destination), { another: false })
+  }
+
+  // Registra el almuerzo como consumo del personal (sin cobrar, solo conteo).
+  function registerStaff() {
+    onAddStaff(buildPayload('mesa', { staff: true }))
   }
 
   // ─── Navegación ──────────────────────────────────────────────────
@@ -227,17 +260,34 @@ export default function CashierLunchWizard({
           stepIndex={stepIndex}
           total={TOTAL_STEPS}
           editMode={editMode}
-          hidePrices={hidePrices}
+          hidePrices={hidePrices || staffMode}
+          staffMode={staffMode}
+          onToggleStaff={editMode ? null : () => setStaffMode(v => !v)}
           onBack={goBack}
           canCancel={step === 'soup'}
         />
+
+        {staffMode && (
+          <div style={{
+            flexShrink: 0,
+            padding: '8px 16px',
+            background: '#EEF6FF',
+            borderBottom: `1px solid #CFE3FA`,
+            color: '#1F5FA8',
+            fontSize: 12, fontWeight: 700, lineHeight: 1.4,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 15 }}>👥</span>
+            <span>Modo personal: no se cobra, solo cuenta. Puedes elegir opciones agotadas o no publicadas hoy.</span>
+          </div>
+        )}
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <div style={{ padding: '16px 18px 20px' }}>
             {step === 'soup' && (() => {
               // Mismo fix que PublicLunchWizard: si hay 2+ sopas, mostrar
               // todas las opciones en lugar de hardcodear la primera.
-              const soupOpts = resolvedMenu.soup || []
+              const soupOpts = activeMenu.soup || []
               if (soupOpts.length >= 2) {
                 return (
                   <PickStep
@@ -247,6 +297,7 @@ export default function CashierLunchWizard({
                     options={soupOpts}
                     selected={selections.soup}
                     stockOf={stockOf}
+                    allowOutOfStock={staffMode}
                     onPick={(opt) => {
                       clearReplacement('soup')
                       setCategory('soup', { id: opt.id, name: opt.name })
@@ -286,6 +337,7 @@ export default function CashierLunchWizard({
                   title="La sopa de hoy"
                   item={soupOpts[0] || null}
                   stock={soupOpts[0] ? stockOf(soupOpts[0].id) : null}
+                  allowOutOfStock={staffMode}
                   onYes={() => {
                     const opt = soupOpts[0]
                     if (opt) {
@@ -322,9 +374,10 @@ export default function CashierLunchWizard({
                 emoji="🫘"
                 title="Elige tu principio"
                 subtitle="Puedes pedir mixto si quieres dos."
-                options={resolvedMenu.principio || []}
+                options={activeMenu.principio || []}
                 selected={selections.principio}
                 stockOf={stockOf}
+                allowOutOfStock={staffMode}
                 multi
                 maxSel={CATEGORY_BY_ID.principio?.maxSelections || 1}
                 onPick={(opt) => {
@@ -392,9 +445,10 @@ export default function CashierLunchWizard({
                 emoji="🍗"
                 title="Elige la proteína"
                 subtitle="Esta sí va sí o sí."
-                options={resolvedMenu.protein || []}
+                options={activeMenu.protein || []}
                 selected={selections.protein}
                 stockOf={stockOf}
+                allowOutOfStock={staffMode}
                 onPick={(opt) => {
                   setCategory('protein', opt)
                   setTimeout(() => setStep('sides-combo'), 180)
@@ -406,9 +460,10 @@ export default function CashierLunchWizard({
 
             {step === 'sides-combo' && (
               <SidesComboStep
-                resolvedMenu={resolvedMenu}
+                resolvedMenu={activeMenu}
                 selections={selections}
                 stockOf={stockOf}
+                allowOutOfStock={staffMode}
                 onChange={(catId, val) => setCategory(catId, val)}
                 onContinue={() => setStep('note')}
               />
@@ -423,13 +478,21 @@ export default function CashierLunchWizard({
             )}
 
             {step === 'destination' && (
-              <DestinationStep
-                product={product}
-                editMode={editMode}
-                initialDestination={initialDestination}
-                hidePrices={hidePrices}
-                onPick={pickDestination}
-              />
+              staffMode ? (
+                <StaffConfirmStep
+                  product={product}
+                  selections={selections}
+                  onConfirm={registerStaff}
+                />
+              ) : (
+                <DestinationStep
+                  product={product}
+                  editMode={editMode}
+                  initialDestination={initialDestination}
+                  hidePrices={hidePrices}
+                  onPick={pickDestination}
+                />
+              )
             )}
           </div>
         </div>
@@ -450,7 +513,7 @@ export default function CashierLunchWizard({
 }
 
 // ─── Header ──────────────────────────────────────────────────────
-function WizardHeader({ product, currentCount, stepIndex, total, editMode, hidePrices, onBack, canCancel }) {
+function WizardHeader({ product, currentCount, stepIndex, total, editMode, hidePrices, staffMode, onToggleStaff, onBack, canCancel }) {
   const pct = ((stepIndex + 1) / total) * 100
   const priceMesa = Number(product?.priceMesa || 0)
   const priceLlevar = Number(product?.priceLlevar || product?.priceMesa || 0)
@@ -515,10 +578,31 @@ function WizardHeader({ product, currentCount, stepIndex, total, editMode, hideP
             fontSize: 11, color: T.neutral[500], marginTop: 1,
             fontVariantNumeric: 'tabular-nums',
           }}>
-            {!hidePrices && <>Mesa {fmtCOP(priceMesa)} · Llevar {fmtCOP(priceLlevar)}{' · '}</>}
+            {staffMode
+              ? <span style={{ fontWeight: 700, color: '#1F5FA8' }}>Sin costo · personal · </span>
+              : (!hidePrices && <>Mesa {fmtCOP(priceMesa)} · Llevar {fmtCOP(priceLlevar)}{' · '}</>)}
             <span style={{ fontWeight: 700 }}>Paso {stepIndex + 1}/{total}</span>
           </div>
         </div>
+        {onToggleStaff && (
+          <button
+            onClick={onToggleStaff}
+            aria-pressed={staffMode}
+            style={{
+              flexShrink: 0,
+              padding: '6px 10px', borderRadius: 999,
+              background: staffMode ? '#1F5FA8' : '#fff',
+              color: staffMode ? '#fff' : '#1F5FA8',
+              border: `1.5px solid ${staffMode ? '#1F5FA8' : '#CFE3FA'}`,
+              cursor: 'pointer', fontFamily: 'inherit',
+              fontSize: 11.5, fontWeight: 800, letterSpacing: -0.1,
+              display: 'flex', alignItems: 'center', gap: 5,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            👥 {staffMode ? 'Personal ✓' : 'Personal'}
+          </button>
+        )}
       </div>
       <div style={{
         height: 5, borderRadius: 999, background: T.neutral[100],
@@ -535,7 +619,7 @@ function WizardHeader({ product, currentCount, stepIndex, total, editMode, hideP
 }
 
 // ─── Step: una opción ÚNICA del día (sopa) ──────────────────────
-function SingleOptionStep({ emoji, title, item, stock, onYes, onNo, emptyText, onEmpty }) {
+function SingleOptionStep({ emoji, title, item, stock, allowOutOfStock = false, onYes, onNo, emptyText, onEmpty }) {
   if (!item) {
     return (
       <div>
@@ -562,7 +646,7 @@ function SingleOptionStep({ emoji, title, item, stock, onYes, onNo, emptyText, o
       </div>
     )
   }
-  const out = stock?.limited && stock.remaining <= 0
+  const out = !allowOutOfStock && stock?.limited && stock.remaining <= 0
   return (
     <div>
       <StepHero emoji={emoji} title={title} />
@@ -642,6 +726,7 @@ function BigChoice({ label, icon, color, onClick }) {
 // ─── Step: elegir entre opciones ────────────────────────────────
 function PickStep({
   emoji, title, subtitle, options, selected, onPick, stockOf,
+  allowOutOfStock = false,
   multi = false, maxSel = 1,
   emptyText, onEmpty, ctaBelow,
 }) {
@@ -697,7 +782,8 @@ function PickStep({
           const st = stockOf ? stockOf(opt.id) : { limited: false }
           // Bloqueado solo si está agotado Y no está ya seleccionado (para
           // poder deseleccionarlo). Permite que la cajera "destrabe" si tocó.
-          const out = st.limited && st.remaining <= 0 && !active
+          // En modo personal nada se bloquea (allowOutOfStock).
+          const out = !allowOutOfStock && st.limited && st.remaining <= 0 && !active
           return (
             <button
               key={opt.id}
@@ -789,7 +875,7 @@ function ReplaceStep({ emoji, title, options, selected, onPick }) {
 }
 
 // ─── Step: Acompañante + Ensalada + Jugo combinado ──────────────
-function SidesComboStep({ resolvedMenu, selections, stockOf, onChange, onContinue }) {
+function SidesComboStep({ resolvedMenu, selections, stockOf, allowOutOfStock = false, onChange, onContinue }) {
   const CATS = ['side', 'salad', 'juice']
   return (
     <div>
@@ -809,6 +895,7 @@ function SidesComboStep({ resolvedMenu, selections, stockOf, onChange, onContinu
               options={opts}
               selected={selections[catId]}
               stockOf={stockOf}
+              allowOutOfStock={allowOutOfStock}
               onChange={(val) => onChange(catId, val)}
             />
           )
@@ -830,14 +917,15 @@ function SidesComboStep({ resolvedMenu, selections, stockOf, onChange, onContinu
   )
 }
 
-function SideRow({ category, options, selected, stockOf, onChange }) {
+function SideRow({ category, options, selected, stockOf, allowOutOfStock = false, onChange }) {
   const [changing, setChanging] = useState(false)
   const hasOptions = options.length > 0
   const showPicker = changing && hasOptions
   const isActive = !!selected
   const st = (stockOf && selected) ? stockOf(selected.id) : { limited: false }
-  // Primera opción NO agotada (para "+ Agregar").
-  const firstAvailable = options.find(o => {
+  // Primera opción para "+ Agregar". En modo personal vale cualquiera; si no,
+  // la primera NO agotada.
+  const firstAvailable = allowOutOfStock ? options[0] : options.find(o => {
     const s = stockOf ? stockOf(o.id) : { limited: false }
     return !s.limited || s.remaining > 0
   })
@@ -895,7 +983,7 @@ function SideRow({ category, options, selected, stockOf, onChange }) {
           {options.map(opt => {
             const active = selected?.id === opt.id
             const s = stockOf ? stockOf(opt.id) : { limited: false }
-            const out = s.limited && s.remaining <= 0 && !active
+            const out = !allowOutOfStock && s.limited && s.remaining <= 0 && !active
             return (
               <button
                 key={opt.id}
@@ -1089,6 +1177,68 @@ function NoteStep({ note, onChange, onContinue }) {
         }}
       >
         {note.trim() ? 'Continuar →' : 'Saltar, sin notas →'}
+      </button>
+    </div>
+  )
+}
+
+// ─── Step final (modo personal): registrar sin cobrar ───────────
+function StaffConfirmStep({ product, selections, onConfirm }) {
+  // Resumen compacto de lo elegido para que la cajera confirme.
+  const rows = CORRIENTE_CATEGORIES.map(cat => {
+    const v = selections[cat.id]
+    let text = null
+    if (Array.isArray(v)) text = v.filter(Boolean).map(x => x.name).join(' + ') || null
+    else if (v?.name) text = v.name
+    return { cat, text }
+  }).filter(r => r.text)
+
+  return (
+    <div>
+      <StepHero
+        emoji="👥"
+        title="Registrar para el personal"
+        subtitle="No se cobra. Solo descuenta porciones para que el conteo cuadre."
+      />
+      <div style={{
+        marginTop: 16, padding: '14px 16px', borderRadius: 16,
+        background: '#fff', border: `1.5px solid ${T.neutral[200]}`,
+      }}>
+        <div style={{
+          fontSize: 13, fontWeight: 800, color: T.neutral[900], marginBottom: 8,
+        }}>
+          {product?.name || 'Almuerzo Corriente'}
+        </div>
+        {rows.length === 0 ? (
+          <div style={{ fontSize: 13, color: T.neutral[500] }}>
+            Sin opciones elegidas.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {rows.map(({ cat, text }) => (
+              <div key={cat.id} style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 13.5, color: T.neutral[800],
+              }}>
+                <span style={{ fontSize: 15 }}>{cat.emoji}</span>
+                <span style={{ color: T.neutral[500], minWidth: 92 }}>{cat.label}:</span>
+                <span style={{ fontWeight: 700 }}>{text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        onClick={onConfirm}
+        style={{
+          width: '100%', padding: '18px', marginTop: 18, borderRadius: 16,
+          background: '#1F5FA8', color: '#fff',
+          border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 16, fontWeight: 800, letterSpacing: -0.2,
+          boxShadow: '0 4px 14px rgba(31,95,168,0.45)',
+        }}
+      >
+        👥 Registrar para el personal
       </button>
     </div>
   )

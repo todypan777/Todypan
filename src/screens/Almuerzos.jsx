@@ -108,11 +108,18 @@ export default function Almuerzos() {
                   ? 'Sin almuerzos'
                   : `${stats.total} ${stats.total === 1 ? 'almuerzo vendido' : 'almuerzos vendidos'}`}
             </div>
-            {stats.cancelled > 0 && (
-              <div style={{ fontSize: 11.5, fontWeight: 600, color: T.neutral[500] }}>
-                {stats.cancelled} cancelado{stats.cancelled === 1 ? '' : 's'} (no cuentan)
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: 12 }}>
+              {stats.personal > 0 && (
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: '#1F5FA8' }}>
+                  👥 {stats.personal} para el personal
+                </div>
+              )}
+              {stats.cancelled > 0 && (
+                <div style={{ fontSize: 11.5, fontWeight: 600, color: T.neutral[500] }}>
+                  {stats.cancelled} cancelado{stats.cancelled === 1 ? '' : 's'} (no cuentan)
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -122,7 +129,7 @@ export default function Almuerzos() {
         <EmptyState emoji="📅" title="Fecha futura" hint="Todavía no hay datos para ese día." />
       ) : loading ? (
         <EmptyState emoji="🥣" title="Cargando…" hint="Buscando almuerzos del día." />
-      ) : stats.total === 0 ? (
+      ) : (stats.total === 0 && stats.personal === 0) ? (
         <EmptyState
           emoji="🍽️"
           title={isToday ? 'Aún no hay almuerzos hoy' : 'Sin ventas este día'}
@@ -158,6 +165,9 @@ export default function Almuerzos() {
                 <SplitChip label="Especiales" value={stats.especial} accent="#FFD58A" emoji="⭐" />
                 {stats.llevar > 0 && (
                   <SplitChip label="Para llevar" value={stats.llevar} accent="rgba(255,255,255,0.6)" emoji="📦" />
+                )}
+                {stats.personal > 0 && (
+                  <SplitChip label="Para el personal" value={stats.personal} accent="#8EC5FF" emoji="👥" />
                 )}
               </div>
             </Card>
@@ -206,12 +216,23 @@ function computeStats(orders) {
     especial: 0,
     llevar: 0,
     cancelled: 0,
+    personal: 0,
     byCategory: {},
   }
 
   for (const o of orders) {
     if (o.status === 'cancelled') {
       out.cancelled += 1
+      continue
+    }
+    // Almuerzos "para el personal" (apartado / consumo interno): NO son venta,
+    // así que no suman a `total`/`corriente`/`especial`/`llevar`. Pero SÍ cuentan
+    // sus porciones en el desglose por categoría — ese es el objetivo del
+    // registro (que el conteo de proteínas/principios cuadre).
+    if (o.staff) {
+      out.personal += 1
+      if (o.kind === 'special') addSpecialToStats(o, out)
+      else addMenuToStats(o, out)
       continue
     }
     out.total += 1

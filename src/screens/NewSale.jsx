@@ -24,7 +24,7 @@ import {
   nextTableSuffix,
   formatTableLabel,
 } from '../openTabs'
-import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder, watchKitchenOrdersForDate } from '../kitchenOrders'
+import { createKitchenOrder, newCommandaId, watchOrdersForTab, updateKitchenOrder, watchKitchenOrdersForDate, markOrderDelivered } from '../kitchenOrders'
 import { watchDailyMenu, watchMenuItems, watchCorrienteConfig, getCorrienteState, getSpecialState, getAddonPrices, countConsumedByItem } from '../menu'
 import CashierLunchWizard from '../components/CashierLunchWizard'
 import CashierSpecialWizard from '../components/CashierSpecialWizard'
@@ -165,6 +165,15 @@ export default function NewSale({
   // Modal de confirmación para eliminar mesa (botón rojo del footer en modo
   // tab). shape: null | { busy, error }
   const [confirmDeleteTab, setConfirmDeleteTab] = useState(null)
+
+  // Toast efímero para confirmar el registro de un almuerzo "para el personal"
+  // (consumo interno: cuenta porciones, no cobra). shape: null | { text, error }
+  const [staffToast, setStaffToast] = useState(null)
+  useEffect(() => {
+    if (!staffToast) return
+    const t = setTimeout(() => setStaffToast(null), 2600)
+    return () => clearTimeout(t)
+  }, [staffToast])
 
   // Listener de tabs abiertas para validar números duplicados
   const [openTabs, setOpenTabs] = useState([])
@@ -674,6 +683,49 @@ export default function NewSale({
     // Cerrar modal y abrir el de envío de comanda
     setLunchModal(null)
     openSendCommandaModal()
+  }
+
+  // Registra un almuerzo "para el personal" (apartado / consumo interno):
+  // NO pasa por mesa ni caja y NO se cobra. Crea un kitchenOrder con staff:true
+  // y price:0 y lo marca entregado enseguida para que (1) cuente en las stats de
+  // porciones del día y (2) NO entre a la cola de cocina (ya salió físicamente).
+  async function handleRegisterStaffLunch(payload) {
+    const ownerUid = tabOwnerUid
+    const cashierName = session.cashierName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim()
+    const commandaId = newCommandaId()
+    try {
+      const orderId = await createKitchenOrder({
+        tabId: null,
+        tableNumber: null,
+        customerName: null,
+        sessionId: session.id,
+        branchId: session.branchId,
+        branchName: session.branchName,
+        cashierUid: ownerUid,
+        cashierName,
+        destination: 'mesa',
+        kind: 'menu',
+        selections: payload.selections || null,
+        description: null,
+        price: 0,
+        staff: true,
+        productId: payload.productId || '__lunch_corriente__',
+        productName: payload.productName || 'Almuerzo Corriente',
+        commandaId,
+        commandaNote: payload.note || null,
+        ...orderAttribution,
+      })
+      // Sacarlo de la cola de cocina: ya salió, solo es para el conteo.
+      markOrderDelivered(orderId)
+      setLunchModal(null)
+      setStaffToast({ text: 'Registrado para el personal ✓', error: false })
+      // Si la cajera estaba armando una comanda normal (entró por "+ Otro"),
+      // no perder ese progreso: reabrir el modal de envío.
+      if (lunchCommanda.length > 0) openSendCommandaModal()
+    } catch (err) {
+      console.error('[NewSale] registrar para el personal falló:', err)
+      setStaffToast({ text: 'No se pudo registrar. Intenta de nuevo.', error: true })
+    }
   }
 
   // Adición agregada desde PublicAddonsModal. Entra al lunchCommanda como
@@ -1765,6 +1817,7 @@ export default function NewSale({
             }
           }}
           onAdd={handleAddLunchToCommanda}
+          onAddStaff={handleRegisterStaffLunch}
         />
       )}
       {lunchModal?.kind === 'special' && (
@@ -1841,6 +1894,21 @@ export default function NewSale({
           onPickAddon={handleChooseAddon}
           onPickBreakfast={handleChooseBreakfast}
         />
+      )}
+
+      {/* Toast efímero: confirmación de registro "para el personal". */}
+      {staffToast && (
+        <div style={{
+          position: 'fixed', left: '50%', bottom: 28, transform: 'translateX(-50%)',
+          zIndex: 120, maxWidth: '90vw',
+          padding: '12px 18px', borderRadius: 14,
+          background: staffToast.error ? '#B42318' : '#1F5FA8',
+          color: '#fff', fontSize: 14, fontWeight: 800, letterSpacing: -0.1,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.28)',
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          {staffToast.text}
+        </div>
       )}
 
       {/* Modal de adición (sopa/huevo/proteína extra) reusado del cliente. */}

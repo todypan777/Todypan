@@ -9,8 +9,12 @@
 // de código requiera tocar reglas, se edita ESTE archivo y se entrega una copia
 // completa lista para pegar.
 //
-// Última actualización: 2026-05-27 — añadido bloque cashIncomes (ingresos de
-//   caja registrados por la cajera, espejo de cashExpenses).
+// Última actualización: 2026-05-29 — sistema de DESAYUNOS. La regla genérica
+//   `match /dailyMenu/{date}` ya cubre el nuevo doc `breakfast_config`
+//   (mismo patrón que `corriente_config`), así que ESTRUCTURALMENTE no hubo
+//   cambio. kitchenOrders/customerOrders aceptan `kind:'breakfast'` con las
+//   mismas condiciones de create/update. Solo se actualizó comentario del
+//   bloque /dailyMenu para reflejar el doc nuevo.
 // Último cambio: rol MESERA + alineación con el modelo real de roles. Ningún
 //   empleado tiene rol permanente: todos son role:'staff' y el rol funcional
 //   (caja/cocina/mesera) lo define la sesión (cashSessions.type). Por eso se

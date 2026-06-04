@@ -299,18 +299,23 @@ export function deleteProduct(id) {
  * Establece el precio de un producto admin para una panaderia especifica.
  * Si price es null/undefined/0, elimina el precio para esa panaderia.
  */
-export function setProductPriceForBranch(productId, branchId, price) {
+// setBy (opcional): { name, role } de quién fija el precio. Se guarda en
+// priceSetByBranch[branchId] para poder mostrar "Panadería X (Cajera/Admin)".
+export function setProductPriceForBranch(productId, branchId, price, setBy = null) {
   const key = String(branchId)
   _data.products = _data.products.map(p => {
     if (p.id !== productId) return p
     const next = { ...(p.pricesByBranch || {}) }
+    const nextSetBy = { ...(p.priceSetByBranch || {}) }
     const num = Number(price)
     if (!num || num <= 0) {
       delete next[key]
+      delete nextSetBy[key]
     } else {
       next[key] = num
+      if (setBy && setBy.name) nextSetBy[key] = { name: setBy.name, role: setBy.role || 'cashier' }
     }
-    return { ...p, pricesByBranch: next }
+    return { ...p, pricesByBranch: next, priceSetByBranch: nextSetBy }
   })
   persist()
 }

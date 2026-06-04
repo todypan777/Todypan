@@ -489,12 +489,17 @@ export default function NewSale({
     // Agregar al carrito de inmediato — la cajera NO debe esperar Firestore.
     addProductToCart(product, num)
     setMissingPriceProduct(null)
+    // Quién está fijando este precio por primera vez en la panadería: el admin
+    // (modo asistir) o la cajera del turno. Se guarda para mostrar en Productos.
+    const setBy = isAssistMode
+      ? { name: 'Admin', role: 'admin' }
+      : { name: session.cashierName || `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || 'Cajera', role: 'cashier' }
     // Persistir el precio en background; si falla solo se queda como precio
     // del item del carrito (la venta igual queda con unitPrice congelado).
     if (product.source === 'admin') {
-      try { setProductPriceForBranch(product.id, branchId, num) } catch (e) { console.warn('[POS] no se pudo persistir precio admin:', e) }
+      try { setProductPriceForBranch(product.id, branchId, num, setBy) } catch (e) { console.warn('[POS] no se pudo persistir precio admin:', e) }
     } else if (product.source === 'cashier') {
-      setCashierProductPriceForBranch(product.id, branchId, num)
+      setCashierProductPriceForBranch(product.id, branchId, num, setBy)
         .catch(e => console.warn('[POS] no se pudo persistir precio cajera:', e))
     }
   }

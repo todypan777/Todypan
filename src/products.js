@@ -36,12 +36,16 @@ export function watchCashierProducts(callback) {
  * Otras cajeras en otra panadería verán el producto sin precio y se les pedirá
  * el suyo la primera vez.
  */
-export function createCashierProduct({ name, salePrice, branchId, createdByUid, createdByName }) {
+export function createCashierProduct({ name, salePrice, branchId, createdByUid, createdByName, createdByRole }) {
   const key = String(branchId)
   const data = {
     name: name.trim(),
     normalizedName: name.trim().toLowerCase(),
     pricesByBranch: { [key]: Number(salePrice) || 0 },
+    // Quién puso el precio de ESTA panadería (la de creación) = quien lo creó.
+    priceSetByBranch: createdByName
+      ? { [key]: { name: createdByName, role: createdByRole || 'cashier' } }
+      : {},
     packageCost: 0,           // sin costo aún — admin lo completa
     byPackage: false,
     branch: 'both',           // disponible en cualquier panadería que tenga precio
@@ -88,20 +92,24 @@ export async function patchCashierProduct(id, updates) {
  * Establece el precio de un producto cajera para una panadería específica.
  * Lee el doc, modifica el mapa y lo guarda. Si price es 0/null elimina la entrada.
  */
-export async function setCashierProductPriceForBranch(id, branchId, price) {
+// setBy (opcional): { name, role } de quién fija el precio → priceSetByBranch.
+export async function setCashierProductPriceForBranch(id, branchId, price, setBy = null) {
   const ref = doc(firestoreDb, 'products', id)
   const snap = await getDoc(ref)
   if (!snap.exists()) return
   const data = snap.data() || {}
   const key = String(branchId)
   const next = { ...(data.pricesByBranch || {}) }
+  const nextSetBy = { ...(data.priceSetByBranch || {}) }
   const num = Number(price)
   if (!num || num <= 0) {
     delete next[key]
+    delete nextSetBy[key]
   } else {
     next[key] = num
+    if (setBy && setBy.name) nextSetBy[key] = { name: setBy.name, role: setBy.role || 'cashier' }
   }
-  await updateDoc(ref, { pricesByBranch: next })
+  await updateDoc(ref, { pricesByBranch: next, priceSetByBranch: nextSetBy })
 }
 
 /** Devuelve el precio de un producto en una panadería, o null si no está. */

@@ -1210,6 +1210,7 @@ export function ActiveSession({
           branchId={session.branchId}
           branchName={session.branchName}
           branches={branches}
+          cashierName={session.cashierName}
           onClose={() => setBoredomOpen(false)}
         />
       )}

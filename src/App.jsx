@@ -453,7 +453,7 @@ function AppShell() {
         <div style={{
           position: 'fixed',
           top: 'calc(env(safe-area-inset-top, 0px) + 14px)',
-          right: 76,
+          right: 62,
           zIndex: 50,
         }}>
           <ConnectionChip compact />

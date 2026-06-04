@@ -6,6 +6,7 @@ import { ScreenHeader } from '../components/Nav'
 import { addProduct, updateProduct, deleteProduct, getData } from '../db'
 import { useIsDesktop } from '../context/DesktopCtx'
 import { watchCashierProducts, deleteCashierProduct } from '../products'
+import { watchAllSales } from '../sales'
 
 // ── Helpers de cálculo ─────────────────────────────────────────
 function calcProduct(p) {
@@ -26,7 +27,7 @@ function priceBreakdown(p) {
   return branches
     .map(b => {
       const v = p.pricesByBranch?.[String(b.id)]
-      return v && Number(v) > 0 ? { name: b.name, price: Number(v) } : null
+      return v && Number(v) > 0 ? { id: String(b.id), name: b.name, price: Number(v) } : null
     })
     .filter(Boolean)
 }
@@ -101,7 +102,25 @@ function SetupBadge() {
   )
 }
 
-function PricesByBranchInline({ product }) {
+// Etiqueta de quién puso el precio de una panadería. approx = estimado por
+// ventas (se muestra con "~" y en gris); exacto = atribución guardada (cobre).
+function SetterTag({ setter }) {
+  if (!setter) return null
+  return (
+    <span
+      title={setter.approx ? 'Estimado según la primera venta' : 'Quién puso este precio'}
+      style={{
+        fontSize: 10.5, fontWeight: 600,
+        color: setter.approx ? T.neutral[400] : T.copper[700],
+        fontStyle: setter.approx ? 'italic' : 'normal',
+      }}
+    >
+      {' '}({setter.approx ? '~' : ''}{setter.name})
+    </span>
+  )
+}
+
+function PricesByBranchInline({ product, setterFor }) {
   if (product.isLunch) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
@@ -151,11 +170,12 @@ function PricesByBranchInline({ product }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
       {breakdown.map(b => (
-        <div key={b.name} style={{ fontSize: 12, fontWeight: 600, color: T.neutral[700] }}>
+        <div key={b.id} style={{ fontSize: 12, fontWeight: 600, color: T.neutral[700], lineHeight: 1.35 }}>
           <span style={{ color: T.neutral[500] }}>{b.name}: </span>
           <span style={{ color: T.neutral[900], fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
             {fmtCOP(b.price)}
           </span>
+          <SetterTag setter={setterFor?.(product, b.id)} />
         </div>
       ))}
       {missing.length > 0 && (
@@ -167,7 +187,7 @@ function PricesByBranchInline({ product }) {
   )
 }
 
-function PricesByBranchBlock({ product }) {
+function PricesByBranchBlock({ product, setterFor }) {
   if (product.isLunch) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -215,9 +235,12 @@ function PricesByBranchBlock({ product }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       {breakdown.map(b => (
-        <div key={b.name} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5 }}>
-          <span style={{ color: T.neutral[600], fontWeight: 600 }}>{b.name}</span>
-          <span style={{ color: T.neutral[900], fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+        <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, fontSize: 12.5 }}>
+          <span style={{ color: T.neutral[600], fontWeight: 600, minWidth: 0 }}>
+            {b.name}
+            <SetterTag setter={setterFor?.(product, b.id)} />
+          </span>
+          <span style={{ color: T.neutral[900], fontWeight: 700, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
             {fmtCOP(b.price)}
           </span>
         </div>
@@ -241,8 +264,42 @@ export default function Products({ products, onRefresh }) {
   const [editTarget, setEditTarget] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
   const [cashierProducts, setCashierProducts] = useState([])
+  const [sales, setSales] = useState([])
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+  useEffect(() => watchAllSales(setSales), [])
+
+  // Backfill: para precios viejos (sin atribución guardada) deducimos quién
+  // los puso a partir de la venta MÁS ANTIGUA de ese producto en esa panadería
+  // (quien lo vendió primero probablemente puso el precio). Es una estimación.
+  const guessedSetters = useMemo(() => {
+    const map = {}
+    const sorted = [...sales].sort((a, b) =>
+      (a.createdAt?.toMillis?.() ?? a.createdAtClient ?? 0) -
+      (b.createdAt?.toMillis?.() ?? b.createdAtClient ?? 0)
+    )
+    for (const s of sorted) {
+      if (!s.branchId) continue
+      const bid = String(s.branchId)
+      const who = s.cashierName || s.recordedByName
+      if (!who) continue
+      for (const it of (s.items || [])) {
+        if (!it.productId) continue
+        const key = `${it.source || 'admin'}_${it.productId}_${bid}`
+        if (!map[key]) map[key] = { name: who, role: 'cashier', approx: true }
+      }
+    }
+    return map
+  }, [sales])
+
+  // Quién puso el precio de un producto en una panadería: atribución guardada
+  // (exacta) o, si no hay, la estimación por ventas. null si no se sabe.
+  function setterFor(product, branchId) {
+    const bid = String(branchId)
+    const explicit = product.priceSetByBranch?.[bid]
+    if (explicit && explicit.name) return { name: explicit.name, role: explicit.role || 'cashier', approx: false }
+    return guessedSetters[`${product.source}_${product.id}_${bid}`] || null
+  }
 
   // Lista unificada: admins + cashier (sin duplicados por nombre).
   const all = useMemo(() => {
@@ -419,8 +476,8 @@ export default function Products({ products, onRefresh }) {
       {/* Tabla / Lista */}
       {filtered.length > 0 && (
         isDesktop
-          ? <ProductTable products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel}/>
-          : <ProductCards products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel}/>
+          ? <ProductTable products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel} setterFor={setterFor}/>
+          : <ProductCards products={filtered} onEdit={setEditTarget} onDelete={setConfirmDel} setterFor={setterFor}/>
       )}
 
       {/* Modal agregar / editar */}
@@ -471,7 +528,7 @@ export default function Products({ products, onRefresh }) {
 }
 
 // ── Vista tabla (desktop) ──────────────────────────────────────
-function ProductTable({ products, onEdit, onDelete }) {
+function ProductTable({ products, onEdit, onDelete, setterFor }) {
   const cols = [
     { label: 'Producto',          flex: 2.5 },
     { label: 'Costo/unidad',      flex: 1.2 },
@@ -552,7 +609,7 @@ function ProductTable({ products, onEdit, onDelete }) {
               </div>
 
               <div style={{ flex: 2.2, textAlign: 'right', paddingRight: 8 }}>
-                <PricesByBranchInline product={p}/>
+                <PricesByBranchInline product={p} setterFor={setterFor}/>
               </div>
 
               <div style={{ flex: 1.2, textAlign: 'right', paddingRight: 8 }}>
@@ -592,7 +649,7 @@ function ProductTable({ products, onEdit, onDelete }) {
 }
 
 // ── Vista tarjetas (móvil) ─────────────────────────────────────
-function ProductCards({ products, onEdit, onDelete }) {
+function ProductCards({ products, onEdit, onDelete, setterFor }) {
   return (
     <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {products.map(p => {
@@ -653,7 +710,7 @@ function ProductCards({ products, onEdit, onDelete }) {
                   </div>
                 )}
                 <div style={{ borderTop: hasMetrics ? `0.5px solid ${T.neutral[200]}` : 'none', paddingTop: hasMetrics ? 8 : 0 }}>
-                  <PricesByBranchBlock product={p}/>
+                  <PricesByBranchBlock product={p} setterFor={setterFor}/>
                 </div>
               </div>
 
@@ -759,6 +816,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
             freeAmount: true,
             freeUnitPrice: freeBase,
             pricesByBranch: {},
+            priceSetByBranch: {},
             packageCost: 0,
             unitsPerPackage: 1,
             byPackage: false,
@@ -766,9 +824,21 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
           }
         : (() => {
             const pricesByBranch = {}
-            Object.entries(priceInputs).forEach(([bid, val]) => {
-              const num = Number(val)
-              if (num > 0) pricesByBranch[bid] = num
+            // Atribución: preservamos quién había puesto cada precio y solo
+            // marcamos "Admin" en las panaderías cuyo precio el admin agregó
+            // o cambió en este formulario (no pisamos los de las cajeras que
+            // quedaron iguales).
+            const priceSetByBranch = { ...(initial?.priceSetByBranch || {}) }
+            branches.forEach(b => {
+              const bid = String(b.id)
+              const num = Number(priceInputs[bid])
+              const oldNum = Number(initial?.pricesByBranch?.[bid]) || 0
+              if (num > 0) {
+                pricesByBranch[bid] = num
+                if (num !== oldNum) priceSetByBranch[bid] = { name: 'Admin', role: 'admin' }
+              } else {
+                delete priceSetByBranch[bid]
+              }
             })
             return {
               name: name.trim(),
@@ -777,6 +847,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
               packageCost: pc,
               unitsPerPackage: byPackage ? up : 1,
               pricesByBranch,
+              priceSetByBranch,
               notes: notes.trim(),
             }
           })()

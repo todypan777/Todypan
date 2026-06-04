@@ -405,15 +405,20 @@ export function ScreenHeader({ title, subtitle, right }) {
         {subtitle && (
           <div style={{ fontSize: 13, color: T.neutral[500], fontWeight: 500, marginBottom: 2 }}>{subtitle}</div>
         )}
-        <div style={{ fontSize: isDesktop ? 26 : 28, fontWeight: 700, color: T.neutral[900], letterSpacing: -0.6, lineHeight: 1.15 }}>
+        <div style={{
+          fontSize: isDesktop ? 26 : 28, fontWeight: 700, color: T.neutral[900],
+          letterSpacing: -0.6, lineHeight: 1.15,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
           {title}
         </div>
       </div>
-      {/* La campana de notificaciones (NotificationBell) flota fija en la
-          esquina superior derecha (right:12, width:44) en todas las pantallas
-          admin. En móvil reservamos espacio aquí para que el botón de acción
-          (ej. "Agregar" en Productos) no quede tapado por la campana. */}
-      {right && <div style={{ marginRight: isDesktop ? 0 : 44 }}>{right}</div>}
+      {/* En la esquina superior derecha flotan FIJOS dos elementos en todas las
+          pantallas admin: el punto de estado de conexión (ConnectionChip, right:62)
+          y la campana de notificaciones (NotificationBell, right:12, width:44).
+          Juntos ocupan ~96px. En móvil reservamos ese espacio para que el botón
+          de acción (ej. "Agregar" en Productos) no quede tapado por ninguno. */}
+      {right && <div style={{ marginRight: isDesktop ? 0 : 76 }}>{right}</div>}
     </div>
   )
 }

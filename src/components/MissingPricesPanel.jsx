@@ -19,7 +19,7 @@ import {
  *   - branches: lista de panaderías para mostrar precios de referencia
  *   - onClose
  */
-export default function MissingPricesPanel({ branchId, branchName, branches, onClose }) {
+export default function MissingPricesPanel({ branchId, branchName, branches, cashierName, onClose }) {
   const [cashierProducts, setCashierProducts] = useState([])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
   const [, setSharedTick] = useState(0)
@@ -127,6 +127,7 @@ export default function MissingPricesPanel({ branchId, branchName, branches, onC
                   branchId={branchId}
                   branchName={branchName}
                   branches={branches}
+                  cashierName={cashierName}
                 />
               ))}
             </div>
@@ -137,7 +138,7 @@ export default function MissingPricesPanel({ branchId, branchName, branches, onC
   )
 }
 
-function MissingPriceRow({ product, branchId, branchName, branches }) {
+function MissingPriceRow({ product, branchId, branchName, branches, cashierName }) {
   const [priceStr, setPriceStr] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -162,10 +163,11 @@ function MissingPriceRow({ product, branchId, branchName, branches }) {
     setBusy(true)
     setError(null)
     try {
+      const setBy = { name: cashierName || 'Cajera', role: 'cashier' }
       if (product.source === 'admin') {
-        setProductPriceForBranch(product.id, branchId, num)
+        setProductPriceForBranch(product.id, branchId, num, setBy)
       } else {
-        await setCashierProductPriceForBranch(product.id, branchId, num)
+        await setCashierProductPriceForBranch(product.id, branchId, num, setBy)
       }
       setSaved(true)
       // Pequeño delay visual antes de que se filtre fuera de la lista

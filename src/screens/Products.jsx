@@ -235,6 +235,8 @@ function PricesByBranchBlock({ product }) {
 export default function Products({ products, onRefresh }) {
   const isDesktop = useIsDesktop()
   const [search, setSearch] = useState('')
+  // Filtro por estado de configuración: 'all' | 'configured' | 'pending'.
+  const [statusFilter, setStatusFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
@@ -260,14 +262,17 @@ export default function Products({ products, onRefresh }) {
     return [...adminEnriched, ...cashierEnriched]
   }, [products, cashierProducts])
 
-  // Filtrar por búsqueda + ordenar A–Z.
+  // Filtrar por búsqueda + estado de configuración + ordenar A–Z.
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-    const list = q ? all.filter(p => (p.name || '').toLowerCase().includes(q)) : all
+    let list = q ? all.filter(p => (p.name || '').toLowerCase().includes(q)) : all
+    if (statusFilter === 'configured') list = list.filter(p => !needsSetup(p))
+    else if (statusFilter === 'pending') list = list.filter(needsSetup)
     return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-  }, [all, search])
+  }, [all, search, statusFilter])
 
   const missingCount = all.filter(needsSetup).length
+  const configuredCount = all.length - missingCount
 
   async function handleDelete(p) {
     if (!p) return
@@ -301,13 +306,45 @@ export default function Products({ products, onRefresh }) {
         }
       />
 
-      {/* Resumen mínimo en una línea */}
+      {/* Filtro por estado de configuración (con conteo de cada grupo) */}
       {all.length > 0 && (
-        <div style={{ padding: '0 16px 10px', fontSize: 12, color: T.neutral[500], display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <span><b style={{ color: T.neutral[800] }}>{all.length}</b> productos</span>
-          {missingCount > 0 && (
-            <span>· <b style={{ color: T.bad }}>{missingCount}</b> sin configurar</span>
-          )}
+        <div style={{ padding: '0 16px 12px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {[
+            { key: 'all',        label: 'Todos',         count: all.length },
+            { key: 'configured', label: 'Configurados',  count: configuredCount },
+            { key: 'pending',    label: 'Sin configurar', count: missingCount },
+          ].map(f => {
+            const active = statusFilter === f.key
+            const isPending = f.key === 'pending'
+            // El filtro "Sin configurar" usa rojo (alerta); los demás, cobre.
+            const accent = isPending ? T.bad : T.copper[500]
+            return (
+              <button
+                key={f.key}
+                onClick={() => setStatusFilter(f.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '7px 13px', borderRadius: 999,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 12.5, fontWeight: 700,
+                  background: active ? accent : '#fff',
+                  color: active ? '#fff' : T.neutral[600],
+                  border: `1px solid ${active ? accent : T.neutral[200]}`,
+                  transition: 'background 0.12s',
+                }}
+              >
+                {f.label}
+                <span style={{
+                  fontSize: 11, fontWeight: 800, fontVariantNumeric: 'tabular-nums',
+                  padding: '1px 7px', borderRadius: 999,
+                  background: active ? 'rgba(255,255,255,0.25)' : (isPending && f.count > 0 ? '#FAE8E6' : T.neutral[100]),
+                  color: active ? '#fff' : (isPending && f.count > 0 ? T.bad : T.neutral[600]),
+                }}>
+                  {f.count}
+                </span>
+              </button>
+            )
+          })}
         </div>
       )}
 
@@ -364,11 +401,17 @@ export default function Products({ products, onRefresh }) {
         </div>
       )}
 
-      {/* Sin resultados de búsqueda */}
+      {/* Sin resultados (búsqueda o filtro) */}
       {all.length > 0 && filtered.length === 0 && (
         <div style={{ padding: '40px 24px', textAlign: 'center' }}>
           <div style={{ fontSize: 13, color: T.neutral[400] }}>
-            No se encontró ningún producto con "{search}"
+            {search.trim()
+              ? `No se encontró ningún producto con "${search}"`
+              : statusFilter === 'pending'
+                ? '¡Todo configurado! No hay productos pendientes.'
+                : statusFilter === 'configured'
+                  ? 'Aún no hay productos configurados.'
+                  : 'No hay productos.'}
           </div>
         </div>
       )}

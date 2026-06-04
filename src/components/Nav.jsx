@@ -409,7 +409,11 @@ export function ScreenHeader({ title, subtitle, right }) {
           {title}
         </div>
       </div>
-      {right && <div>{right}</div>}
+      {/* La campana de notificaciones (NotificationBell) flota fija en la
+          esquina superior derecha (right:12, width:44) en todas las pantallas
+          admin. En móvil reservamos espacio aquí para que el botón de acción
+          (ej. "Agregar" en Productos) no quede tapado por la campana. */}
+      {right && <div style={{ marginRight: isDesktop ? 0 : 44 }}>{right}</div>}
     </div>
   )
 }

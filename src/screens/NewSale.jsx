@@ -402,23 +402,13 @@ export default function NewSale({
       setQuery('')
       return
     }
-    // Mesera: nunca fija precios. Venta libre y productos sin precio en la
-    // panadería entran en $0; la cajera pone el valor real al cobrar.
+    // Mesera: no cobra ni ve el total, pero SÍ arma la venta libre con
+    // monto y cantidad (el cliente escoge cuántos panes / de cuánto). Para eso
+    // abre el MISMO modal que la cajera. Productos normales sin precio en la
+    // panadería siguen entrando en $0 (la cajera ajusta al cobrar).
     if (isWaitress) {
       if (product.freeAmount) {
-        setCart(prev => [
-          ...prev,
-          {
-            key: `free_${product.source}_${product.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            productId: product.id,
-            source: product.source,
-            name: product.name,
-            qty: 1,
-            unitPrice: 0,
-            freeAmount: true,
-          },
-        ])
-        setQuery('')
+        setFreeAmountTarget({ product, editingKey: null })
         return
       }
       const wp = getProductPrice(product, branchId)
@@ -1515,7 +1505,7 @@ export default function NewSale({
                           : `Mesa ${fmtCOP(p.priceMesa || 0)} · Llevar ${fmtCOP(p.priceLlevar || p.priceMesa || 0)}`}
                       </div>
                     )}
-                    {isFreeAmount && !hidePrices && (
+                    {isFreeAmount && (
                       <div style={{
                         fontSize: 11, color: T.neutral[500], marginTop: 1,
                         letterSpacing: 0.3,
@@ -1543,15 +1533,21 @@ export default function NewSale({
                     }}>
                       Venta libre
                     </div>
-                  ) : (needsPrice && !hidePrices) ? (
-                    <div style={{
-                      fontSize: 11, fontWeight: 700, color: T.copper[700],
-                      background: T.copper[50], padding: '4px 10px', borderRadius: 999,
-                      letterSpacing: 0.3, flexShrink: 0,
-                    }}>
-                      Poner precio
-                    </div>
-                  ) : hidePrices ? null : (
+                  ) : needsPrice ? (
+                    // "Poner precio" solo para la cajera (la mesera no fija
+                    // precios; estos productos entran en $0 y la cajera ajusta).
+                    hidePrices ? null : (
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, color: T.copper[700],
+                        background: T.copper[50], padding: '4px 10px', borderRadius: 999,
+                        letterSpacing: 0.3, flexShrink: 0,
+                      }}>
+                        Poner precio
+                      </div>
+                    )
+                  ) : (
+                    // Precio del producto: visible también para la mesera, para
+                    // que distinga p.ej. Coca $2.000 de Coca $3.000.
                     <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[800], fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                       {fmtCOP(priceHere)}
                     </div>
@@ -1620,9 +1616,10 @@ export default function NewSale({
                 onPlus={() => updateQty(it.key, +1)}
                 onRemove={() => removeItem(it.key)}
                 onEditKitchen={() => handleEditKitchenItem(it)}
-                onEditAmount={hidePrices ? undefined : () => {
+                onEditAmount={() => {
                   // Buscar el producto vivo del catálogo para traer su valor
                   // base (freeUnitPrice); si no está (borrado), cae a legacy.
+                  // También la mesera puede re-editar (monto/cantidad).
                   const catalogProduct = catalog.find(
                     p => String(p.id) === String(it.productId) && p.source === it.source
                   )
@@ -2630,27 +2627,29 @@ function CartItem({ item, isLast, onMinus, onPlus, onRemove, onEditKitchen, onEd
           </div>
           <div style={{ fontSize: 11, color: T.copper[700], marginTop: 2, fontWeight: 600, letterSpacing: 0.3 }}>
             {hidePrices
-              ? 'VENTA LIBRE · LA CAJERA PONE EL PRECIO'
+              // Mesera: ve la cantidad que escogió el cliente (la cajera pone el
+              // precio al cobrar). Toca la cantidad para corregirla.
+              ? `VENTA LIBRE · ${item.qty} u${item.napa > 0 ? ` (${item.napa} ñapa 🎁)` : ''} · TOCA PARA CAMBIAR`
               : item.qty > 1
                 ? `VENTA LIBRE · ${item.qty} u${item.napa > 0 ? ` (${item.napa} ñapa 🎁)` : ''}`
                 : 'VENTA LIBRE · TOCA EL MONTO PARA CAMBIAR'}
           </div>
         </div>
 
-        {!hidePrices && (
-          <button
-            onClick={onEditAmount}
-            style={{
-              padding: '8px 14px', borderRadius: 12,
-              background: T.copper[50], border: `1.5px solid ${T.copper[300]}`,
-              cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 16, fontWeight: 800, color: T.copper[700],
-              fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
-            }}
-          >
-            {fmtCOP(itemLineTotal(item))}
-          </button>
-        )}
+        {/* Botón de edición. La cajera ve el monto; la mesera ve la cantidad
+            (no ve dinero en el carrito) pero igual puede re-editar. */}
+        <button
+          onClick={onEditAmount}
+          style={{
+            padding: '8px 14px', borderRadius: 12,
+            background: T.copper[50], border: `1.5px solid ${T.copper[300]}`,
+            cursor: 'pointer', fontFamily: 'inherit',
+            fontSize: 16, fontWeight: 800, color: T.copper[700],
+            fontVariantNumeric: 'tabular-nums', letterSpacing: -0.3,
+          }}
+        >
+          {hidePrices ? `${item.qty} u` : fmtCOP(itemLineTotal(item))}
+        </button>
 
         <button onClick={onRemove} style={{
           width: 32, height: 32, borderRadius: 999, marginLeft: 4,

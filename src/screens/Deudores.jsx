@@ -4,10 +4,12 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
-import { watchDebtors, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances } from '../debtors'
+import { watchDebtors, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances, deleteDebtorHistoryEntry, editDebtorPaymentAmount, deleteDebtorSaleEntry } from '../debtors'
 import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
 import { useAuth } from '../context/AuthCtx'
+import { getData } from '../db'
+import { SaleDetailModal } from './Ventas'
 
 export default function Deudores({ onBack }) {
   const isDesktop = useIsDesktop()
@@ -24,6 +26,10 @@ export default function Deudores({ onBack }) {
   // Reparación de balances drifteados (admin-only).
   const [repairing, setRepairing] = useState(false)
   const [repairResult, setRepairResult] = useState(null)
+  // Venta a gestionar (editar/eliminar) desde el historial de un deudor.
+  // Reutiliza el SaleDetailModal de Ventas para no descuadrar la colección sales.
+  const [saleToManage, setSaleToManage] = useState(null)
+  const branches = getData().branches || []
 
   useEffect(() => {
     const unsub = watchDebtors(list => {
@@ -44,6 +50,14 @@ export default function Deudores({ onBack }) {
       .filter(d => !d.mergedInto)
       .map(d => ({ ...d, owed: computeDebtorOwed(d) })),
     [debtors],
+  )
+
+  // Deudor seleccionado SIEMPRE en vivo: cuando watchDebtors trae cambios
+  // (tras editar/borrar un movimiento), el modal de detalle se refresca solo
+  // en vez de quedar con el snapshot viejo del momento del click.
+  const selectedLive = useMemo(
+    () => selected ? (liveDebtors.find(d => d.id === selected.id) || selected) : null,
+    [selected, liveDebtors],
   )
 
   // Drift detectado: deudores cuyo totalOwed cached difiere del balance real.
@@ -294,10 +308,25 @@ export default function Deudores({ onBack }) {
         )}
       </div>
 
-      {selected && !mergeMode && (
+      {selectedLive && !mergeMode && (
         <DebtorDetailModal
-          debtor={selected}
+          debtor={selectedLive}
           onClose={() => setSelected(null)}
+          onManageSale={(sale) => setSaleToManage(sale)}
+        />
+      )}
+
+      {/* Editar/eliminar una VENTA a crédito desde el historial del deudor.
+          Reutiliza el modal de Ventas: él sincroniza la colección sales y
+          ajusta la deuda (adjustDebtorForSaleChange). Se renderiza por encima
+          del detalle del deudor. */}
+      {saleToManage && (
+        <SaleDetailModal
+          sale={saleToManage}
+          branches={branches}
+          hideDelete
+          onClose={() => setSaleToManage(null)}
+          onUpdated={() => setSaleToManage(null)}
         />
       )}
 
@@ -611,9 +640,25 @@ function DebtorRow({ debtor, isLast, onClick, selectable = false, selected = fal
 // ──────────────────────────────────────────────────────────────
 // Modal de detalle del deudor
 // ──────────────────────────────────────────────────────────────
-function DebtorDetailModal({ debtor, onClose }) {
+function DebtorDetailModal({ debtor, onClose, onManageSale }) {
+  const { isAdmin, authUser } = useAuth()
   const [paying, setPaying] = useState(false)
   const [debtorSales, setDebtorSales] = useState([])
+
+  // Solo admin: borrar/editar movimientos. Estas lanzan en error; HistoryItem
+  // captura y muestra el mensaje inline.
+  async function handleDeleteEntry(entry) {
+    // Ventas: quitar del historial + marcar deleted en sales (baja la deuda y
+    // desaparece). Abonos/ajustes: quitar del historial directo.
+    if (entry.type === 'sale') {
+      await deleteDebtorSaleEntry(debtor.id, entry, { byUid: authUser?.uid })
+    } else {
+      await deleteDebtorHistoryEntry(debtor.id, entry, { byUid: authUser?.uid })
+    }
+  }
+  async function handleEditAmount(entry, newAmount) {
+    await editDebtorPaymentAmount(debtor.id, entry, newAmount, { byUid: authUser?.uid })
+  }
   // Balance real desde el historial (computeDebtorOwed). El `debtor` que llega
   // suele venir enriquecido con `owed`; recalculamos por seguridad en caso de
   // que el modal se haya abierto desde otro flujo.
@@ -712,6 +757,10 @@ function DebtorDetailModal({ debtor, onClose }) {
                   entry={h}
                   sale={h.saleId ? salesById[h.saleId] : null}
                   isLast={i === history.length - 1}
+                  isAdmin={isAdmin}
+                  onDelete={handleDeleteEntry}
+                  onEditAmount={handleEditAmount}
+                  onManageSale={onManageSale}
                 />
               ))}
             </div>
@@ -733,11 +782,49 @@ function DebtorDetailModal({ debtor, onClose }) {
   )
 }
 
-function HistoryItem({ entry, sale, isLast }) {
+function HistoryItem({ entry, sale, isLast, isAdmin = false, onDelete, onEditAmount, onManageSale }) {
   const isPayment = entry.type === 'payment'
   const isSale = entry.type === 'sale'
   const isAdjustment = entry.type === 'adjustment'
   const [expanded, setExpanded] = useState(false)
+  // UI de acciones admin (borrar/editar). mode: 'idle' | 'confirmDelete' | 'editAmount'.
+  const [mode, setMode] = useState('idle')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const [amtStr, setAmtStr] = useState('')
+
+  // Los items del historial usan key por índice. Tras borrar, el componente en
+  // un índice puede pasar a representar OTRA entrada: reseteamos la UI inline
+  // cuando cambia la entrada para que el estado (busy/mode) no se "pegue" mal.
+  const entrySig = `${entry.type}|${entry.createdAt ?? ''}|${entry.amount ?? ''}|${entry.delta ?? ''}`
+  useEffect(() => {
+    setMode('idle'); setBusy(false); setErr(null); setAmtStr('')
+  }, [entrySig])
+
+  async function doDelete() {
+    if (busy) return
+    setBusy(true); setErr(null)
+    try {
+      await onDelete?.(entry)
+      // Éxito: el snapshot en vivo refresca la lista; este nodo se desmonta o
+      // su `entry` cambia (efecto de arriba resetea). No tocamos estado aquí.
+    } catch (e) {
+      setErr(e?.message || 'No se pudo eliminar.')
+      setBusy(false)
+    }
+  }
+  async function doSaveAmount() {
+    if (busy) return
+    const n = Number(String(amtStr).replace(/[^0-9]/g, '')) || 0
+    if (n <= 0) { setErr('El monto debe ser mayor a 0.'); return }
+    setBusy(true); setErr(null)
+    try {
+      await onEditAmount?.(entry, n)
+    } catch (e) {
+      setErr(e?.message || 'No se pudo guardar.')
+      setBusy(false)
+    }
+  }
 
   const date = entry.date
     ? new Date(entry.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
@@ -883,6 +970,96 @@ function HistoryItem({ entry, sale, isLast }) {
           {isPayment ? '−' : isAdjustment && entry.delta < 0 ? '−' : '+'}{fmtCOP(Math.abs(entry.amount || entry.delta || 0))}
         </div>
       </div>
+
+      {/* Acciones admin: editar/eliminar movimiento. stopPropagation para no
+          disparar el expand de productos del item. */}
+      {isAdmin && (
+        <div onClick={e => e.stopPropagation()} style={{ marginTop: 8, marginLeft: 42 }}>
+          {mode === 'idle' && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {isSale ? (
+                <>
+                  {sale && (
+                    <button onClick={() => onManageSale?.(sale)} style={histActionBtn(false)}>
+                      ✎ Editar venta
+                    </button>
+                  )}
+                  <button onClick={() => { setErr(null); setMode('confirmDelete') }} style={histActionBtn(true)}>
+                    🗑 Eliminar
+                  </button>
+                </>
+              ) : (
+                <>
+                  {isPayment && (
+                    <button
+                      onClick={() => { setAmtStr(String(Math.round(Number(entry.amount) || 0))); setErr(null); setMode('editAmount') }}
+                      style={histActionBtn(false)}
+                    >
+                      ✎ Editar monto
+                    </button>
+                  )}
+                  <button onClick={() => { setErr(null); setMode('confirmDelete') }} style={histActionBtn(true)}>
+                    🗑 Eliminar
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {mode === 'confirmDelete' && (
+            <div style={{ padding: '8px 10px', borderRadius: 10, background: '#FBE9E5', border: '1px solid #F0C8BE' }}>
+              <div style={{ fontSize: 11.5, color: T.bad, fontWeight: 600, marginBottom: 8, lineHeight: 1.4 }}>
+                {isSale
+                  ? '¿Eliminar esta venta a crédito? Se quita del historial, la deuda baja y la venta queda marcada como eliminada en reportes.'
+                  : isAdjustment
+                    ? '¿Eliminar este ajuste? El saldo se recalcula. Si correspondía a una venta editada, podría descuadrar esa corrección.'
+                    : '¿Eliminar este abono? El saldo del deudor se recalcula automáticamente.'}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button disabled={busy} onClick={doDelete} style={{ ...histActionBtn(true), opacity: busy ? 0.6 : 1 }}>
+                  {busy ? 'Eliminando…' : 'Sí, eliminar'}
+                </button>
+                <button disabled={busy} onClick={() => setMode('idle')} style={histActionBtn(false)}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mode === 'editAmount' && (
+            <div style={{ padding: '8px 10px', borderRadius: 10, background: '#fff', border: `1px solid ${T.neutral[200]}` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <span style={{ color: T.neutral[500], fontSize: 13, fontWeight: 600 }}>$</span>
+                <input
+                  type="text" inputMode="numeric" autoFocus disabled={busy}
+                  value={amtStr}
+                  onChange={e => setAmtStr(e.target.value.replace(/[^0-9]/g, '').replace(/^0+(?=\d)/, ''))}
+                  style={{
+                    flex: 1, minWidth: 0, padding: '7px 10px', borderRadius: 8,
+                    border: `1px solid ${T.neutral[200]}`, outline: 'none',
+                    fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                    color: T.neutral[900], fontVariantNumeric: 'tabular-nums', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button disabled={busy} onClick={doSaveAmount} style={{ ...histActionBtn(false), background: T.ok, color: '#fff', border: 'none', opacity: busy ? 0.6 : 1 }}>
+                  {busy ? 'Guardando…' : 'Guardar'}
+                </button>
+                <button disabled={busy} onClick={() => setMode('idle')} style={histActionBtn(false)}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {err && (
+            <div style={{ marginTop: 6, fontSize: 11, color: T.bad, fontWeight: 600 }}>
+              {err}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1177,6 +1354,16 @@ function moneyInput() {
     fontFamily: 'inherit', fontSize: 16, fontWeight: 700,
     color: T.neutral[900], background: 'transparent',
     fontVariantNumeric: 'tabular-nums',
+  }
+}
+function histActionBtn(danger) {
+  return {
+    padding: '6px 10px', borderRadius: 8,
+    background: danger ? '#FBE9E5' : T.neutral[100],
+    color: danger ? T.bad : T.neutral[700],
+    border: danger ? '1px solid #F0C8BE' : `1px solid ${T.neutral[200]}`,
+    cursor: 'pointer', fontFamily: 'inherit',
+    fontSize: 11.5, fontWeight: 700,
   }
 }
 function quickBtn(active) {

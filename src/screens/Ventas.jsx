@@ -521,7 +521,7 @@ function SalesList({ sales, branches, onClick }) {
 // ──────────────────────────────────────────────────────────────
 // Modal de detalle (exportado para uso desde Movements unificado)
 // ──────────────────────────────────────────────────────────────
-export function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
+export function SaleDetailModal({ sale, branches, onClose, onUpdated, hideDelete = false }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [editing, setEditing] = useState(false)
   const branch = branches.find(b => String(b.id) === String(sale.branchId))
@@ -759,22 +759,24 @@ export function SaleDetailModal({ sale, branches, onClose, onUpdated }) {
                 </svg>
                 Editar
               </button>
-              <button
-                onClick={() => setConfirmDelete(true)}
-                style={{
-                  flex: 1, padding: '11px', borderRadius: 12,
-                  background: '#fff', color: T.bad,
-                  border: `1.5px solid ${T.bad}55`,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  fontSize: 13.5, fontWeight: 700,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M3 4 H11 M5 4 V2 H9 V4 M4 4 V12 H10 V4" stroke={T.bad} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-                Eliminar
-              </button>
+              {!hideDelete && (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  style={{
+                    flex: 1, padding: '11px', borderRadius: 12,
+                    background: '#fff', color: T.bad,
+                    border: `1.5px solid ${T.bad}55`,
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 13.5, fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M3 4 H11 M5 4 V2 H9 V4 M4 4 V12 H10 V4" stroke={T.bad} strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  Eliminar
+                </button>
+              )}
             </div>
           )}
           <button onClick={onClose} style={{

@@ -12,6 +12,7 @@ import {
   getDocs,
   writeBatch,
   increment,
+  runTransaction,
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
 
@@ -323,6 +324,206 @@ export async function mergeDebtors({ debtorIds, survivorId, finalName, byUid }) 
 /** Colección de ventas (local a este módulo, para la fusión). */
 function debtorsSalesCol() {
   return collection(firestoreDb, 'sales')
+}
+
+// ─── Editar / eliminar movimientos del historial (solo admin) ─────────────
+//
+// El historial es la fuente de verdad del saldo (computeDebtorOwed). Estas
+// funciones operan SOLO sobre entradas tipo 'payment' (abono) y 'adjustment'
+// (ajuste), que son "propias" del deudor. Las entradas tipo 'sale' NO se tocan
+// aquí: viven en la colección `sales` y se editan/eliminan con
+// deleteSaleAsAdmin/editSaleItems + adjustDebtorForSaleChange (vía el modal de
+// venta), para no descuadrar reportes ni cierres.
+
+/** Suma neta de una lista de entradas de historial (robusto a lista vacía). */
+function sumDebtorHistory(history) {
+  return (history || []).reduce((acc, e) => {
+    if (e?.type === 'payment') return acc - (Number(e.amount) || 0)
+    if (e?.type === 'adjustment') return acc + (Number(e.delta) || 0)
+    return acc + (Number(e?.amount) || 0)
+  }, 0)
+}
+
+/**
+ * ¿Son la MISMA entrada de historial? Compara los campos identificadores. Para
+ * dos entradas idénticas (ej. un abono duplicado), findIndex con este matcher
+ * devuelve la PRIMERA — así se elimina/edita exactamente UNA, no ambas.
+ */
+function sameHistoryEntry(a, b) {
+  if (!a || !b) return false
+  return a.type === b.type
+    && (a.createdAt ?? null) === (b.createdAt ?? null)
+    && (a.date ?? null) === (b.date ?? null)
+    && (Number(a.amount) || 0) === (Number(b.amount) || 0)
+    && (Number(a.delta) || 0) === (Number(b.delta) || 0)
+    && (a.method ?? null) === (b.method ?? null)
+    && (a.saleId ?? null) === (b.saleId ?? null)
+    && (a.note ?? null) === (b.note ?? null)
+}
+
+/**
+ * Solo admin: ELIMINA una entrada (payment | adjustment) del historial del
+ * deudor y recalcula el saldo. Transacción atómica (read+write) para no chocar
+ * con escrituras concurrentes. Guarda la entrada removida en `auditLog`.
+ *
+ * Lanza si la entrada no se encuentra (alguien la modificó antes) o si es de
+ * tipo 'sale' (esas se manejan desde el modal de venta).
+ */
+export async function deleteDebtorHistoryEntry(debtorId, targetEntry, { byUid } = {}) {
+  if (!debtorId || !targetEntry) throw new Error('Datos incompletos.')
+  if (targetEntry.type === 'sale') {
+    throw new Error('Las ventas se editan o eliminan desde el detalle de la venta.')
+  }
+  const ref = debtorRef(debtorId)
+  return runTransaction(firestoreDb, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) throw new Error('Deudor no encontrado.')
+    const data = snap.data()
+    const history = Array.isArray(data.history) ? data.history : []
+    const idx = history.findIndex(e => sameHistoryEntry(e, targetEntry))
+    if (idx === -1) {
+      throw new Error('No se encontró el movimiento (quizá ya cambió). Cierra y vuelve a abrir.')
+    }
+    const removed = history[idx]
+    const newHistory = [...history.slice(0, idx), ...history.slice(idx + 1)]
+    const newOwed = sumDebtorHistory(newHistory)
+    tx.update(ref, {
+      history: newHistory,
+      totalOwed: newOwed,
+      status: newOwed > 0 ? 'active' : 'paid',
+      lastUpdate: serverTimestamp(),
+      auditLog: arrayUnion({
+        action: 'delete_entry',
+        entry: removed,
+        by: byUid || null,
+        at: Date.now(),
+      }),
+    })
+    return { newOwed }
+  })
+}
+
+/**
+ * Solo admin: edita el MONTO de un abono (payment) del historial y recalcula
+ * el saldo. Transacción atómica. Guarda el antes/después en `auditLog`.
+ * Solo aplica a 'payment' (un ajuste se corrige eliminándolo; una venta, desde
+ * su modal).
+ */
+export async function editDebtorPaymentAmount(debtorId, targetEntry, newAmount, { byUid } = {}) {
+  if (!debtorId || !targetEntry) throw new Error('Datos incompletos.')
+  if (targetEntry.type !== 'payment') {
+    throw new Error('Solo se puede editar el monto de un abono.')
+  }
+  const amt = Number(newAmount) || 0
+  if (amt <= 0) throw new Error('El monto debe ser mayor a 0.')
+  const ref = debtorRef(debtorId)
+  return runTransaction(firestoreDb, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) throw new Error('Deudor no encontrado.')
+    const data = snap.data()
+    const history = Array.isArray(data.history) ? data.history : []
+    const idx = history.findIndex(e => sameHistoryEntry(e, targetEntry))
+    if (idx === -1) {
+      throw new Error('No se encontró el movimiento (quizá ya cambió). Cierra y vuelve a abrir.')
+    }
+    const before = history[idx]
+    const after = { ...before, amount: amt, editedAt: Date.now(), editedBy: byUid || null }
+    const newHistory = [...history]
+    newHistory[idx] = after
+    const newOwed = sumDebtorHistory(newHistory)
+    tx.update(ref, {
+      history: newHistory,
+      totalOwed: newOwed,
+      status: newOwed > 0 ? 'active' : 'paid',
+      lastUpdate: serverTimestamp(),
+      auditLog: arrayUnion({
+        action: 'edit_entry',
+        before,
+        after,
+        by: byUid || null,
+        at: Date.now(),
+      }),
+    })
+    return { newOwed }
+  })
+}
+
+/**
+ * Solo admin: ELIMINA una venta a crédito desde el historial del deudor.
+ * A diferencia del flujo de Movimientos (que conserva la venta y agrega un
+ * ajuste), aquí la quitamos del historial para que desaparezca y la deuda baje
+ * de inmediato; y además marcamos la venta como `deleted` en la colección
+ * `sales` (best-effort) para que reportes y cierres no la cuenten.
+ *
+ * El recálculo del saldo es atómico (transacción) y NO depende de que la venta
+ * tuviera bien seteado debtorId/paymentMethod — opera sobre la entrada visible.
+ */
+export async function deleteDebtorSaleEntry(debtorId, targetEntry, { byUid } = {}) {
+  if (!debtorId || !targetEntry || targetEntry.type !== 'sale') {
+    throw new Error('Movimiento inválido.')
+  }
+  const targetSaleId = targetEntry.saleId || null
+  const ref = debtorRef(debtorId)
+  const result = await runTransaction(firestoreDb, async (tx) => {
+    const snap = await tx.get(ref)
+    if (!snap.exists()) throw new Error('Deudor no encontrado.')
+    const data = snap.data()
+    const history = Array.isArray(data.history) ? data.history : []
+
+    // Quitamos: (1) la entrada de venta exacta (primera coincidencia) y
+    // (2) cualquier 'adjustment' ligado al mismo saleId. Esto evita el
+    // doble descuento si una eliminación/edición previa ya había dejado un
+    // ajuste para esa venta: en ese caso venta(+X)+ajuste(−X) se van juntos
+    // (cambio neto 0); si NO había ajuste, se va solo la venta (−X). Correcto
+    // en ambos escenarios.
+    let saleMatched = false
+    const removed = []
+    const newHistory = history.filter(e => {
+      if (!saleMatched && sameHistoryEntry(e, targetEntry)) {
+        saleMatched = true
+        removed.push(e)
+        return false
+      }
+      if (targetSaleId && e?.type === 'adjustment' && (e.saleId ?? null) === targetSaleId) {
+        removed.push(e)
+        return false
+      }
+      return true
+    })
+    if (!saleMatched) {
+      throw new Error('No se encontró el movimiento (quizá ya cambió). Cierra y vuelve a abrir.')
+    }
+    const newOwed = sumDebtorHistory(newHistory)
+    tx.update(ref, {
+      history: newHistory,
+      totalOwed: newOwed,
+      status: newOwed > 0 ? 'active' : 'paid',
+      lastUpdate: serverTimestamp(),
+      auditLog: arrayUnion({
+        action: 'delete_sale_entry',
+        entry: removed,
+        by: byUid || null,
+        at: Date.now(),
+      }),
+    })
+    return { newOwed }
+  })
+
+  // Marcar la venta como eliminada en `sales` (para reportes/cierres). Si falla,
+  // la deuda ya quedó corregida; solo avisamos por consola.
+  if (targetEntry.saleId) {
+    try {
+      await updateDoc(doc(firestoreDb, 'sales', targetEntry.saleId), {
+        status: 'deleted',
+        deletedAt: serverTimestamp(),
+        deletedBy: byUid || null,
+        deleteReason: 'eliminada desde el historial del deudor',
+      })
+    } catch (err) {
+      console.warn('[debtors] venta quitada del deudor, pero no se pudo marcar deleted en sales:', err?.message || err)
+    }
+  }
+  return result
 }
 
 /**

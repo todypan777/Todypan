@@ -3,23 +3,49 @@ import { T } from '../tokens'
 import { fmtCOP } from '../utils/format'
 import { Card, Modal, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { addProduct, updateProduct, deleteProduct, getData } from '../db'
+import { addProduct, updateProduct, deleteProduct, getData, ensureSupplier } from '../db'
 import { useIsDesktop } from '../context/DesktopCtx'
 import { watchCashierProducts, deleteCashierProduct } from '../products'
 import { watchAllSales } from '../sales'
 
 // ── Helpers de cálculo ─────────────────────────────────────────
+// Costo por unidad de UN proveedor: por paquete → costo/unidades; o directo.
+function supplierUnitCost(s) {
+  if (!s) return 0
+  const pc = Number(s.packageCost) || 0
+  if (s.byPackage) {
+    const u = Number(s.unitsPerPackage) || 0
+    return u > 0 ? pc / u : 0
+  }
+  return pc
+}
+
 function calcProduct(p) {
-  const costPerUnit = p.byPackage
-    ? (p.unitsPerPackage > 0 ? p.packageCost / p.unitsPerPackage : 0)
-    : p.packageCost
+  // Costos por proveedor (si los hay). El margen usa el MÁS ALTO (peor caso);
+  // marcamos también el más barato para comparar quién trae el producto mejor.
+  const supplierCosts = Array.isArray(p.suppliers)
+    ? p.suppliers
+        .map(s => ({ id: s.id || null, name: s.name || '', cost: supplierUnitCost(s) }))
+        .filter(s => s.cost > 0)
+    : []
+  let costPerUnit, cheapest = null, dearest = null
+  if (supplierCosts.length > 0) {
+    cheapest = supplierCosts.reduce((a, b) => (b.cost < a.cost ? b : a))
+    dearest = supplierCosts.reduce((a, b) => (b.cost > a.cost ? b : a))
+    costPerUnit = dearest.cost
+  } else {
+    // Legacy / sin proveedores: costo único por paquete o por unidad.
+    costPerUnit = p.byPackage
+      ? (p.unitsPerPackage > 0 ? p.packageCost / p.unitsPerPackage : 0)
+      : p.packageCost
+  }
   const prices = Object.values(p.pricesByBranch || {}).map(Number).filter(n => n > 0)
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0
   const maxPrice = prices.length > 0 ? Math.max(...prices) : 0
   const avgPrice = prices.length > 0 ? prices.reduce((s, n) => s + n, 0) / prices.length : 0
   const profit = avgPrice - costPerUnit
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
-  return { costPerUnit, profit, margin, minPrice, maxPrice, avgPrice, prices }
+  return { costPerUnit, profit, margin, minPrice, maxPrice, avgPrice, prices, supplierCosts, cheapest, dearest }
 }
 
 function priceBreakdown(p) {
@@ -48,7 +74,10 @@ function needsSetup(p) {
   if (p.freeAmount) return !(Number(p.freeUnitPrice) > 0)
   if (p.isLunch) return false
   if (p.source === 'cashier') return true
-  if (!p.packageCost || Number(p.packageCost) <= 0) return true
+  // Costo: vale el de proveedores (si los hay) o el costo único legacy.
+  const hasSupplierCost = Array.isArray(p.suppliers) && p.suppliers.some(s => supplierUnitCost(s) > 0)
+  const hasLegacyCost = Number(p.packageCost) > 0
+  if (!hasSupplierCost && !hasLegacyCost) return true
   if (branchesMissingPrice(p).length > 0) return true
   return false
 }
@@ -117,6 +146,41 @@ function SetterTag({ setter }) {
     >
       {' '}({setter.approx ? '~' : ''}{setter.name})
     </span>
+  )
+}
+
+// Comparativo de proveedores con su costo/unidad. El más barato va en verde
+// con ⭐; el margen del producto usa el más CARO (peor caso).
+function SuppliersBreakdown({ product, compact }) {
+  const list = product.supplierCosts || []
+  if (list.length === 0) return null
+  const cheapestCost = product.cheapest?.cost
+  const sorted = [...list].sort((a, b) => a.cost - b.cost)
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        {compact ? 'Proveedores' : `Proveedores (${list.length})`}
+      </div>
+      {sorted.map((s, i) => {
+        const isCheapest = list.length > 1 && s.cost === cheapestCost
+        return (
+          <div key={s.id || s.name || i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, fontSize: compact ? 11 : 12 }}>
+            <span style={{
+              color: isCheapest ? T.ok : T.neutral[600], fontWeight: isCheapest ? 700 : 600,
+              minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {isCheapest ? '⭐ ' : ''}{s.name || 'Sin nombre'}
+            </span>
+            <span style={{
+              color: isCheapest ? T.ok : T.neutral[700], fontWeight: 700,
+              fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+            }}>
+              {fmtCOP(Math.round(s.cost))}/u
+            </span>
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -260,6 +324,8 @@ export default function Products({ products, onRefresh }) {
   const [search, setSearch] = useState('')
   // Filtro por estado de configuración: 'all' | 'configured' | 'pending'.
   const [statusFilter, setStatusFilter] = useState('all')
+  // Filtro por proveedor: 'all' o el nombre de un proveedor.
+  const [supplierFilter, setSupplierFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
   const [editTarget, setEditTarget] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
@@ -319,14 +385,26 @@ export default function Products({ products, onRefresh }) {
     return [...adminEnriched, ...cashierEnriched]
   }, [products, cashierProducts])
 
-  // Filtrar por búsqueda + estado de configuración + ordenar A–Z.
+  // Lista de proveedores disponibles para el filtro: maestros + los usados
+  // en productos (por si quedó alguno sin estar en la lista maestra).
+  const supplierOptions = useMemo(() => {
+    const names = new Set()
+    ;(getData().suppliers || []).forEach(s => { if (s.name) names.add(s.name) })
+    all.forEach(p => (p.suppliers || []).forEach(s => { if (s.name) names.add(s.name) }))
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [all])
+
+  // Filtrar por búsqueda + estado + proveedor + ordenar A–Z.
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
     let list = q ? all.filter(p => (p.name || '').toLowerCase().includes(q)) : all
     if (statusFilter === 'configured') list = list.filter(p => !needsSetup(p))
     else if (statusFilter === 'pending') list = list.filter(needsSetup)
+    if (supplierFilter !== 'all') {
+      list = list.filter(p => (p.suppliers || []).some(s => s.name === supplierFilter))
+    }
     return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-  }, [all, search, statusFilter])
+  }, [all, search, statusFilter, supplierFilter])
 
   const missingCount = all.filter(needsSetup).length
   const configuredCount = all.length - missingCount
@@ -402,6 +480,28 @@ export default function Products({ products, onRefresh }) {
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Filtro por proveedor (solo si hay proveedores definidos/usados) */}
+      {supplierOptions.length > 0 && (
+        <div style={{ padding: '0 16px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: T.neutral[500] }}>Proveedor:</span>
+          <select
+            value={supplierFilter}
+            onChange={e => setSupplierFilter(e.target.value)}
+            style={{
+              flex: 1, maxWidth: 280, padding: '8px 10px', borderRadius: 10,
+              border: `1px solid ${supplierFilter !== 'all' ? T.copper[400] : T.neutral[200]}`,
+              background: '#fff', fontFamily: 'inherit', fontSize: 13,
+              fontWeight: 600, color: T.neutral[800], cursor: 'pointer', outline: 'none',
+            }}
+          >
+            <option value="all">Todos</option>
+            {supplierOptions.map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
         </div>
       )}
 
@@ -599,6 +699,7 @@ function ProductTable({ products, onEdit, onDelete, setterFor }) {
                   {p.notes && (
                     <div style={{ fontSize: 11, color: T.neutral[400], fontStyle: 'italic', marginTop: 2 }}>{p.notes}</div>
                   )}
+                  <SuppliersBreakdown product={p} compact />
                 </div>
               </div>
 
@@ -606,6 +707,11 @@ function ProductTable({ products, onEdit, onDelete, setterFor }) {
                 <span style={{ fontSize: 14, fontWeight: 600, color: T.neutral[600], fontVariantNumeric: 'tabular-nums' }}>
                   {p.costPerUnit > 0 ? fmtCOP(p.costPerUnit) : <span style={{ color: T.neutral[300] }}>—</span>}
                 </span>
+                {p.supplierCosts && p.supplierCosts.length > 1 && (
+                  <div style={{ fontSize: 9.5, color: T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 1 }}>
+                    el más alto
+                  </div>
+                )}
               </div>
 
               <div style={{ flex: 2.2, textAlign: 'right', paddingRight: 8 }}>
@@ -712,6 +818,11 @@ function ProductCards({ products, onEdit, onDelete, setterFor }) {
                 <div style={{ borderTop: hasMetrics ? `0.5px solid ${T.neutral[200]}` : 'none', paddingTop: hasMetrics ? 8 : 0 }}>
                   <PricesByBranchBlock product={p} setterFor={setterFor}/>
                 </div>
+                {p.supplierCosts && p.supplierCosts.length > 0 && (
+                  <div style={{ borderTop: `0.5px solid ${T.neutral[200]}`, paddingTop: 8, marginTop: 8 }}>
+                    <SuppliersBreakdown product={p} />
+                  </div>
+                )}
               </div>
 
               {p.notes && (
@@ -774,9 +885,30 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
   const [name,            setName]            = useState(initial?.name || '')
   const [freeAmount,      setFreeAmount]      = useState(initial?.freeAmount === true)
   const [freeBaseStr,     setFreeBaseStr]      = useState(initial?.freeUnitPrice != null && Number(initial.freeUnitPrice) > 0 ? String(initial.freeUnitPrice) : '')
-  const [byPackage,       setByPackage]        = useState(initial?.byPackage ?? false)
-  const [packageCost,     setPackageCost]      = useState(initial?.packageCost != null && Number(initial.packageCost) > 0 ? String(initial.packageCost) : '')
-  const [unitsPerPackage, setUnitsPerPackage]  = useState(initial?.unitsPerPackage != null && Number(initial.unitsPerPackage) > 0 ? String(initial.unitsPerPackage) : '')
+  // Proveedores del producto (cada uno con su costo). Migración: si el producto
+  // traía un costo único legacy y aún no tiene proveedores, lo precargamos como
+  // una fila sin nombre para no perder el dato.
+  const [supplierRows, setSupplierRows] = useState(() => {
+    if (Array.isArray(initial?.suppliers) && initial.suppliers.length > 0) {
+      return initial.suppliers.map(s => ({
+        id: s.id || null,
+        name: s.name || '',
+        byPackage: !!s.byPackage,
+        packageCostStr: Number(s.packageCost) > 0 ? String(s.packageCost) : '',
+        unitsPerPackageStr: Number(s.unitsPerPackage) > 0 ? String(s.unitsPerPackage) : '',
+      }))
+    }
+    if (Number(initial?.packageCost) > 0) {
+      return [{
+        id: null, name: '',
+        byPackage: !!initial?.byPackage,
+        packageCostStr: String(initial.packageCost),
+        unitsPerPackageStr: Number(initial?.unitsPerPackage) > 0 ? String(initial.unitsPerPackage) : '',
+      }]
+    }
+    return [{ id: null, name: '', byPackage: false, packageCostStr: '', unitsPerPackageStr: '' }]
+  })
+  const masterSuppliers = getData().suppliers || []
   const [notes,           setNotes]            = useState(initial?.notes || '')
   const [busy,            setBusy]             = useState(false)
   const [priceInputs, setPriceInputs] = useState(() => {
@@ -792,9 +924,28 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
     setPriceInputs(prev => ({ ...prev, [String(bid)]: val }))
   }
 
-  const pc = Number(packageCost) || 0
-  const up = Number(unitsPerPackage) || 1
-  const costPerUnit = byPackage ? (up > 0 ? pc / up : 0) : pc
+  // Costo por unidad de UNA fila de proveedor.
+  function rowUnitCost(r) {
+    const pcv = Number(r.packageCostStr) || 0
+    if (r.byPackage) { const u = Number(r.unitsPerPackageStr) || 0; return u > 0 ? pcv / u : 0 }
+    return pcv
+  }
+  const rowCosts = supplierRows.map(rowUnitCost)
+  const validRowCosts = rowCosts.filter(c => c > 0)
+  // Margen con el costo MÁS ALTO (peor caso); marcamos el más barato.
+  const costForMargin = validRowCosts.length > 0 ? Math.max(...validRowCosts) : 0
+  const cheapestCost = validRowCosts.length > 0 ? Math.min(...validRowCosts) : 0
+  const costPerUnit = costForMargin
+
+  function updateRow(i, patch) {
+    setSupplierRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+  }
+  function addRow() {
+    setSupplierRows(prev => [...prev, { id: null, name: '', byPackage: false, packageCostStr: '', unitsPerPackageStr: '' }])
+  }
+  function removeRow(i) {
+    setSupplierRows(prev => prev.length <= 1 ? prev : prev.filter((_, idx) => idx !== i))
+  }
 
   const definedPrices = Object.values(priceInputs).map(Number).filter(n => n > 0)
   const avgPrice = definedPrices.length > 0
@@ -804,7 +955,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
   const margin = avgPrice > 0 ? (profit / avgPrice) * 100 : 0
 
   const freeBase = Number(freeBaseStr) || 0
-  const canSave = name.trim() && (freeAmount ? freeBase >= MIN_BASE : (pc > 0 && (!byPackage || up > 0)))
+  const canSave = name.trim() && (freeAmount ? freeBase >= MIN_BASE : validRowCosts.length > 0)
 
   async function handleSave() {
     if (!canSave || busy) return
@@ -817,6 +968,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
             freeUnitPrice: freeBase,
             pricesByBranch: {},
             priceSetByBranch: {},
+            suppliers: [],
             packageCost: 0,
             unitsPerPackage: 1,
             byPackage: false,
@@ -840,12 +992,30 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
                 delete priceSetByBranch[bid]
               }
             })
+            // Proveedores con costo > 0. Los nombres nuevos se agregan a la
+            // lista maestra. El costo legacy se sincroniza con el MÁS ALTO para
+            // que el resto de la app (que lee packageCost) siga funcionando.
+            const suppliers = supplierRows
+              .map(r => {
+                const cost = rowUnitCost(r)
+                if (cost <= 0) return null
+                const nm = r.name.trim()
+                const id = nm ? ensureSupplier(nm) : null
+                return {
+                  id, name: nm,
+                  byPackage: r.byPackage,
+                  packageCost: Number(r.packageCostStr) || 0,
+                  unitsPerPackage: r.byPackage ? (Number(r.unitsPerPackageStr) || 1) : 1,
+                }
+              })
+              .filter(Boolean)
             return {
               name: name.trim(),
               freeAmount: false,
-              byPackage,
-              packageCost: pc,
-              unitsPerPackage: byPackage ? up : 1,
+              suppliers,
+              byPackage: false,
+              packageCost: Math.round(costForMargin),
+              unitsPerPackage: 1,
               pricesByBranch,
               priceSetByBranch,
               notes: notes.trim(),
@@ -954,56 +1124,99 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
       ) : (
       <>
       <div style={{ marginBottom: 14 }}>
-        <div style={labelStyle}>¿Cómo lo compras?</div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {[
-            { val: true,  label: 'Por paquete / bulto' },
-            { val: false, label: 'Por unidad directa' },
-          ].map(o => (
-            <button key={String(o.val)} onClick={() => setByPackage(o.val)} style={{
-              flex: 1, padding: '10px 8px', borderRadius: 10, border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-              background: byPackage === o.val ? T.copper[500] : T.neutral[100],
-              color: byPackage === o.val ? '#fff' : T.neutral[600],
-            }}>
-              {o.label}
-            </button>
-          ))}
+        <div style={labelStyle}>Proveedores y costo</div>
+        <div style={{ fontSize: 11.5, color: T.neutral[500], marginBottom: 8, lineHeight: 1.4 }}>
+          Agrega uno o varios proveedores con su costo. La app marca el <b>más barato</b> y calcula la ganancia con el <b>más alto</b>.
         </div>
+        {masterSuppliers.length > 0 && (
+          <datalist id="supplier-names">
+            {masterSuppliers.map(s => <option key={s.id} value={s.name} />)}
+          </datalist>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {supplierRows.map((r, i) => {
+            const unit = rowUnitCost(r)
+            const isCheapest = supplierRows.length > 1 && unit > 0 && unit === cheapestCost
+            const isDearest = supplierRows.length > 1 && unit > 0 && unit === costForMargin && cheapestCost !== costForMargin
+            return (
+              <div key={i} style={{
+                padding: '10px 12px', borderRadius: 12,
+                border: `1px solid ${isCheapest ? T.ok + '66' : T.neutral[200]}`,
+                background: isCheapest ? '#F1F8F1' : '#fff',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <input
+                    type="text" list="supplier-names"
+                    value={r.name}
+                    onChange={e => updateRow(i, { name: e.target.value })}
+                    placeholder="Proveedor (ej: Harinera Central)"
+                    style={{ ...inputStyle, flex: 1, padding: '9px 12px', fontSize: 14 }}
+                  />
+                  {supplierRows.length > 1 && (
+                    <button onClick={() => removeRow(i)} title="Quitar proveedor" style={{
+                      width: 32, height: 32, borderRadius: 8, border: 'none', flexShrink: 0,
+                      background: '#FAE8E6', color: T.bad, cursor: 'pointer', lineHeight: 1,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+                    }}>×</button>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                  {[
+                    { val: true,  label: 'Por paquete' },
+                    { val: false, label: 'Por unidad' },
+                  ].map(o => (
+                    <button key={String(o.val)} onClick={() => updateRow(i, { byPackage: o.val })} style={{
+                      flex: 1, padding: '8px', borderRadius: 8, border: 'none',
+                      cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 600,
+                      background: r.byPackage === o.val ? T.copper[500] : T.neutral[100],
+                      color: r.byPackage === o.val ? '#fff' : T.neutral[600],
+                    }}>{o.label}</button>
+                  ))}
+                </div>
+                {r.byPackage ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <div>
+                      <div style={labelStyle}>Costo paquete ($)</div>
+                      <input type="number" min="0" value={r.packageCostStr}
+                        onChange={e => updateRow(i, { packageCostStr: e.target.value })}
+                        placeholder="Ej: 18000" style={inputStyle} />
+                    </div>
+                    <div>
+                      <div style={labelStyle}>Unidades x paq</div>
+                      <input type="number" min="1" value={r.unitsPerPackageStr}
+                        onChange={e => updateRow(i, { unitsPerPackageStr: e.target.value })}
+                        placeholder="Ej: 12" style={inputStyle} />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={labelStyle}>Costo por unidad ($)</div>
+                    <input type="number" min="0" value={r.packageCostStr}
+                      onChange={e => updateRow(i, { packageCostStr: e.target.value })}
+                      placeholder="Ej: 1500" style={inputStyle} />
+                  </div>
+                )}
+                {unit > 0 && (
+                  <div style={{
+                    marginTop: 6, fontSize: 11.5, fontWeight: 700,
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+                    color: isCheapest ? T.ok : T.neutral[600],
+                  }}>
+                    <span>{isCheapest ? '⭐ Más barato' : isDearest ? 'Se usa para el margen' : ''}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(Math.round(unit))}/u</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        <button onClick={addRow} style={{
+          marginTop: 10, width: '100%', padding: '10px', borderRadius: 10,
+          background: '#fff', border: `1.5px dashed ${T.copper[300]}`,
+          color: T.copper[700], cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 13, fontWeight: 700,
+        }}>+ Agregar otro proveedor</button>
       </div>
-
-      {byPackage ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-          <div>
-            <div style={labelStyle}>Costo del paquete ($)</div>
-            <input
-              type="number" min="0" value={packageCost}
-              onChange={e => setPackageCost(e.target.value)}
-              placeholder="Ej: 18000"
-              style={inputStyle}
-            />
-          </div>
-          <div>
-            <div style={labelStyle}>Unidades por paquete</div>
-            <input
-              type="number" min="1" value={unitsPerPackage}
-              onChange={e => setUnitsPerPackage(e.target.value)}
-              placeholder="Ej: 12"
-              style={inputStyle}
-            />
-          </div>
-        </div>
-      ) : (
-        <div style={{ marginBottom: 14 }}>
-          <div style={labelStyle}>Costo por unidad ($)</div>
-          <input
-            type="number" min="0" value={packageCost}
-            onChange={e => setPackageCost(e.target.value)}
-            placeholder="Ej: 1500"
-            style={inputStyle}
-          />
-        </div>
-      )}
 
       <div style={{ marginBottom: 14 }}>
         <div style={labelStyle}>Precio de venta por panadería ($)</div>
@@ -1031,7 +1244,7 @@ function ProductForm({ initial, isEdit, source, onClose, onSave }) {
         </div>
       </div>
 
-      {pc > 0 && avgPrice > 0 && (
+      {costForMargin > 0 && avgPrice > 0 && (
         <div style={{
           marginBottom: 16, padding: '12px 14px', borderRadius: 12,
           background: marginBg(margin),

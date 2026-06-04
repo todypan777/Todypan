@@ -55,6 +55,7 @@ function defaultData() {
     attendance: {},
     reminders: [],
     products: [],
+    suppliers: [],            // lista maestra de proveedores { id, name }
     incomeCats: defaultIncomeCats,
     expenseCats: defaultExpenseCats,
     branches: [
@@ -90,6 +91,7 @@ function migrate(d) {
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []
   if (!d.products) d.products = []
+  if (!Array.isArray(d.suppliers)) d.suppliers = []
   // Migracion a precios por panaderia (modelo nuevo): se borra salePrice
   // antiguo asi cada cajera ingresa el precio real la primera vez en su
   // panaderia. Si un producto YA tiene pricesByBranch, no se toca.
@@ -333,6 +335,23 @@ export function getIncomeCats() { return _data.incomeCats }
 export function getExpenseCats() { return _data.expenseCats }
 export function setIncomeCats(cats) { _data.incomeCats = cats; persist() }
 export function setExpenseCats(cats) { _data.expenseCats = cats; persist() }
+
+// ─── Proveedores (lista maestra para clasificar productos) ────────
+export function getSuppliers() { return _data.suppliers || [] }
+export function setSuppliers(list) { _data.suppliers = list; persist() }
+// Crea un proveedor si no existe (match por nombre, case-insensitive) y
+// devuelve su id. Idempotente: si ya existe, devuelve el id existente.
+export function ensureSupplier(name) {
+  const clean = String(name || '').trim()
+  if (!clean) return null
+  const list = _data.suppliers || []
+  const found = list.find(s => s.name.toLowerCase() === clean.toLowerCase())
+  if (found) return found.id
+  const id = 'sup_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+  _data.suppliers = [...list, { id, name: clean }]
+  persist()
+  return id
+}
 
 // ─── Panaderías ───────────────────────────────────────────────
 export function getBranches() { return _data.branches }

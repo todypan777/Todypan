@@ -27,6 +27,8 @@ import ConnectionChip from '../components/ConnectionChip'
 import { useOnlineStatus, useDataSaver, isDataSaverEnabled, applyDataSaverOnBoot, ensureNetworkForWaiting } from '../utils/network'
 import { requestPersistentStorage, useStorageHealth, onLocalWriteFailure } from '../utils/storage'
 import MyHistoricalSales from './MyHistoricalSales'
+import { getCustomerOrder } from '../customerOrders'
+import { WEB_ORDER_BRANCH_NAME, customerCartToLunchCommanda } from '../utils/customerOrder'
 import {
   watchCashierProducts,
   mergeProductCatalogs,
@@ -61,6 +63,61 @@ export default function CashierApp({ authUser, userDoc, session, availableSessio
     else applyDataSaverOnBoot().catch(() => {})
   }, [openingPending])
 
+  // ── Pedido web (/comanda/{id}) atendido por la PROPIA cajera ──
+  // OrderConfirm redirige a /?webOrder={id} cuando la cajera dueña del turno
+  // toca "Atender este pedido". Lo capturamos aquí (su pantalla), validamos
+  // que el turno actual sea de la panadería destino y precargamos la comanda
+  // en su NewSale — mismo resultado que el modo asistir del admin, pero como
+  // ella misma. shape: null | { id, lunchCommanda }
+  const [webOrder, setWebOrder] = useState(null)
+  const webOrderIdRef = useRef(null)
+
+  // 1) Captura: leer el query param al montar y limpiarlo de la URL.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const id = params.get('webOrder')
+    if (!id) return
+    webOrderIdRef.current = id
+    try {
+      const url = new URL(window.location.href)
+      url.searchParams.delete('webOrder')
+      window.history.replaceState({}, '', url.toString())
+    } catch {}
+  }, [])
+
+  // 2) Procesa: cuando el turno está listo (apertura confirmada) y es de la
+  //    sede destino, cargamos el pedido y armamos la comanda.
+  useEffect(() => {
+    const id = webOrderIdRef.current
+    if (!id || webOrder) return
+    if (openingPending) return // esperar a que confirme la apertura
+    const branches = getData().branches || []
+    const targetBranch = branches.find(b => b.name === WEB_ORDER_BRANCH_NAME)
+    // Seguridad: solo se atiende si este turno es de la panadería destino.
+    if (!targetBranch || session.branchId !== targetBranch.id) {
+      webOrderIdRef.current = null
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const order = await getCustomerOrder(id)
+        if (cancelled) return
+        if (!order || order.status === 'confirmed') {
+          webOrderIdRef.current = null
+          return
+        }
+        const lunchCommanda = customerCartToLunchCommanda(order.cart || [])
+        webOrderIdRef.current = null
+        setWebOrder({ id, lunchCommanda })
+      } catch (err) {
+        console.warn('[CashierApp] no se pudo cargar el pedido web:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [session.id, session.branchId, openingPending, webOrder])
+
   return (
     <div style={{
       minHeight: '100dvh', background: T.neutral[50],
@@ -83,7 +140,13 @@ export default function CashierApp({ authUser, userDoc, session, availableSessio
       {session.openingConfirmation?.status === 'pending' ? (
         <ConfirmOpeningScreen session={session} userDoc={userDoc} authUser={authUser} />
       ) : (
-        <ActiveSession session={session} userDoc={userDoc} authUser={authUser} />
+        <ActiveSession
+          session={session}
+          userDoc={userDoc}
+          authUser={authUser}
+          webOrder={webOrder}
+          onConsumedCustomerOrder={() => setWebOrder(null)}
+        />
       )}
     </div>
   )
@@ -800,6 +863,10 @@ export function ActiveSession({
   // Pedido web (/comanda/{id}) que el admin entró a atender: abre NewSale con
   // los almuerzos pre-cargados al montar. Solo aplica en modo asistir.
   initialLunchCommanda = null,
+  // Pedido web atendido por la PROPIA cajera (no asistir). Llega asíncrono
+  // desde CashierApp (tras cargar el doc), así que se engancha por efecto.
+  // shape: null | { id, lunchCommanda }
+  webOrder = null,
   onConsumedCustomerOrder,
   onExitAssist,
 }) {
@@ -838,6 +905,19 @@ export function ActiveSession({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Cajera atendiendo su propio pedido web: llega asíncrono desde CashierApp,
+  // así que cuando aparezca cargamos la comanda y abrimos NewSale. No aplica
+  // en modo asistir (ese va por el efecto de montaje de arriba).
+  useEffect(() => {
+    if (isAssist) return
+    if (webOrder && Array.isArray(webOrder.lunchCommanda) && webOrder.lunchCommanda.length > 0) {
+      setPendingOrderCommanda(webOrder.lunchCommanda)
+      setPendingOrderId(webOrder.id)
+      setNewSaleOpen(true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webOrder?.id])
 
   function clearPendingOrder() {
     if (pendingOrderCommanda || pendingOrderId) {
@@ -1158,7 +1238,8 @@ export function ActiveSession({
                 adminName: assistMode.adminName,
                 customerOrderId: pendingOrderId || null,
               } : undefined}
-              initialLunchCommanda={isAssist ? pendingOrderCommanda : null}
+              initialLunchCommanda={pendingOrderCommanda}
+              customerOrderId={!isAssist ? (pendingOrderId || null) : null}
               onCancel={() => { setNewSaleOpen(false); clearPendingOrder() }}
               onSaved={() => { setNewSaleOpen(false); clearPendingOrder() }}
             />

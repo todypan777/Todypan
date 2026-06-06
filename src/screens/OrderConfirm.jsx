@@ -7,6 +7,7 @@ import { getData, initDB } from '../db'
 import { watchCustomerOrder } from '../customerOrders'
 import { watchOpenSessions } from '../cashSessions'
 import { formatSelection, REPLACEMENT_LABELS, formatAddonLine } from '../utils/lunchFormat'
+import { WEB_ORDER_BRANCH_NAME } from '../utils/customerOrder'
 
 // ──────────────────────────────────────────────────────────────────
 // /comanda/:id — pantalla pública (no fuerza login) que muestra un
@@ -25,8 +26,8 @@ import { formatSelection, REPLACEMENT_LABELS, formatAddonLine } from '../utils/l
 //     "Ya confirmado por X el [hora]" — evita dobles envíos.
 // ──────────────────────────────────────────────────────────────────
 
-// La panadería que recibe los pedidos web (por ahora hardcoded en B).
-const WEB_ORDER_BRANCH_NAME = 'Panadería B'
+// La panadería que recibe los pedidos web vive en ../utils/customerOrder
+// (WEB_ORDER_BRANCH_NAME), compartida con ActiveTurnsCard y CashierApp.
 
 export default function OrderConfirm({ orderId }) {
   const { authUser, userDoc, loading: authLoading } = useAuth()
@@ -54,6 +55,10 @@ export default function OrderConfirm({ orderId }) {
   }, [orderId])
 
   const isAdmin = userDoc?.role === 'admin' && userDoc?.status === 'approved'
+  // Staff aprobado que no es admin (cajera, etc.). Puede VER la acción de
+  // atender, pero AttendView decide si realmente puede según su turno.
+  const isApprovedStaff = !!userDoc && userDoc?.status === 'approved' && userDoc?.role !== 'admin'
+  const canSeeAttend = isAdmin || isApprovedStaff
 
   return (
     <div style={{
@@ -80,14 +85,16 @@ export default function OrderConfirm({ orderId }) {
           <ConfirmedView order={order} />
         )}
 
-        {!loading && order && order.status !== 'confirmed' && !isAdmin && (
+        {!loading && order && order.status !== 'confirmed' && !canSeeAttend && (
           <CustomerView order={order} />
         )}
 
-        {!loading && dbReady && order && order.status !== 'confirmed' && isAdmin && (
-          <AdminConfirmView
+        {!loading && dbReady && order && order.status !== 'confirmed' && canSeeAttend && (
+          <AttendView
             order={order}
             orderId={orderId}
+            isAdmin={isAdmin}
+            authUser={authUser}
           />
         )}
       </div>
@@ -460,14 +467,18 @@ function CustomerView({ order }) {
   )
 }
 
-// ─── Vista: admin confirma ────────────────────────────────────────
-// El admin NO confirma directo aquí. Tap → entra en MODO ASISTIR de la
-// cajera de Panadería B con los almuerzos del cliente pre-cargados en la
-// comanda. El admin escribe el nombre del cliente en el modal "Enviar
-// comanda" (donde es OBLIGATORIO) y puede agregar bebidas si quiere.
-// Al enviar la comanda, el flujo normal crea openTab + kitchenOrders y
-// marca el customerOrder como confirmado.
-function AdminConfirmView({ order, orderId }) {
+// ─── Vista: atender el pedido (admin o cajera del turno) ──────────
+// Nadie confirma directo aquí. Tap → se entra al flujo de venta con los
+// almuerzos del cliente pre-cargados en la comanda:
+//   - ADMIN  → /?assistOrder={id} → MODO ASISTIR sobre el turno de la
+//     panadería destino (lo capta ActiveTurnsCard).
+//   - CAJERA dueña del turno de la sede destino → /?webOrder={id} → su
+//     propia pantalla lo precarga (lo capta CashierApp).
+// En ambos casos se escribe el nombre del cliente en el modal "Enviar
+// comanda" (OBLIGATORIO), se pueden agregar bebidas, y al enviar el flujo
+// normal crea openTab + kitchenOrders y marca el customerOrder como
+// confirmado (con el nombre de quien lo envió).
+function AttendView({ order, orderId, isAdmin, authUser }) {
   const [openSessions, setOpenSessions] = useState([])
 
   useEffect(() => watchOpenSessions(setOpenSessions), [])
@@ -486,13 +497,23 @@ function AdminConfirmView({ order, orderId }) {
     [openSessions, targetBranch]
   )
 
-  function handleAtender() {
-    // Redirige a la app principal con el orderId en query — ActiveTurnsCard
-    // lo detecta al montar, abre modo asistir y pre-carga la comanda.
-    window.location.href = `/?assistOrder=${encodeURIComponent(orderId)}`
-  }
+  // ¿La persona logueada es la cajera dueña del turno de la sede destino?
+  const isOwnerCashier = !isAdmin && !!targetSession
+    && targetSession.cashierUid === authUser?.uid
 
-  const canAtender = !!targetSession
+  // El admin siempre puede atender (modo asistir). La cajera solo si es la
+  // dueña del turno de la sede destino.
+  const canAtender = !!targetSession && (isAdmin || isOwnerCashier)
+
+  function handleAtender() {
+    if (isAdmin) {
+      // ActiveTurnsCard lo detecta al montar, abre modo asistir y pre-carga.
+      window.location.href = `/?assistOrder=${encodeURIComponent(orderId)}`
+    } else {
+      // CashierApp (la pantalla de la propia cajera) lo detecta y pre-carga.
+      window.location.href = `/?webOrder=${encodeURIComponent(orderId)}`
+    }
+  }
 
   return (
     <>
@@ -504,8 +525,8 @@ function AdminConfirmView({ order, orderId }) {
           Pedido pendiente · listo para atender
         </div>
         <div style={{ fontSize: 12.5, color: T.neutral[700], lineHeight: 1.5 }}>
-          Lo recibimos desde /menu. Al tocar el botón entras en <b>modo asistir</b>
-          {' '}con los almuerzos pre-cargados. Pones el nombre del cliente en el
+          Lo recibimos desde /menu. Al tocar el botón entras al flujo de venta
+          con los almuerzos pre-cargados. Pones el nombre del cliente en el
           modal de envío (obligatorio) y, si quiere algo más (bebida, postre),
           lo agregas antes de enviar.
         </div>
@@ -522,12 +543,24 @@ function AdminConfirmView({ order, orderId }) {
 
       {targetBranch && !targetSession && (
         <NoticeBox tone="warn">
-          <b>No hay turno abierto</b> en {WEB_ORDER_BRANCH_NAME}. Abre el
-          turno de la cajera primero y vuelve a tocar el link.
+          <b>No hay turno abierto</b> en {WEB_ORDER_BRANCH_NAME}.
+          {isAdmin
+            ? ' Abre el turno de la cajera primero y vuelve a tocar el link.'
+            : ' Pídele al admin que abra el turno y vuelve a tocar el link.'}
         </NoticeBox>
       )}
 
-      {targetSession && (
+      {/* Cajera que NO es la dueña del turno de la sede destino: no puede
+          atenderlo (evita que se cargue a la caja equivocada). */}
+      {targetSession && !isAdmin && !isOwnerCashier && (
+        <NoticeBox tone="warn">
+          Este pedido es de <b>{targetSession.branchName || WEB_ORDER_BRANCH_NAME}</b>
+          {' '}y el turno lo tiene <b>{targetSession.cashierName || 'otra cajera'}</b>.
+          Solo quien tenga esa caja abierta puede atenderlo.
+        </NoticeBox>
+      )}
+
+      {canAtender && (
         <div style={{
           background: '#fff', borderRadius: 16,
           border: `1px solid ${T.neutral[100]}`,

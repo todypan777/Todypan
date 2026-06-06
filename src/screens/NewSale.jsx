@@ -59,9 +59,13 @@ export default function NewSale({
   // Cuando admin entra a atender un pedido web (/comanda/{id}), recibe los
   // almuerzos pre-armados aquí. NewSale los carga en lunchCommanda y abre
   // el modal de envío automáticamente para que el admin solo ponga el
-  // nombre del cliente y mande. Al enviar exitoso, si assistMode trae
-  // `customerOrderId`, se marca ese pedido web como confirmado.
+  // nombre del cliente y mande. Al enviar exitoso, si hay pedido web (vía
+  // assistMode.customerOrderId cuando asiste el admin, o `customerOrderId`
+  // cuando lo atiende la cajera dueña del turno), se marca como confirmado.
   initialLunchCommanda,
+  // Pedido web atendido por la PROPIA cajera (no es modo asistir). Mismo
+  // efecto que assistMode.customerOrderId pero la traza queda a su nombre.
+  customerOrderId,
   // Modo "mesera": toma pedidos en piso para la caja de su panadería. Recibe
   // { waitressUid, waitressName }. La mesa/almuerzo se contabiliza a la cajera
   // dueña del turno (igual que asistir) pero la mesera NO ve precios y NO
@@ -99,6 +103,12 @@ export default function NewSale({
     : isAssistMode
       ? { createdByRole: 'admin', createdByUid: authUser.uid, createdByName: assistMode.adminName }
       : { createdByRole: 'cashier' }
+  // Pedido web a confirmar al enviar la comanda. Origen doble: el admin lo
+  // pasa dentro de assistMode (modo asistir); la cajera dueña del turno lo
+  // recibe como prop suelto `customerOrderId`. La traza (confirmedByName)
+  // queda a nombre de quien efectivamente envió: admin o cajera.
+  const webOrderId = (isAssistMode ? assistMode?.customerOrderId : customerOrderId) || null
+  const webOrderConfirmName = isAssistMode ? (assistMode?.adminName || null) : (actorName || null)
   const [cashierProducts, refreshCashierProducts] = useCashierProducts()
   // Sincronización en vivo del catálogo del admin (/todypan/data): sin esto,
   // un cambio de precio aprobado por el admin no llegaba a la tablet de la
@@ -1083,11 +1093,11 @@ export default function NewSale({
       // Si veniamos de un pedido web (/comanda/{id}), marcarlo como
       // confirmado para que el cliente y otros que abran el link vean
       // "✓ Pedido confirmado". Fire-and-forget — no bloquea el cierre.
-      if (assistMode?.customerOrderId) {
+      if (webOrderId) {
         import('../customerOrders').then(m =>
-          m.markCustomerOrderConfirmed(assistMode.customerOrderId, {
+          m.markCustomerOrderConfirmed(webOrderId, {
             confirmedBy: authUser.uid,
-            confirmedByName: assistMode.adminName || null,
+            confirmedByName: webOrderConfirmName,
             customerName: targetCustomerName,
             tabId: targetTabId,
             orderIds,

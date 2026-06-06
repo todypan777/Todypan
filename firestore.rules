@@ -1,15 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // REGLAS DE FIRESTORE — TodyPan  (FUENTE ÚNICA DE VERDAD)
 //
-// Este archivo es la copia maestra de las reglas de seguridad. NO se despliega
-// solo (no hay firebase.json): el admin las pega a mano en
+// Este archivo es la copia maestra de las reglas de seguridad. Se despliega por
+// CLI con la skill /Actualizar_Reglas_Firebase (firebase.json + .firebaserc),
+// cuenta y proyecto explícitos. También se puede pegar a mano en
 // Firebase Console → Firestore Database → Reglas → Publicar.
 //
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
-// de código requiera tocar reglas, se edita ESTE archivo y se entrega una copia
-// completa lista para pegar.
+// de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-05-29 — sistema de DESAYUNOS. La regla genérica
+// Última actualización: 2026-06-06 — la CAJERA dueña del turno de la sede
+//   destino puede ATENDER pedidos web: se abre /customerOrders update a
+//   isApprovedStaff() (antes solo admin) para que markCustomerOrderConfirmed
+//   funcione desde su pantalla. delete sigue solo admin. Sin tocar nada más.
+// Cambio anterior: 2026-05-29 — sistema de DESAYUNOS. La regla genérica
 //   `match /dailyMenu/{date}` ya cubre el nuevo doc `breakfast_config`
 //   (mismo patrón que `corriente_config`), así que ESTRUCTURALMENTE no hubo
 //   cambio. kitchenOrders/customerOrders aceptan `kind:'breakfast'` con las
@@ -250,11 +254,15 @@ service cloud.firestore {
     // - read y create públicos (mismos datos que viajan en el WhatsApp;
     //   public read es necesaria para que el admin abra el link de
     //   confirmación, y para que el cliente vea su propio resumen).
-    // - update y delete solo admin (para confirmar el pedido).
+    // - update: admin o empleado aprobado (la cajera dueña del turno de la
+    //   sede destino también atiende el pedido → markCustomerOrderConfirmed).
+    //   Mismo patrón colaborativo que kitchenOrders/openTabs.
+    // - delete: solo admin.
     match /customerOrders/{id} {
       allow read: if true;
       allow create: if true;
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() || isApprovedStaff();
+      allow delete: if isAdmin();
     }
 
     // ALMUERZOS a cocina. Colaborativo: los crea la cajera, la mesera o el

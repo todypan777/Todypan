@@ -28,7 +28,7 @@ import { watchAllUsers } from '../users'
 import { addMovement, getData, getCashFloor, CASH_FLOOR_DEFAULT } from '../db'
 import { addSaleToBreakdown, paymentDisplay, paymentSplitSummary } from '../utils/payment'
 import { getCustomerOrder } from '../customerOrders'
-import { buildKitchenNoteFromCustomerItem, buildLunchCommanda } from '../utils/lunchFormat'
+import { WEB_ORDER_BRANCH_NAME, customerCartToLunchCommanda } from '../utils/customerOrder'
 import {
   watchOpenTabsForSession,
   deleteOpenTab,
@@ -47,65 +47,13 @@ import CookApp from '../screens/CookApp'
 import WaitressApp from '../screens/WaitressApp'
 import ErrorBoundary from './ErrorBoundary'
 
-// Panadería destino de los pedidos web (debe coincidir con OrderConfirm.jsx).
-const WEB_ORDER_BRANCH_NAME = 'Panadería B'
-
 // Clave en localStorage para recordar a qué turno está asistiendo el admin.
 // Permite que, al recargar la página, el admin vuelva directo al modo asistir
 // (si la cajera sigue con turno abierto) en vez de quedar en el panel.
 const ASSIST_STORAGE_KEY = 'todypan_assist_session_id'
 
-// Convierte un item del cart de customerOrder al shape que usa el state
-// `lunchCommanda` de NewSale (mismo que producen CashierLunchWizard /
-// CashierSpecialWizard al armar un almuerzo).
-// Los `replacements` (reemplazos del wizard cuando el cliente dice NO a
-// sopa/principio) se concatenan al `note` para que viajen a cocina sin
-// tocar el modelo de kitchenOrders.
-function customerOrderItemToLunchPayload(item) {
-  // Desayuno: kind 'breakfast', selections con caldo/huevos/arroz/bebida.
-  // El cliente web siempre pide para llevar.
-  if (item.kind === 'breakfast') {
-    return {
-      kind: 'breakfast',
-      productId: '__breakfast__',
-      productName: item.comboName || 'Desayuno',
-      destination: 'llevar',
-      selections: item.selections || null,
-      description: null,
-      price: Number(item.price) || 0,
-      note: (item.note || '').toString().trim() || null,
-      comboId: item.comboId || null,
-      comboName: item.comboName || null,
-    }
-  }
-  const isEspecial = item.kind === 'especial'
-  // Ambos (corriente y especial) pueden tener replacements en el note
-  // (corriente: soup/principio, especial: solo soup).
-  const note = buildKitchenNoteFromCustomerItem({
-    replacements: item.replacements,
-    note: item.note,
-  })
-  return {
-    kind: isEspecial ? 'special' : 'menu',
-    productId: null,
-    productName: isEspecial ? 'Almuerzo Especial' : 'Almuerzo Corriente',
-    destination: 'llevar',
-    // El especial NUEVO tiene selections (soup, especial, salad); el viejo
-    // tenía solo description. Pasamos ambos para máxima compatibilidad.
-    selections: item.selections || null,
-    description: isEspecial ? (item.description || null) : null,
-    price: Number(item.price) || 0,
-    note,
-  }
-}
-
-// Convierte el cart COMPLETO (con almuerzos + adiciones) al lunchCommanda
-// que entiende NewSale. Reusa el helper compartido — la única lógica
-// específica del cliente es mapear cada almuerzo a su payload (eso lo
-// hace customerOrderItemToLunchPayload).
-function customerCartToLunchCommanda(cart) {
-  return buildLunchCommanda(cart, customerOrderItemToLunchPayload)
-}
+// WEB_ORDER_BRANCH_NAME y customerCartToLunchCommanda viven en
+// ../utils/customerOrder (fuente única compartida con CashierApp).
 
 /**
  * Panel central del admin (D25): controla TODOS los turnos.

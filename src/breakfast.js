@@ -108,7 +108,7 @@ export const BREAKFAST_OPTION_BY_ID = (() => {
  * los valores que el motor usa. Vienen mapeados de la conversación con el
  * cliente:
  *   - Caldo costilla $8.000 · pescado $9.000
- *   - Huevos $4.000 · rancheros +$2.000
+ *   - Huevos $4.000 · rancheros +$4.000
  *   - Arroz con pan $3.000 · bebida $3.000
  *   - Llevar +$1.500
  *   - 4 combos: costilla/pescado normal/ranchero con arroz+bebida
@@ -118,15 +118,15 @@ export const BREAKFAST_DEFAULTS = {
   caldoCostillaPrice:    8000,
   caldoPescadoPrice:     9000,
   huevosNormalesPrice:   4000,
-  rancherosRecargo:      2000,
+  rancherosRecargo:      4000,
   arrozPanPrice:         3000,
   bebidaPrice:           3000,
   llevarSurcharge:       1500,
   combos: [
     { id: 'combo_costilla',          name: 'Combo Costilla',           caldo: 'costilla', huevos: 'normal',    arroz: true, bebida: true, priceMesa: 12000 },
     { id: 'combo_pescado',           name: 'Combo Pescado',            caldo: 'pescado',  huevos: 'normal',    arroz: true, bebida: true, priceMesa: 13000 },
-    { id: 'combo_costilla_ranchero', name: 'Combo Costilla Ranchero',  caldo: 'costilla', huevos: 'rancheros', arroz: true, bebida: true, priceMesa: 14000 },
-    { id: 'combo_pescado_ranchero',  name: 'Combo Pescado Ranchero',   caldo: 'pescado',  huevos: 'rancheros', arroz: true, bebida: true, priceMesa: 15000 },
+    { id: 'combo_costilla_ranchero', name: 'Combo Costilla Ranchero',  caldo: 'costilla', huevos: 'rancheros', arroz: true, bebida: true, priceMesa: 16000 },
+    { id: 'combo_pescado_ranchero',  name: 'Combo Pescado Ranchero',   caldo: 'pescado',  huevos: 'rancheros', arroz: true, bebida: true, priceMesa: 17000 },
   ],
 }
 
@@ -289,13 +289,24 @@ export function getBreakfastPrice(selections, config) {
     priceMesa += cfg.bebidaPrice
   }
 
-  // 2) Buscar combo que matchee (caldo, tipo de huevos, arroz, bebida)
+  // 2) Buscar combo que matchee.
+  //
+  // El caldo y el tipo de huevos SÍ deben coincidir exactamente (son los que
+  // definen de qué combo se trata y cuánto vale).
+  //
+  // El arroz y la bebida van INCLUIDOS en el combo: si el cliente los quita,
+  // el combo sigue aplicando y el precio NO sube (no hay descuento por quitar
+  // una pieza incluida). Sin esto, "sin arroz" rompía el combo y caía a la
+  // suma suelta de componentes, que es MÁS cara que el combo.
+  //
+  // Regla: el cliente solo puede tener arroz/bebida si el combo los incluye;
+  // pero puede NO tenerlos y el combo igual matchea.
   const huevosType = isRanchero ? 'rancheros' : (huevosId ? 'normal' : null)
   const match = (cfg.combos || []).find(c =>
     c.caldo === caldoId &&
     c.huevos === huevosType &&
-    !!c.arroz === hasArroz &&
-    !!c.bebida === hasBebida
+    (!hasArroz  || c.arroz) &&
+    (!hasBebida || c.bebida)
   )
 
   let isCombo = false

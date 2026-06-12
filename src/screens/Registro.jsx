@@ -106,6 +106,16 @@ function sumBreakdowns(sessions) {
   return acc
 }
 
+// Gastos aprobados de un conjunto de sesiones cerradas. expensesAtClose lleva
+// el total congelado al cerrar el turno (solo los aprobados restan de la caja).
+function sumExpenses(sessions) {
+  let approved = 0
+  for (const s of sessions) {
+    approved += s.expensesAtClose?.approvedTotal || 0
+  }
+  return approved
+}
+
 // Tonos para distinguir cada panadería en su encabezado de grupo.
 const BRANCH_TONES = [
   { tag: T.copper[600], bg: T.copper[50],  border: T.copper[200], text: T.copper[700] },
@@ -128,10 +138,11 @@ function ClosuresHistory({ closures }) {
   }, [closures])
 
   const dayTotals = useMemo(() => sumBreakdowns(closures), [closures])
+  const dayExpenses = useMemo(() => sumExpenses(closures), [closures])
 
   return (
     <div style={{ padding: '0 16px' }}>
-      <DaySummary totals={dayTotals} branchCount={groups.length} />
+      <DaySummary totals={dayTotals} expenses={dayExpenses} branchCount={groups.length} />
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
         {groups.map((g, i) => (
@@ -142,8 +153,9 @@ function ClosuresHistory({ closures }) {
   )
 }
 
-// Resumen del día: total de ventas y desglose por método de pago.
-function DaySummary({ totals, branchCount }) {
+// Resumen del día: ventas, desglose por método, gastos y ganancia neta.
+function DaySummary({ totals, expenses, branchCount }) {
+  const neto = (totals.total || 0) - (expenses || 0)
   return (
     <div style={{
       borderRadius: 18, overflow: 'hidden', marginBottom: 22,
@@ -178,6 +190,33 @@ function DaySummary({ totals, branchCount }) {
         <SummaryMethod icon="📲" label="Daviplata" amount={totals.daviplata} />
         <SummaryMethod icon="📋" label="Deuda" amount={totals.deuda} />
       </div>
+
+      {/* Gastos y ganancia neta del día */}
+      <div style={{
+        marginTop: 14, paddingTop: 14,
+        borderTop: '1px solid rgba(255,255,255,0.15)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12,
+      }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.7)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            Gastos del día
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: '#F6C9B8', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+            {expenses > 0 ? `− ${fmtCOP(expenses)}` : fmtCOP(0)}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.copper[200], letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            Ganancia neta
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums', marginTop: 2 }}>
+            {fmtCOP(neto)}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.6)', marginTop: 1 }}>
+            ventas − gastos
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -204,32 +243,48 @@ function SummaryMethod({ icon, label, amount }) {
 // Grupo de cierres de una misma panadería, con encabezado + subtotal.
 function BranchGroup({ group, tone }) {
   const subtotal = useMemo(() => sumBreakdowns(group.sessions), [group.sessions])
+  const gastos = useMemo(() => sumExpenses(group.sessions), [group.sessions])
+  const neto = (subtotal.total || 0) - gastos
   return (
     <div>
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
-        padding: '9px 12px', borderRadius: 12,
+        marginBottom: 10, padding: '10px 12px', borderRadius: 12,
         background: tone.bg, border: `1px solid ${tone.border}`,
       }}>
-        <span style={{ width: 9, height: 9, borderRadius: 999, background: tone.tag, flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{
-            fontSize: 13.5, fontWeight: 800, color: tone.text,
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          }}>
-            {group.branchName}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 999, background: tone.tag, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 13.5, fontWeight: 800, color: tone.text,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {group.branchName}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: tone.text, opacity: 0.7 }}>
+              {group.sessions.length} {group.sessions.length === 1 ? 'cierre' : 'cierres'} · {subtotal.count} {subtotal.count === 1 ? 'venta' : 'ventas'}
+            </div>
           </div>
-          <div style={{ fontSize: 11, fontWeight: 600, color: tone.text, opacity: 0.7 }}>
-            {group.sessions.length} {group.sessions.length === 1 ? 'cierre' : 'cierres'} · {subtotal.count} {subtotal.count === 1 ? 'venta' : 'ventas'}
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, color: tone.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Ventas
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: tone.text, fontVariantNumeric: 'tabular-nums' }}>
+              {fmtCOP(subtotal.total)}
+            </div>
           </div>
         </div>
-        <div style={{ textAlign: 'right', flexShrink: 0 }}>
-          <div style={{ fontSize: 9.5, fontWeight: 700, color: tone.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-            Ventas
-          </div>
-          <div style={{ fontSize: 15, fontWeight: 800, color: tone.text, fontVariantNumeric: 'tabular-nums' }}>
-            {fmtCOP(subtotal.total)}
-          </div>
+        {/* Gastos y ganancia neta de esta panadería */}
+        <div style={{
+          marginTop: 8, paddingTop: 8, borderTop: `1px solid ${tone.border}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+          fontSize: 12, fontVariantNumeric: 'tabular-nums',
+        }}>
+          <span style={{ color: tone.text, opacity: 0.85 }}>
+            Gastos <b style={{ fontWeight: 700 }}>{gastos > 0 ? `− ${fmtCOP(gastos)}` : fmtCOP(0)}</b>
+          </span>
+          <span style={{ color: tone.text, fontWeight: 700 }}>
+            Neto <b style={{ fontWeight: 800 }}>{fmtCOP(neto)}</b>
+          </span>
         </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

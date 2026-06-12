@@ -11,7 +11,7 @@ import {
   resolveClosingDiscrepancy,
   resolveOpeningDispute,
 } from '../cashSessions'
-import { watchAllSales } from '../sales'
+import { watchFlaggedSales } from '../sales'
 import { patchCashierProduct, deleteCashierProduct } from '../products'
 import {
   watchPendingChangeRequests,
@@ -27,14 +27,14 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
 
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
-  const [allSales, setAllSales] = useState([])
+  const [flaggedSales, setFlaggedSales] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
   useEffect(() => watchAllUsers(list => {
     setPendingUsers(list.filter(u => u.status === 'pending'))
   }), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchAllSales(setAllSales), [])
+  useEffect(() => watchFlaggedSales(setFlaggedSales), [])
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
 
   // Reminders vencidos — recalcula al cambiar dataTick
@@ -63,11 +63,6 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const openingDisputes = pendingSessions.filter(s =>
     s.openingDispute?.status === 'pending'
   )
-  const flaggedSales = useMemo(
-    () => allSales.filter(s => s.status === 'flagged'),
-    [allSales]
-  )
-
   const totalCount =
     pendingUsers.length +
     openingDisputes.length +

@@ -379,3 +379,21 @@ export function watchAllSales(callback) {
     }
   )
 }
+
+/**
+ * Suscripción SOLO a las ventas marcadas (status == 'flagged'). La campana de
+ * notificaciones únicamente necesita esto: leer la colección entera para luego
+ * filtrar en cliente disparaba miles de lecturas en cada arranque (agotaba la
+ * cuota diaria de Firestore). Filtro de campo único → no requiere índice.
+ */
+export function watchFlaggedSales(callback) {
+  const q = query(salesCol(), where('status', '==', 'flagged'))
+  return onSnapshot(
+    q,
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => {
+      console.error('[sales] watchFlaggedSales error:', err)
+      callback([])
+    }
+  )
+}

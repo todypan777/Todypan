@@ -3,7 +3,7 @@ import { T } from '../tokens'
 import { UserAvatar } from './Atoms'
 import { watchAllUsers, rejectPendingUser } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
-import { watchAllSales } from '../sales'
+import { watchFlaggedSales } from '../sales'
 import { watchPendingChangeRequests } from '../productChangeRequests'
 import { getData, getBogotaDateStr } from '../db'
 import { useAuth } from '../context/AuthCtx'
@@ -23,7 +23,7 @@ import { ApprovalModal } from '../screens/Users'
 export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
-  const [allSales, setAllSales] = useState([])
+  const [flaggedSales, setFlaggedSales] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
   // Para popups automáticos (solo usuarios pendientes — los cierres ya no
@@ -33,10 +33,8 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
 
   useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
   useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchAllSales(setAllSales), [])
+  useEffect(() => watchFlaggedSales(setFlaggedSales), [])
   useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
-
-  const flaggedSales = useMemo(() => allSales.filter(s => s.status === 'flagged'), [allSales])
   // (D25) Cierres y aperturas se manejan desde el panel central. Acá solo
   // contamos las shortages legacy que quedaron pendientes.
   const orphanShortages = pendingSessions.filter(s =>

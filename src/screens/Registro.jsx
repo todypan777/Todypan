@@ -83,19 +83,157 @@ export default function Registro() {
 
 // ──────────────────────────────────────────────────────────────
 // Historial de cierres de caja del día seleccionado
+// Se agrupa por panadería y se corona con un resumen de ventas del día.
 // ──────────────────────────────────────────────────────────────
+
+// Desglose de ventas de una sesión cerrada. Las sesiones cerradas llevan
+// salesBreakdown congelado; si faltara (legacy), devolvemos ceros.
+function sessionBreakdown(s) {
+  return s.salesBreakdown || { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
+}
+
+function sumBreakdowns(sessions) {
+  const acc = { efectivo: 0, nequi: 0, daviplata: 0, deuda: 0, total: 0, count: 0 }
+  for (const s of sessions) {
+    const b = sessionBreakdown(s)
+    acc.efectivo += b.efectivo || 0
+    acc.nequi += b.nequi || 0
+    acc.daviplata += b.daviplata || 0
+    acc.deuda += b.deuda || 0
+    acc.total += b.total || 0
+    acc.count += b.count || 0
+  }
+  return acc
+}
+
+// Tonos para distinguir cada panadería en su encabezado de grupo.
+const BRANCH_TONES = [
+  { tag: T.copper[600], bg: T.copper[50],  border: T.copper[200], text: T.copper[700] },
+  { tag: '#6B7F5C',     bg: '#E8EADF',     border: '#C0CEBC',     text: '#4A5840' },
+  { tag: '#4E7A82',     bg: '#DFF0F2',     border: '#AACFD4',     text: '#2E5258' },
+  { tag: '#8B4558',     bg: '#F0E2E6',     border: '#D4B0BC',     text: '#5C2E3A' },
+]
+
 function ClosuresHistory({ closures }) {
+  const groups = useMemo(() => {
+    const map = new Map()
+    for (const s of closures) {
+      const key = s.branchId ?? s.branchName ?? 'sin'
+      if (!map.has(key)) {
+        map.set(key, { key, branchName: s.branchName || 'Sin nombre', sessions: [] })
+      }
+      map.get(key).sessions.push(s)
+    }
+    return [...map.values()].sort((a, b) => a.branchName.localeCompare(b.branchName, 'es'))
+  }, [closures])
+
+  const dayTotals = useMemo(() => sumBreakdowns(closures), [closures])
+
   return (
     <div style={{ padding: '0 16px' }}>
+      <DaySummary totals={dayTotals} branchCount={groups.length} />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+        {groups.map((g, i) => (
+          <BranchGroup key={g.key} group={g} tone={BRANCH_TONES[i % BRANCH_TONES.length]} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Resumen del día: total de ventas y desglose por método de pago.
+function DaySummary({ totals, branchCount }) {
+  return (
+    <div style={{
+      borderRadius: 18, overflow: 'hidden', marginBottom: 22,
+      background: `linear-gradient(135deg, ${T.copper[700]} 0%, ${T.copper[900]} 100%)`,
+      boxShadow: '0 6px 20px rgba(74,45,30,0.28)',
+      padding: '18px 20px 16px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, color: T.copper[200],
+            letterSpacing: 0.9, textTransform: 'uppercase',
+          }}>
+            Ventas del día
+          </div>
+          <div style={{
+            fontSize: 30, fontWeight: 800, color: '#fff', lineHeight: 1.1,
+            fontVariantNumeric: 'tabular-nums', marginTop: 5,
+          }}>
+            {fmtCOP(totals.total)}
+          </div>
+          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 4 }}>
+            {totals.count} {totals.count === 1 ? 'venta' : 'ventas'} · {branchCount} {branchCount === 1 ? 'panadería' : 'panaderías'}
+          </div>
+        </div>
+        <div style={{ fontSize: 30, flexShrink: 0 }}>🥖</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 16 }}>
+        <SummaryMethod icon="💵" label="Efectivo" amount={totals.efectivo} />
+        <SummaryMethod icon="📱" label="Nequi" amount={totals.nequi} />
+        <SummaryMethod icon="📲" label="Daviplata" amount={totals.daviplata} />
+        <SummaryMethod icon="📋" label="Deuda" amount={totals.deuda} />
+      </div>
+    </div>
+  )
+}
+
+function SummaryMethod({ icon, label, amount }) {
+  const isZero = !amount
+  return (
+    <div style={{
+      padding: '9px 11px', borderRadius: 11,
+      background: 'rgba(255,255,255,0.12)',
+      border: '1px solid rgba(255,255,255,0.14)',
+      opacity: isZero ? 0.5 : 1,
+    }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'rgba(255,255,255,0.75)' }}>
+        <span style={{ marginRight: 4 }}>{icon}</span>{label}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums', marginTop: 1 }}>
+        {fmtCOP(amount || 0)}
+      </div>
+    </div>
+  )
+}
+
+// Grupo de cierres de una misma panadería, con encabezado + subtotal.
+function BranchGroup({ group, tone }) {
+  const subtotal = useMemo(() => sumBreakdowns(group.sessions), [group.sessions])
+  return (
+    <div>
       <div style={{
-        fontSize: 12, fontWeight: 700, color: T.neutral[500],
-        textTransform: 'uppercase', letterSpacing: 0.5,
-        paddingLeft: 4, marginBottom: 10,
+        display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10,
+        padding: '9px 12px', borderRadius: 12,
+        background: tone.bg, border: `1px solid ${tone.border}`,
       }}>
-        Cierres de caja · {closures.length}
+        <span style={{ width: 9, height: 9, borderRadius: 999, background: tone.tag, flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontSize: 13.5, fontWeight: 800, color: tone.text,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}>
+            {group.branchName}
+          </div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: tone.text, opacity: 0.7 }}>
+            {group.sessions.length} {group.sessions.length === 1 ? 'cierre' : 'cierres'} · {subtotal.count} {subtotal.count === 1 ? 'venta' : 'ventas'}
+          </div>
+        </div>
+        <div style={{ textAlign: 'right', flexShrink: 0 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 700, color: tone.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Ventas
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: tone.text, fontVariantNumeric: 'tabular-nums' }}>
+            {fmtCOP(subtotal.total)}
+          </div>
+        </div>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {closures.map(s => <ClosureCard key={s.id} session={s} />)}
+        {group.sessions.map(s => <ClosureCard key={s.id} session={s} />)}
       </div>
     </div>
   )

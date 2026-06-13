@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { addMovement, getAccounts, getData } from '../db'
+import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import {
   autoMatchTransferByMovement,
@@ -13,6 +13,21 @@ import { recomputeSessionIfClosed } from '../cashSessions'
 // Categoría fija siempre disponible: dispara la conciliación de transferencias.
 const TRANSFER_CAT = 'Venta por Transferencia'
 const FIXED_CATS = [TRANSFER_CAT]
+
+// Fecha (Bogotá) restando N días, en formato YYYY-MM-DD.
+function bogotaMinusDays(n) {
+  const d = new Date(getBogotaDateStr() + 'T12:00:00')
+  d.setDate(d.getDate() - n)
+  return d.toISOString().slice(0, 10)
+}
+
+// Ventana de conciliación: desde el inicio del control (nunca antes), con tope
+// de 7 días atrás para no leer de más. Permite registrar mañana lo de hoy.
+function reconcileSinceDate() {
+  const start = getTransfersStartDate() || getBogotaDateStr()
+  const cap = bogotaMinusDays(7)
+  return start > cap ? start : cap
+}
 
 // Cuenta → método de transferencia (nequi / daviplata) por id o por nombre.
 function accountMethod(acc) {
@@ -105,7 +120,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
         method={reconcile.method}
         amount={reconcile.amount}
         movementId={reconcile.movementId}
-        date={date}
+        sinceDate={reconcileSinceDate()}
         onDone={onSave}
       />
     )
@@ -300,7 +315,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
 // ──────────────────────────────────────────────────────────────
 // Panel de conciliación de transferencia (tras registrar el ingreso)
 // ──────────────────────────────────────────────────────────────
-function TransferReconcilePanel({ method, amount, movementId, date, onDone }) {
+function TransferReconcilePanel({ method, amount, movementId, sinceDate, onDone }) {
   const { authUser, userDoc } = useAuth()
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || 'Admin'
   const methodLabel = method === 'daviplata' ? 'DAVIPLATA' : 'NEQUI'
@@ -318,7 +333,7 @@ function TransferReconcilePanel({ method, amount, movementId, date, onDone }) {
 
   useEffect(() => {
     let alive = true
-    autoMatchTransferByMovement({ method, amount, date, movementId, byUid: authUser?.uid, byName: adminName })
+    autoMatchTransferByMovement({ method, amount, sinceDate, movementId, byUid: authUser?.uid, byName: adminName })
       .then(res => {
         if (!alive) return
         if (res.matched) { setMatched({ sale: res.matched, discrepancy: res.discrepancy }); setPhase('matched') }
@@ -335,7 +350,7 @@ function TransferReconcilePanel({ method, amount, movementId, date, onDone }) {
   async function doSearch() {
     setSearching(true); setError(null)
     try {
-      const list = await findMismarkedTransferCandidates({ date, method, amount, targetMinutes: parseHHMM(timeStr) })
+      const list = await findMismarkedTransferCandidates({ sinceDate, method, amount, targetMinutes: parseHHMM(timeStr) })
       setCandidates(list)
     } catch (err) {
       console.error('[reconcile] search', err)
@@ -466,7 +481,7 @@ function TransferReconcilePanel({ method, amount, movementId, date, onDone }) {
                           {fmtCOP(sale.total || 0)} · {methodTag(sale)}
                         </div>
                         <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {saleTime(sale)}{sale.cashierName ? ` · ${sale.cashierName}` : ''}
+                          {saleDateLabel(sale)}{saleTime(sale)}{sale.cashierName ? ` · ${sale.cashierName}` : ''}
                         </div>
                       </div>
                       <button onClick={() => pick(sale)} disabled={!!busyId} style={{
@@ -507,6 +522,13 @@ function saleTime(sale) {
   const d = sale.createdAt?.toDate?.()
   if (!d) return '—'
   return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+}
+
+// Muestra la fecha solo si la venta NO es de hoy (para desambiguar entre días).
+function saleDateLabel(sale) {
+  if (!sale.date || sale.date === getBogotaDateStr()) return ''
+  const d = new Date(sale.date + 'T00:00:00')
+  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' }) + ' · '
 }
 
 function methodTag(sale) {

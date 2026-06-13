@@ -408,6 +408,18 @@ export async function getSalesByDateOnce(dateStr) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
 }
 
+/**
+ * Lectura puntual de las ventas DESDE una fecha (inclusive) hacia adelante.
+ * Permite conciliar transferencias de días anteriores (ej. el admin registra
+ * mañana lo de hoy). `date` es string ISO → la comparación lexicográfica es
+ * cronológica; campo único → Firestore lo indexa solo.
+ */
+export async function getSalesSinceOnce(sinceDate) {
+  if (!sinceDate) return []
+  const snap = await getDocs(query(salesCol(), where('date', '>=', sinceDate)))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
 function saleTimeMs(s) {
   return s.createdAt?.toMillis?.() ?? s.createdAtClient ?? 0
 }
@@ -429,9 +441,9 @@ function saleMinutesOf(s) {
  *      (al saltarse las de antes, esas quedan "saltadas" = se calculan en rojo).
  * Devuelve { matched: sale|null, discrepancy }.
  */
-export async function autoMatchTransferByMovement({ method, amount, date, movementId, byUid, byName }) {
+export async function autoMatchTransferByMovement({ method, amount, sinceDate, movementId, byUid, byName }) {
   const amt = Number(amount) || 0
-  const all = await getSalesByDateOnce(date)
+  const all = await getSalesSinceOnce(sinceDate)
   const pending = all
     .filter(s => (s.status || 'active') !== 'deleted')
     .filter(s => s.transferConfirmation?.status !== 'confirmed')
@@ -471,10 +483,10 @@ export async function autoMatchTransferByMovement({ method, amount, date, moveme
  * transferencia que el admin no encontro: por monto (+-$500) y hora (+-15 min).
  * Excluye deuda y las que ya son de ese metodo digital. Ordena por cercania.
  */
-export async function findMismarkedTransferCandidates({ date, method, amount, targetMinutes }) {
+export async function findMismarkedTransferCandidates({ sinceDate, method, amount, targetMinutes }) {
   const amt = Number(amount) || 0
   if (amt <= 0) return []
-  const all = await getSalesByDateOnce(date)
+  const all = await getSalesSinceOnce(sinceDate)
   return all
     .filter(s => (s.status || 'active') !== 'deleted')
     .filter(s => s.paymentMethod !== 'deuda')

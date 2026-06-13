@@ -528,6 +528,22 @@ export function deleteAccountMovement(accountId, adjustmentId) {
   persist()
 }
 
+// ─── Control automático de transferencias: fecha de inicio ────
+// "Arrancar desde hoy": la conciliación automática y el rojo/señalado solo
+// aplican desde el día en que se activó el control. Se fija la primera vez
+// que se usa (al abrir Transferencias o al conciliar) y se persiste.
+export function getTransfersStartDate() {
+  return _data?.transfersStartDate || null
+}
+export function ensureTransfersStartDate() {
+  if (!_data) return null
+  if (!_data.transfersStartDate) {
+    _data.transfersStartDate = getBogotaDateStr()
+    persist()
+  }
+  return _data.transfersStartDate
+}
+
 // ─── CashFloor (base de caja) ────────────────────────────────
 // REGLA DE NEGOCIO: la base es FIJA en CASH_FLOOR_DEFAULT ($200.000)
 // para TODAS las panaderías, siempre. No hay overrides por sucursal.

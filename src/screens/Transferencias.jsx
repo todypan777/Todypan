@@ -5,7 +5,7 @@ import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { doc, getDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
-import { getBogotaDateStr, getData } from '../db'
+import { getBogotaDateStr, getData, getTransfersStartDate, ensureTransfersStartDate } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import {
   watchSalesByDate,
@@ -43,6 +43,12 @@ export default function Transferencias() {
   const [detail, setDetail] = useState(null)   // venta a revisar
   const [searchMethod, setSearchMethod] = useState(null) // 'nequi' | 'daviplata' para el buscador
   const branches = getData().branches || []
+
+  // Control automático: se fija la fecha de inicio la primera vez que se abre.
+  useEffect(() => { ensureTransfersStartDate() }, [])
+  const startDate = getTransfersStartDate() || todayStr
+  // Antes del inicio del control automático = solo historial (sin pendientes/rojo).
+  const beforeStart = date < startDate
 
   useEffect(() => watchSalesByDate(date, setSales), [date])
 
@@ -97,12 +103,22 @@ export default function Transferencias() {
         <EmptyState icon="📅" text="Fecha futura" />
       ) : (
         <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {beforeStart && (
+            <div style={{
+              padding: '11px 14px', borderRadius: 12,
+              background: T.neutral[50], border: `1px solid ${T.neutral[100]}`,
+              fontSize: 12.5, color: T.neutral[500], fontWeight: 600, lineHeight: 1.5, textAlign: 'center',
+            }}>
+              Historial · el control automático de transferencias empezó el {fmtDate(startDate, { weekday: true })}.
+            </div>
+          )}
           {METHODS.map(m => (
             <MethodSection
               key={m.id}
               method={m}
               sales={activeSales}
               branches={branches}
+              beforeStart={beforeStart}
               onReview={setDetail}
               onSearch={() => setSearchMethod(m.id)}
             />
@@ -134,7 +150,7 @@ export default function Transferencias() {
 // ──────────────────────────────────────────────────────────────
 // Sección por método (NEQUI / DAVIPLATA)
 // ──────────────────────────────────────────────────────────────
-function MethodSection({ method, sales, branches, onReview, onSearch }) {
+function MethodSection({ method, sales, branches, beforeStart = false, onReview, onSearch }) {
   // Ventas que llevan plata por este método (puras o porción de un mixto)
   const items = useMemo(
     () => sales
@@ -147,6 +163,26 @@ function MethodSection({ method, sales, branches, onReview, onSearch }) {
   const total = items.reduce((s, x) => s + x.amount, 0)
   const pending = items.filter(x => !isConfirmed(x.sale))
   const allDone = items.length > 0 && pending.length === 0
+
+  // Estados derivados (solo desde el inicio del control automático):
+  //  - SALTADA (rojo): pendiente con una transferencia MÁS NUEVA ya confirmada
+  //    (el admin registró las de después → esta se la saltó).
+  //  - DESFASE (⚠): confirmada con discrepancyAmount != 0.
+  const maxConfirmedTime = useMemo(
+    () => items.reduce((mx, x) => isConfirmed(x.sale) ? Math.max(mx, timeMs(x.sale)) : mx, 0),
+    [items],
+  )
+  function flagsFor(sale) {
+    if (beforeStart) return { skipped: false, discrepancy: 0 }
+    const confirmed = isConfirmed(sale)
+    const discrepancy = confirmed ? (Number(sale.transferConfirmation?.discrepancyAmount) || 0) : 0
+    const skipped = !confirmed && maxConfirmedTime > 0 && timeMs(sale) < maxConfirmedTime
+    return { skipped, discrepancy }
+  }
+  const reviewCount = beforeStart ? 0 : items.filter(x => {
+    const f = flagsFor(x.sale)
+    return f.skipped || f.discrepancy
+  }).length
 
   return (
     <Card padding={0} style={{ overflow: 'hidden', border: `1px solid ${T.neutral[100]}` }}>
@@ -170,8 +206,16 @@ function MethodSection({ method, sales, branches, onReview, onSearch }) {
             {items.length} {items.length === 1 ? 'transferencia' : 'transferencias'} · {fmtCOP(total)}
           </div>
         </div>
-        {items.length > 0 && (
-          allDone ? (
+        {items.length > 0 && !beforeStart && (
+          reviewCount > 0 ? (
+            <div style={{
+              padding: '5px 10px', borderRadius: 999,
+              background: '#FBE9E5', color: T.bad,
+              fontSize: 11.5, fontWeight: 800, flexShrink: 0,
+            }}>
+              {reviewCount} por revisar
+            </div>
+          ) : allDone ? (
             <div style={{
               display: 'flex', alignItems: 'center', gap: 5,
               padding: '5px 10px', borderRadius: 999,
@@ -199,16 +243,21 @@ function MethodSection({ method, sales, branches, onReview, onSearch }) {
           Sin transferencias por {method.label} este día.
         </div>
       ) : (
-        items.map((x, i) => (
-          <TransferRow
-            key={x.sale.id}
-            sale={x.sale}
-            amount={x.amount}
-            branches={branches}
-            isLast={i === items.length - 1}
-            onClick={() => onReview(x.sale)}
-          />
-        ))
+        items.map((x, i) => {
+          const f = flagsFor(x.sale)
+          return (
+            <TransferRow
+              key={x.sale.id}
+              sale={x.sale}
+              amount={x.amount}
+              branches={branches}
+              isLast={i === items.length - 1}
+              skipped={f.skipped}
+              discrepancy={f.discrepancy}
+              onClick={() => onReview(x.sale)}
+            />
+          )
+        })
       )}
 
       {/* Buscador */}
@@ -229,7 +278,7 @@ function MethodSection({ method, sales, branches, onReview, onSearch }) {
   )
 }
 
-function TransferRow({ sale, amount, branches, isLast, onClick }) {
+function TransferRow({ sale, amount, branches, isLast, skipped = false, discrepancy = 0, onClick }) {
   const branch = branches.find(b => String(b.id) === String(sale.branchId))
   const confirmed = isConfirmed(sale)
   const reclassified = sale.transferConfirmation?.reclassified
@@ -238,20 +287,21 @@ function TransferRow({ sale, amount, branches, isLast, onClick }) {
     <button onClick={onClick} style={{
       width: '100%', padding: '12px 16px',
       borderBottom: isLast ? 'none' : `0.5px solid ${T.neutral[100]}`,
-      background: 'transparent', border: 'none', cursor: 'pointer',
+      background: skipped ? '#FBE9E5' : 'transparent', border: 'none', cursor: 'pointer',
       fontFamily: 'inherit', textAlign: 'left',
       display: 'flex', alignItems: 'center', gap: 12,
     }}>
-      {/* Check / pendiente */}
+      {/* Check / pendiente / saltada */}
       <div style={{
         width: 26, height: 26, borderRadius: 999, flexShrink: 0,
-        border: confirmed ? 'none' : `2px solid ${T.neutral[200]}`,
+        border: confirmed ? 'none' : `2px solid ${skipped ? T.bad : T.neutral[200]}`,
         background: confirmed ? T.ok : 'transparent',
+        color: T.bad, fontSize: 14, fontWeight: 900,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        {confirmed && (
-          <svg width="13" height="13" viewBox="0 0 12 12"><path d="M2 6.5 L5 9 L10 3" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        )}
+        {confirmed
+          ? <svg width="13" height="13" viewBox="0 0 12 12"><path d="M2 6.5 L5 9 L10 3" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          : skipped ? '!' : null}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
@@ -265,6 +315,18 @@ function TransferRow({ sale, amount, branches, isLast, onClick }) {
               fontSize: 9, fontWeight: 800, color: T.copper[700], background: T.copper[50],
               padding: '1px 5px', borderRadius: 999, letterSpacing: 0.3, textTransform: 'uppercase',
             }}>corregida</span>
+          )}
+          {skipped && (
+            <span style={{
+              fontSize: 9, fontWeight: 800, color: T.bad, background: '#F7D9D2',
+              padding: '1px 5px', borderRadius: 999, letterSpacing: 0.3, textTransform: 'uppercase',
+            }}>saltada</span>
+          )}
+          {!!discrepancy && (
+            <span style={{
+              fontSize: 9, fontWeight: 800, color: '#8A6A1A', background: '#FBEFCF',
+              padding: '1px 5px', borderRadius: 999, letterSpacing: 0.3, textTransform: 'uppercase',
+            }}>desfase {fmtCOP(Math.abs(discrepancy))}</span>
           )}
         </div>
         <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>

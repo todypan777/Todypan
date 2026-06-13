@@ -9,10 +9,17 @@ import {
   onSnapshot,
   arrayUnion,
   getDoc,
+  getDocs,
   deleteField,
 } from 'firebase/firestore'
 import { getClientTimestamp } from './utils/network'
 import { addDocOffline } from './utils/firestoreOffline'
+import { digitalAmount } from './utils/payment'
+
+// Tolerancia de valor para emparejar una transferencia con una venta (±pesos).
+export const TRANSFER_VALUE_TOLERANCE = 500
+// Tolerancia de tiempo (minutos) al buscar una venta mal marcada por su hora.
+export const TRANSFER_TIME_TOLERANCE = 15
 
 const saleRef = (id) => doc(firestoreDb, 'sales', id)
 
@@ -283,17 +290,21 @@ export function watchSalesByDate(dateStr, callback) {
  * Admin confirma que una transferencia (nequi/daviplata) SÍ llegó a su cuenta.
  * Marca la venta con transferConfirmation.status = 'confirmed'.
  */
-export async function confirmTransfer(saleId, { byUid, byName, note } = {}) {
-  await updateDoc(saleRef(saleId), {
-    transferConfirmation: {
-      status: 'confirmed',
-      reviewedBy: byUid || null,
-      reviewedByName: byName || null,
-      reviewedAt: serverTimestamp(),
-      reviewedAtClient: Date.now(),
-      note: note?.trim() || null,
-    },
-  })
+export async function confirmTransfer(saleId, { byUid, byName, note, source, movementId, discrepancyAmount } = {}) {
+  const confirmation = {
+    status: 'confirmed',
+    reviewedBy: byUid || null,
+    reviewedByName: byName || null,
+    reviewedAt: serverTimestamp(),
+    reviewedAtClient: Date.now(),
+    note: note?.trim() || null,
+  }
+  // Origen 'movement' = conciliada automáticamente desde un movimiento del admin.
+  if (source) confirmation.source = source
+  if (movementId) confirmation.movementId = movementId
+  // Desfase respecto al monto registrado (ej. venta $19.500 vs registrado $19.000).
+  if (discrepancyAmount) confirmation.discrepancyAmount = Number(discrepancyAmount) || 0
+  await updateDoc(saleRef(saleId), { transferConfirmation: confirmation })
 }
 
 /** Deshace la confirmación (vuelve a quedar pendiente). */
@@ -386,6 +397,103 @@ export function watchAllSales(callback) {
  * filtrar en cliente disparaba miles de lecturas en cada arranque (agotaba la
  * cuota diaria de Firestore). Filtro de campo único → no requiere índice.
  */
+// ──────────────────────────────────────────────────────────────
+// Conciliación AUTOMÁTICA de transferencias (desde un movimiento del admin)
+// ──────────────────────────────────────────────────────────────
+
+/** Lectura puntual (one-shot) de las ventas de una fecha. */
+export async function getSalesByDateOnce(dateStr) {
+  if (!dateStr) return []
+  const snap = await getDocs(query(salesCol(), where('date', '==', dateStr)))
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+}
+
+function saleTimeMs(s) {
+  return s.createdAt?.toMillis?.() ?? s.createdAtClient ?? 0
+}
+
+/** Minutos del dia (Bogota) de una venta, o null si aun no tiene timestamp. */
+function saleMinutesOf(s) {
+  const d = s.createdAt?.toDate?.()
+  if (!d) return null
+  const hhmm = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+/**
+ * El admin registro un ingreso por transferencia (NEQUI/DAVIPLATA) de `amount`.
+ * Busca la venta a chulear, en orden viejo->nuevo, con tolerancia +-$500:
+ *   1. La transferencia pendiente MAS VIEJA: si coincide (exacta o +-500) -> esa.
+ *   2. Si la mas vieja no coincide, busca adelante una exacta; si no, una +-500.
+ *      (al saltarse las de antes, esas quedan "saltadas" = se calculan en rojo).
+ * Devuelve { matched: sale|null, discrepancy }.
+ */
+export async function autoMatchTransferByMovement({ method, amount, date, movementId, byUid, byName }) {
+  const amt = Number(amount) || 0
+  const all = await getSalesByDateOnce(date)
+  const pending = all
+    .filter(s => (s.status || 'active') !== 'deleted')
+    .filter(s => s.transferConfirmation?.status !== 'confirmed')
+    .filter(s => digitalAmount(s, method) > 0)
+    .sort((a, b) => saleTimeMs(a) - saleTimeMs(b))
+
+  if (pending.length === 0) return { matched: null, reason: 'no_pending' }
+
+  const diffOf = (s) => digitalAmount(s, method) - amt
+  let chosen = null
+  let discrepancy = 0
+
+  const s0 = pending[0]
+  if (Math.abs(diffOf(s0)) <= TRANSFER_VALUE_TOLERANCE) {
+    chosen = s0
+    discrepancy = diffOf(s0)
+  } else {
+    chosen = pending.find(s => digitalAmount(s, method) === amt) || null
+    if (chosen) discrepancy = 0
+    else {
+      chosen = pending.find(s => Math.abs(diffOf(s)) <= TRANSFER_VALUE_TOLERANCE) || null
+      if (chosen) discrepancy = diffOf(chosen)
+    }
+  }
+
+  if (!chosen) return { matched: null, reason: 'no_match' }
+
+  await confirmTransfer(chosen.id, {
+    byUid, byName, source: 'movement', movementId,
+    discrepancyAmount: discrepancy || 0,
+  })
+  return { matched: chosen, discrepancy }
+}
+
+/**
+ * Busca ventas que pudieron quedar MAL MARCADAS (ej. como efectivo) para una
+ * transferencia que el admin no encontro: por monto (+-$500) y hora (+-15 min).
+ * Excluye deuda y las que ya son de ese metodo digital. Ordena por cercania.
+ */
+export async function findMismarkedTransferCandidates({ date, method, amount, targetMinutes }) {
+  const amt = Number(amount) || 0
+  if (amt <= 0) return []
+  const all = await getSalesByDateOnce(date)
+  return all
+    .filter(s => (s.status || 'active') !== 'deleted')
+    .filter(s => s.paymentMethod !== 'deuda')
+    .filter(s => digitalAmount(s, method) === 0)
+    .filter(s => Math.abs((Number(s.total) || 0) - amt) <= TRANSFER_VALUE_TOLERANCE)
+    .filter(s => {
+      if (targetMinutes == null) return true
+      const sm = saleMinutesOf(s)
+      return sm != null && Math.abs(sm - targetMinutes) <= TRANSFER_TIME_TOLERANCE
+    })
+    .map(s => ({
+      sale: s,
+      dv: Math.abs((Number(s.total) || 0) - amt),
+      dt: targetMinutes != null && saleMinutesOf(s) != null ? Math.abs(saleMinutesOf(s) - targetMinutes) : 999,
+    }))
+    .sort((a, b) => (a.dt - b.dt) || (a.dv - b.dv))
+    .map(x => x.sale)
+}
+
 export function watchFlaggedSales(callback) {
   const q = query(salesCol(), where('status', '==', 'flagged'))
   return onSnapshot(

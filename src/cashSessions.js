@@ -13,7 +13,17 @@ import {
   getDocs,
   writeBatch,
 } from 'firebase/firestore'
-import { addMovement, deleteMovement, getBogotaDateStr, setCashFloor, CASH_FLOOR_DEFAULT } from './db'
+import { addMovement, deleteMovement, getBogotaDateStr, setCashFloor, CASH_FLOOR_DEFAULT, getAccounts } from './db'
+
+// Resuelve la cuenta "Efectivo" del admin (por id por defecto o por nombre).
+// Devuelve su id, o null si no existe ninguna cuenta de efectivo.
+function resolveEfectivoAccountId() {
+  const accts = getAccounts() || []
+  const byId = accts.find(a => a.id === 'acc_efectivo')
+  if (byId) return byId.id
+  const byName = accts.find(a => String(a.name || '').trim().toLowerCase() === 'efectivo')
+  return byName ? byName.id : null
+}
 import { getClientTimestamp } from './utils/network'
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -540,6 +550,40 @@ export async function adminCloseSession(sessionId, payload = {}) {
     }
   }
 
+  // ── Movimiento automático de "Cierre de Caja" sobre la cuenta Efectivo ──
+  //  - Si el admin SE LLEVA lo de encima de la base (handover 'admin') y hay
+  //    sobrante → INGRESO a Efectivo por (declarado − base).
+  //  - Si la caja quedó por debajo de la base → el admin REPONE para volver a
+  //    la base → GASTO de Efectivo por (base − declarado).
+  try {
+    const efectivoId = resolveEfectivoAccountId()
+    if (efectivoId) {
+      const cashFloor = CASH_FLOOR_DEFAULT
+      const handoverType = (payload.handover || {}).type
+      const overBase = declared - cashFloor
+      const who = `${session.cashierName || 'cajera'}${session.branchName ? ' · ' + session.branchName : ''}`
+      if (handoverType === 'admin' && overBase > 0) {
+        addMovement({
+          type: 'income', amount: overBase, date: getBogotaDateStr(),
+          cat: 'Cierre de Caja', branch: session.branchId || 'both',
+          accountId: efectivoId, origin: 'caja', sessionId,
+          cashierName: session.cashierName,
+          note: `Cierre de caja · ${who}`,
+        })
+      } else if (declared < cashFloor) {
+        addMovement({
+          type: 'expense', amount: cashFloor - declared, date: getBogotaDateStr(),
+          cat: 'Cierre de Caja', branch: session.branchId || 'both',
+          accountId: efectivoId, origin: 'caja', sessionId,
+          cashierName: session.cashierName,
+          note: `Reposición de base · ${who}`,
+        })
+      }
+    }
+  } catch (e) {
+    console.warn('[cashSessions] No se pudo registrar el movimiento de Cierre de Caja:', e)
+  }
+
   return { surplusMovementId, difference, expectedCash }
 }
 
@@ -559,6 +603,26 @@ export async function adminCloseSession(sessionId, payload = {}) {
  *   - Si pasa a SOBRA, ajusta el movimiento contable de sobra (borra el viejo,
  *     crea el nuevo); si deja de haber sobra, borra el movimiento.
  */
+/**
+ * Recalcula el cuadre de una sesión SOLO si ya está cerrada (o legacy
+ * pending_close). En turnos abiertos no hace nada. Tolerante a fallos.
+ * Útil cuando una corrección de venta (efectivo ⇄ transferencia) cambia el
+ * efectivo esperado de un turno ya cerrado.
+ */
+export async function recomputeSessionIfClosed(sessionId, byUid) {
+  if (!sessionId) return
+  try {
+    const snap = await getDoc(sessionRef(sessionId))
+    if (!snap.exists()) return
+    const st = snap.data().status
+    if (st === 'closed' || st === 'pending_close') {
+      await recomputeClosedSession(sessionId, { byUid })
+    }
+  } catch (e) {
+    console.warn('[cashSessions] recomputeSessionIfClosed:', e?.message || e)
+  }
+}
+
 export async function recomputeClosedSession(sessionId, { byUid } = {}) {
   const ref = sessionRef(sessionId)
   const sessSnap = await getDoc(ref)

@@ -67,10 +67,13 @@ export const CASH_FLOOR_DEFAULT = 200000
 // asignados a la cuenta (accountId). No se guarda saldo duplicado, así
 // alimentar la cuenta desde "Nuevo movimiento" no cuesta escrituras extra.
 const defaultAccounts = [
+  { id: 'acc_efectivo',  name: 'Efectivo',  emoji: '💵', colorKey: 'sage',     adjustments: [] },
   { id: 'acc_nequi',     name: 'Nequi',     emoji: '📱', colorKey: 'burgundy', adjustments: [] },
   { id: 'acc_daviplata', name: 'Daviplata', emoji: '📱', colorKey: 'ocean',    adjustments: [] },
-  { id: 'acc_efectivo',  name: 'Efectivo',  emoji: '💵', colorKey: 'sage',     adjustments: [] },
 ]
+
+// Orden canónico de las cuentas por defecto: Efectivo → Nequi → Daviplata.
+const ACCOUNT_ORDER = ['acc_efectivo', 'acc_nequi', 'acc_daviplata']
 
 function defaultData() {
   return {
@@ -130,6 +133,13 @@ function migrate(d) {
     }
     return { ...rest, adjustments }
   })
+  // Reordenar a Efectivo → Nequi → Daviplata, dejando las cuentas creadas por
+  // el usuario después, en su orden actual.
+  {
+    const defaults = ACCOUNT_ORDER.map(id => d.accounts.find(a => a.id === id)).filter(Boolean)
+    const rest = d.accounts.filter(a => !ACCOUNT_ORDER.includes(a.id))
+    d.accounts = [...defaults, ...rest]
+  }
   // Migración legacy: si quedó la categoría 'nomina', la quitamos
   if (d.expenseCats?.operacion) {
     d.expenseCats.operacion = d.expenseCats.operacion.filter(c => c.id !== 'nomina')

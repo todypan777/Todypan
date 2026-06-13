@@ -188,6 +188,21 @@ function AppShell() {
     return () => window.removeEventListener('resize', handler)
   }, [])
 
+  // Botón "atrás" (Android / gesto): si el modal de Nuevo Movimiento está abierto,
+  // que el back lo CIERRE en vez de salir de la app. Lo integramos con el historial:
+  // al abrir empujamos un estado; al cerrarlo por UI lo consumimos; al apretar atrás
+  // se dispara popstate y cerramos el modal.
+  useEffect(() => {
+    if (!modal) return
+    window.history.pushState({ todypanModal: true }, '')
+    const onPop = () => setModal(null)
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('popstate', onPop)
+      if (window.history.state?.todypanModal) window.history.back()
+    }
+  }, [modal])
+
   const [dataTick, forceUpdate] = useReducer(x => x + 1, 0)
   const refresh = useCallback(() => forceUpdate(), [])
 

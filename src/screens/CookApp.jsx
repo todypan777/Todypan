@@ -851,6 +851,39 @@ function CommandaCard({ group, servedInfo }) {
       animation: 'commandaSlide 0.32s cubic-bezier(0.2,0.9,0.3,1.05)',
       opacity: allCancelled ? 0.78 : (allDone ? 0.95 : 1),
     }}>
+      {/* Sello grande de estado final. Cuando la comanda ya salió de la cola
+          (todos los almuerzos ready/delivered/cancelled) la cocinera NO debe
+          volver a prepararla. Antes solo veía el cronómetro corriendo y la
+          confundía con un pedido vivo → la rehacía. Esta franja a todo el
+          ancho lo deja imposible de ignorar, y el cronómetro se oculta. */}
+      {allDone && (
+        <div style={{
+          background: allCancelled
+            ? `linear-gradient(135deg, ${T.neutral[400]}, ${T.neutral[500]})`
+            : `linear-gradient(135deg, ${T.ok}, #15803D)`,
+          color: '#fff',
+          padding: '12px 18px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+          fontSize: 17, fontWeight: 900, letterSpacing: 1.5,
+          textTransform: 'uppercase',
+          textShadow: '0 1px 2px rgba(0,0,0,0.18)',
+        }}>
+          <span style={{
+            width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+            background: 'rgba(255,255,255,0.22)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            <svg width="16" height="16" viewBox="0 0 14 14" fill="none">
+              {allCancelled ? (
+                <path d="M4 4 L10 10 M10 4 L4 10" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />
+              ) : (
+                <path d="M3 7.5 L6 10.5 L11 4" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+              )}
+            </svg>
+          </span>
+          {allCancelled ? 'Cancelado' : 'Completado'}
+        </div>
+      )}
       <div
         role="button"
         tabIndex={0}
@@ -920,16 +953,22 @@ function CommandaCard({ group, servedInfo }) {
             </div>
           )}
         </div>
-        <div style={{
-          padding: '10px 16px', borderRadius: 999,
-          background: '#fff', border: `2px solid ${elapsedColor}66`,
-          color: elapsedColor,
-          fontSize: 17, fontWeight: 900,
-          fontVariantNumeric: 'tabular-nums',
-          flexShrink: 0,
-        }}>
-          {elapsedPrefix} {elapsedLabel}
-        </div>
+        {/* Cronómetro: SOLO mientras la comanda sigue viva (algo pendiente).
+            En archivados se oculta — el tiempo "corriendo" hacía que la
+            cocinera creyera que era un pedido activo y lo volviera a sacar.
+            El sello "Completado" de arriba ya comunica el estado final. */}
+        {!allDone && (
+          <div style={{
+            padding: '10px 16px', borderRadius: 999,
+            background: '#fff', border: `2px solid ${elapsedColor}66`,
+            color: elapsedColor,
+            fontSize: 17, fontWeight: 900,
+            fontVariantNumeric: 'tabular-nums',
+            flexShrink: 0,
+          }}>
+            {elapsedPrefix} {elapsedLabel}
+          </div>
+        )}
         {/* Chevron de plegado: indica si la comanda está abierta o cerrada. */}
         <div style={{
           width: 34, height: 34, borderRadius: 999, flexShrink: 0,

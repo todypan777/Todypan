@@ -46,8 +46,22 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
   const date = todayStr()
 
   // Cuentas del admin: a cuál entra/sale la plata. Elegir cuenta es OBLIGATORIO.
+  // En el formulario los botones van en orden Efectivo → Nequi → Daviplata
+  // (las creadas por el usuario quedan después). NO cambia el orden de la
+  // pestaña Cuentas, solo el de estos botones.
   const accounts = getAccounts()
-  const [accountId, setAccountId] = useState(accounts[0]?.id || null)
+  const orderedAccounts = useMemo(() => {
+    const pref = ['acc_efectivo', 'acc_nequi', 'acc_daviplata']
+    const rank = (a) => {
+      const byId = pref.indexOf(a.id)
+      if (byId !== -1) return byId
+      const n = String(a.name || '').toLowerCase()
+      const byName = pref.findIndex(p => n === p.replace('acc_', ''))
+      return byName !== -1 ? byName : 99
+    }
+    return [...accounts].sort((a, b) => rank(a) - rank(b))
+  }, [accounts])
+  const [accountId, setAccountId] = useState(orderedAccounts[0]?.id || null)
   const selectedAccount = accounts.find(a => a.id === accountId) || null
 
   // Conciliación de transferencias: cuando se dispara, reemplazamos el form
@@ -260,7 +274,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
             <Warn>No hay cuentas creadas. Crea una en la pestaña Cuentas para registrar movimientos.</Warn>
           ) : (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {accounts.map(acc => {
+              {orderedAccounts.map(acc => {
                 const isActive = accountId === acc.id
                 return (
                   <button key={acc.id} onClick={() => setAccountId(acc.id)} style={{

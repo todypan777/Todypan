@@ -24,6 +24,7 @@ export default function Cuentas() {
 
   const accounts = getAccounts()
   const [detail, setDetail] = useState(null)      // cuenta abierta en modal
+  const [visible, setVisible] = useState(15)      // cuántos movimientos del feed se muestran
 
   const total = useMemo(
     () => accounts.reduce((s, a) => s + getAccountBalance(a), 0),
@@ -116,17 +117,32 @@ export default function Cuentas() {
             </div>
           </Card>
         ) : (
-          <Card padding={0} style={{ overflow: 'hidden' }}>
-            {feed.map((m, i) => (
-              <FeedRow
-                key={m.id}
-                mov={m}
-                account={accountsById[m.accountId]}
-                categoryLabel={catLabel[m.cat] || m.cat || 'Sin categoría'}
-                isLast={i === feed.length - 1}
-              />
-            ))}
-          </Card>
+          <>
+            <Card padding={0} style={{ overflow: 'hidden' }}>
+              {feed.slice(0, visible).map((m, i, arr) => (
+                <FeedRow
+                  key={m.id}
+                  mov={m}
+                  account={accountsById[m.accountId]}
+                  categoryLabel={catLabel[m.cat] || m.cat || 'Sin categoría'}
+                  isLast={i === arr.length - 1}
+                />
+              ))}
+            </Card>
+            {feed.length > visible && (
+              <button
+                onClick={() => setVisible(v => v + 15)}
+                style={{
+                  width: '100%', marginTop: 10, padding: '12px', borderRadius: 12,
+                  background: '#fff', color: T.copper[700],
+                  border: `1px solid ${T.neutral[200]}`,
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+                }}
+              >
+                Ver más · {feed.length - visible} restantes
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -148,9 +164,16 @@ export default function Cuentas() {
 function FeedRow({ mov, account, categoryLabel, isLast }) {
   const pal = BRANCH_PALETTE[account?.colorKey] || BRANCH_PALETTE.copper
   const isIncome = mov.type === 'income'
-  const date = mov.date
-    ? new Date(mov.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
-    : '—'
+  // Fecha + hora: el timestamp real está en _ts (del id 'm'+Date.now()).
+  // Si no hay timestamp válido (data vieja), caemos al día solo.
+  const date = (mov._ts && mov._ts > 1e12)
+    ? new Date(mov._ts).toLocaleString('es-CO', {
+        day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit',
+        hour12: true, timeZone: 'America/Bogota',
+      })
+    : mov.date
+      ? new Date(mov.date + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
+      : '—'
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',

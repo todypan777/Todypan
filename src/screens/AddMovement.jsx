@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
 import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate, normalizeCatKey } from '../db'
@@ -53,6 +53,20 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
   // Conciliación de transferencias: cuando se dispara, reemplazamos el form
   // por el panel de resultado (match / sin match).
   const [reconcile, setReconcile] = useState(null)
+
+  // Para que al escribir la categoría el teclado del sistema NO tape las
+  // sugerencias: al enfocar subimos el campo arriba; al salir, volvemos a bajar.
+  const [catFocused, setCatFocused] = useState(false)
+  const scrollAreaRef = useRef(null)
+  const catSectionRef = useRef(null)
+  function scrollCatUp() {
+    setTimeout(() => {
+      catSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 200) // espera a que el teclado del sistema abra
+  }
+  function scrollBackDown() {
+    scrollAreaRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   // Categorías existentes = fijas + las que el usuario ya usó. Sin predeterminadas.
   // Se deduplican por clave normalizada (ignora tildes y espacios).
@@ -229,7 +243,13 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
       </div>
 
       {/* ── Zona inferior (controles) ── */}
-      <div style={{ flex: 1, overflowY: 'auto' }}>
+      <div ref={scrollAreaRef} style={{
+        flex: 1, overflowY: 'auto',
+        // Espacio extra solo al escribir la categoría: deja subir el campo para
+        // que las primeras sugerencias queden por encima del teclado del sistema.
+        paddingBottom: catFocused ? 340 : 0,
+        transition: 'padding-bottom 0.2s ease',
+      }}>
 
         {/* Cuenta (obligatorio) */}
         <div style={{ padding: '14px 16px 0' }}>
@@ -263,7 +283,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
         </div>
 
         {/* Categoría (OBLIGATORIO) */}
-        <div style={{ padding: '16px 16px 0' }}>
+        <div ref={catSectionRef} style={{ padding: '16px 16px 0' }}>
           <SectionLabel theme={theme}>
             {isIncome ? '¿A qué categoría entró?' : '¿A qué categoría va el gasto?'}
           </SectionLabel>
@@ -271,6 +291,8 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
           <input
             value={catText}
             onChange={e => setCatText(e.target.value)}
+            onFocus={() => { setCatFocused(true); scrollCatUp() }}
+            onBlur={() => { setCatFocused(false); scrollBackDown() }}
             placeholder={isIncome ? 'Escribe la categoría (ej: Venta por Transferencia)' : 'Escribe la categoría (ej: Arriendo)'}
             style={{
               width: '100%', padding: '12px 14px', borderRadius: 12,

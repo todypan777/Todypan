@@ -26,6 +26,7 @@ import Transferencias from './screens/Transferencias'
 import Tasks from './screens/Tasks'
 import Almuerzos from './screens/Almuerzos'
 import Desayunos from './screens/Desayunos'
+import Cuentas from './screens/Cuentas'
 import Login from './screens/Login'
 import {
   RegistrationForm,
@@ -223,6 +224,9 @@ function AppShell() {
     } else if (target === 'desayunos') {
       setMoreSub('desayunos')
       setTab('more')
+    } else if (target === 'cuentas') {
+      setMoreSub('cuentas')
+      setTab('more')
     } else {
       setTab(target)
     }
@@ -234,7 +238,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos', 'cuentas'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -358,6 +362,17 @@ function AppShell() {
       content = <Almuerzos />
     } else if (moreSub === 'desayunos') {
       content = <Desayunos />
+    } else if (moreSub === 'cuentas') {
+      content = <Cuentas />
+    } else if (moreSub === 'team') {
+      content = (
+        <Team
+          employees={data.employees}
+          onRefresh={refresh}
+          initialEmpId={pendingEmpId}
+          onClearEmpId={() => setPendingEmpId(null)}
+        />
+      )
     } else {
       content = <More onOpen={id => setMoreSub(id)} />
     }
@@ -434,7 +449,7 @@ function AppShell() {
             <div style={{ minHeight: '100dvh', WebkitOverflowScrolling: 'touch' }}>
               {content}
             </div>
-            <TabBar active={activeTab} onChange={handleTabChange} />
+            <TabBar active={(tab === 'more' && moreSub === 'cuentas') ? 'cuentas' : activeTab} onChange={handleTabChange} />
           </>
         )}
 

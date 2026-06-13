@@ -29,6 +29,13 @@ const MAIN_TABS = [
 ]
 
 const MORE_TABS = [
+  { id: 'cuentas', label: 'Cuentas', icon: (c) => (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="2.5" y="5" width="15" height="11" rx="2.5" stroke={c} strokeWidth="1.6" fill="none"/>
+      <path d="M2.5 8.5 H17.5" stroke={c} strokeWidth="1.6"/>
+      <circle cx="13.5" cy="12.5" r="1.4" fill={c}/>
+    </svg>
+  )},
   { id: 'movements', label: 'Movimientos', icon: (c) => (
     <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
       <path d="M3 6 H13 M3 6 L6 3 M3 6 L6 9" stroke={c} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/>
@@ -124,7 +131,7 @@ export function TabBar({ active, onChange }) {
         </div>
       ),
     },
-    MAIN_TABS[2],
+    MORE_TABS[0], // Cuentas (reemplaza a Equipo en la barra inferior)
     MOBILE_MORE_TAB,
   ]
 

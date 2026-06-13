@@ -1,35 +1,52 @@
-import { useState } from 'react'
-import { T, BRANCH_PALETTE } from '../tokens'
+import { useMemo, useState } from 'react'
+import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { addMovement, getData } from '../db'
+import { addMovement, getAccounts, getData } from '../db'
 
-export default function AddMovement({ initialKind = 'income', onBack, onSave, incomeCats, expenseCats }) {
+export default function AddMovement({ initialKind = 'income', onBack, onSave }) {
   const [kind, setKind] = useState(initialKind)
   const [amount, setAmount] = useState('')
-  const [group, setGroup] = useState('proveedores')
-  const [branch, setBranch] = useState(1)
-  const [note, setNote] = useState('')
+  const [catText, setCatText] = useState('')   // categoría escrita (OBLIGATORIA)
   const date = todayStr()
 
-  const canSave = amount && Number(amount) > 0
+  // Cuentas del admin: a cuál entra/sale la plata. Elegir cuenta es OBLIGATORIO.
+  const accounts = getAccounts()
+  const [accountId, setAccountId] = useState(accounts[0]?.id || null)
 
-  const autoCat = kind === 'income'
-    ? 'ventas_mostrador'
-    : group === 'proveedores' ? 'otros_prov'
-    : group === 'operacion' ? 'aseo'
-    : 'mejora'
+  // Categorías que YA existen = las que el usuario ha usado antes (en cualquier
+  // movimiento de cuenta). No hay predeterminadas: se van creando al escribir.
+  const existingCats = useMemo(() => {
+    const seen = new Map() // minúsculas -> texto original
+    ;(getData().movements || []).forEach(m => {
+      if (!m.accountId) return
+      const label = String(m.cat || '').trim()
+      if (!label) return
+      const key = label.toLowerCase()
+      if (!seen.has(key)) seen.set(key, label)
+    })
+    return [...seen.values()].sort((a, b) => a.localeCompare(b, 'es'))
+  }, [])
 
-  // Color del tema según la panadería seleccionada
-  const branches = getData().branches || []
-  const selectedBranch = branches.find(b => b.id === branch)
-  const pal = selectedBranch
-    ? (BRANCH_PALETTE[selectedBranch.colorKey] || BRANCH_PALETTE.copper)
-    : null  // null = "Ambas" → sin color especial
+  const isIncome = kind === 'income'
 
-  // Colores de la zona superior del formulario
-  const topBg    = pal ? pal.light  : T.neutral[50]
-  const topBorder = pal ? pal.border : T.neutral[200]
-  const accentColor = pal ? pal.main : T.copper[500]
+  // Si lo escrito ya existe (sin importar mayúsculas), reutilizamos esa categoría.
+  function resolveCat(text) {
+    const t = text.trim()
+    return existingCats.find(c => c.toLowerCase() === t.toLowerCase()) || t
+  }
+
+  const q = catText.trim().toLowerCase()
+  const suggestions = (q
+    ? existingCats.filter(c => c.toLowerCase().includes(q) && c.toLowerCase() !== q)
+    : existingCats
+  ).slice(0, 8)
+
+  const canSave = amount && Number(amount) > 0 && !!accountId && !!catText.trim()
+
+  // ── Tema por tipo: INGRESO = verde, GASTO = rojo. Tiñe toda la pantalla.
+  const theme = isIncome
+    ? { main: T.ok,  text: '#356B34', light: '#E8F4E8', soft: '#F2F9F1', border: '#BFDCBE' }
+    : { main: T.bad, text: '#8A3526', light: '#FBE9E5', soft: '#FDF2EF', border: '#F0C8BE' }
 
   function handleKeypad(k) {
     if (k === 'back') setAmount(a => a.slice(0, -1))
@@ -43,10 +60,9 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
       date,
       type: kind,
       amount: Number(amount),
-      cat: autoCat,
-      group: kind === 'expense' ? group : undefined,
-      branch,
-      note: note.trim() || undefined,
+      cat: resolveCat(catText),
+      branch: 'both',
+      accountId: accountId || undefined,
     })
     onSave()
   }
@@ -54,123 +70,80 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
   const keys = [['1','2','3'],['4','5','6'],['7','8','9'],['000','0','back']]
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: T.neutral[50] }}>
+    <div style={{
+      display: 'flex', flexDirection: 'column', height: '100%',
+      background: theme.soft, transition: 'background 0.25s ease',
+    }}>
 
-      {/* ── Zona superior con color de panadería ── */}
+      {/* ── Zona superior con color del tipo (verde / rojo) ── */}
       <div style={{
-        background: topBg,
-        borderBottom: `1px solid ${topBorder}`,
+        background: theme.light,
+        borderBottom: `1px solid ${theme.border}`,
         transition: 'background 0.25s ease, border-color 0.25s ease',
       }}>
         {/* Top bar */}
         <div style={{ padding: '20px 20px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <button onClick={onBack} style={{
             background: 'none', border: 'none', padding: '6px 0',
-            cursor: 'pointer', fontSize: 15, color: T.neutral[500],
-            fontFamily: 'inherit', fontWeight: 500,
+            cursor: 'pointer', fontSize: 15, color: theme.text,
+            fontFamily: 'inherit', fontWeight: 500, opacity: 0.85,
           }}>
             Cancelar
           </button>
-          <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[700], letterSpacing: 0.1 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: theme.text, letterSpacing: 0.1 }}>
             Nuevo movimiento
           </div>
           <button onClick={handleSave} style={{
             background: 'none', border: 'none', padding: '6px 0',
             cursor: canSave ? 'pointer' : 'default',
-            fontSize: 15, color: canSave ? accentColor : T.neutral[300],
-            fontFamily: 'inherit', fontWeight: 700,
+            fontSize: 15, color: canSave ? theme.main : `${theme.main}55`,
+            fontFamily: 'inherit', fontWeight: 800,
             transition: 'color 0.25s',
           }}>
             Guardar
           </button>
         </div>
 
-        {/* Selector de panadería */}
-        <div style={{ padding: '16px 16px 0' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: pal ? pal.text : T.neutral[400], textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, transition: 'color 0.25s' }}>
-            Panadería
-          </div>
+        {/* Switch Ingreso / Gasto — grande y notorio */}
+        <div style={{ padding: '18px 16px 0' }}>
           <div style={{ display: 'flex', gap: 8 }}>
-            {branches.map(b => {
-              const bPal = BRANCH_PALETTE[b.colorKey] || BRANCH_PALETTE.copper
-              const isActive = branch === b.id
+            {[
+              { id: 'income',  label: 'Ingreso', color: T.ok,  emoji: '↑' },
+              { id: 'expense', label: 'Gasto',   color: T.bad, emoji: '↓' },
+            ].map(o => {
+              const active = kind === o.id
               return (
-                <button key={b.id} onClick={() => setBranch(b.id)} style={{
-                  flex: 1, padding: '10px 8px', borderRadius: 12,
-                  border: isActive ? `2px solid ${bPal.main}` : `1.5px solid ${bPal.border}`,
-                  background: isActive ? bPal.main : bPal.light,
-                  color: isActive ? '#fff' : bPal.text,
-                  cursor: 'pointer', fontFamily: 'inherit',
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  transition: 'all 0.2s ease',
-                  boxShadow: isActive ? `0 3px 10px ${bPal.main}44` : 'none',
+                <button key={o.id} onClick={() => setKind(o.id)} style={{
+                  flex: 1, padding: '15px 10px', borderRadius: 16, border: 'none',
+                  background: active ? o.color : '#fff',
+                  color: active ? '#fff' : T.neutral[400],
+                  fontSize: 17, fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  boxShadow: active ? `0 6px 18px ${o.color}55` : `inset 0 0 0 1.5px ${T.neutral[200]}`,
+                  transform: active ? 'scale(1.02)' : 'scale(1)',
+                  transition: 'all 0.18s ease',
                 }}>
-                  <div style={{
-                    width: 10, height: 10, borderRadius: 999, flexShrink: 0,
-                    background: isActive ? 'rgba(255,255,255,0.8)' : bPal.main,
-                    transition: 'background 0.2s',
-                  }}/>
-                  <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {b.name}
-                  </span>
+                  <span style={{ fontSize: 18 }}>{o.emoji}</span>
+                  {o.label}
                 </button>
               )
             })}
-            {/* Ambas */}
-            <button onClick={() => setBranch('both')} style={{
-              padding: '10px 12px', borderRadius: 12,
-              border: branch === 'both' ? `2px solid ${T.neutral[600]}` : `1.5px solid ${T.neutral[200]}`,
-              background: branch === 'both' ? T.neutral[700] : T.neutral[100],
-              color: branch === 'both' ? '#fff' : T.neutral[500],
-              cursor: 'pointer', fontFamily: 'inherit',
-              fontSize: 13, fontWeight: 700,
-              transition: 'all 0.2s ease',
-            }}>
-              Ambas
-            </button>
-          </div>
-        </div>
-
-        {/* Income/Expense switch */}
-        <div style={{ padding: '12px 16px 0' }}>
-          <div style={{
-            display: 'flex',
-            background: pal ? `${pal.border}66` : T.neutral[100],
-            borderRadius: 12, padding: 3,
-            border: `0.5px solid ${topBorder}`,
-            transition: 'background 0.25s',
-          }}>
-            {[
-              { id: 'income', label: 'Ingreso', color: T.ok },
-              { id: 'expense', label: 'Gasto', color: pal ? pal.main : T.copper[500] },
-            ].map(o => (
-              <button key={o.id} onClick={() => setKind(o.id)} style={{
-                flex: 1, padding: '9px', borderRadius: 10, border: 'none',
-                background: kind === o.id ? '#fff' : 'transparent',
-                color: kind === o.id ? o.color : T.neutral[500],
-                fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                boxShadow: kind === o.id ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                transition: 'all 0.15s',
-              }}>{o.label}</button>
-            ))}
           </div>
         </div>
 
         {/* Amount display */}
-        <div style={{ padding: '20px 20px 20px', textAlign: 'center' }}>
+        <div style={{ padding: '22px 20px 22px', textAlign: 'center' }}>
           <div style={{
             fontSize: 11, fontWeight: 700, letterSpacing: 0.8,
-            color: pal ? pal.text : T.neutral[400],
+            color: theme.text, opacity: 0.7,
             textTransform: 'uppercase', marginBottom: 6,
             transition: 'color 0.25s',
           }}>
-            Monto
+            {isIncome ? 'Monto que entra' : 'Monto que sale'}
           </div>
           <div style={{
-            fontSize: 52, fontWeight: 700, letterSpacing: -1.5,
-            color: amount
-              ? (kind === 'income' ? T.ok : (pal ? pal.main : T.neutral[900]))
-              : (pal ? `${pal.main}44` : T.neutral[300]),
+            fontSize: 52, fontWeight: 800, letterSpacing: -1.5,
+            color: amount ? theme.main : `${theme.main}44`,
             fontVariantNumeric: 'tabular-nums', lineHeight: 1,
             transition: 'color 0.25s',
           }}>
@@ -179,44 +152,86 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
         </div>
       </div>
 
-      {/* ── Zona inferior (controles + teclado) ── */}
+      {/* ── Zona inferior (controles) — scrollable por si no cabe ── */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
 
-      {/* Group (only for expenses) */}
-      {kind === 'expense' && (
-        <div style={{ padding: '12px 16px 0', display: 'flex', gap: 8 }}>
-          {[
-            { id: 'proveedores', label: 'Proveedores' },
-            { id: 'operacion',   label: 'Operación' },
-            { id: 'empresa',     label: 'Empresa' },
-          ].map(g => (
-            <button key={g.id} onClick={() => setGroup(g.id)} style={{
-              padding: '7px 13px', borderRadius: 999, border: 'none',
-              cursor: 'pointer', fontFamily: 'inherit',
-              background: group === g.id ? T.neutral[800] : T.neutral[100],
-              color: group === g.id ? '#fff' : T.neutral[600],
-              fontSize: 12, fontWeight: 600,
-            }}>{g.label}</button>
-          ))}
+        {/* Cuenta (obligatorio): a qué cuenta entra/sale la plata */}
+        <div style={{ padding: '14px 16px 0' }}>
+          <SectionLabel theme={theme}>
+            {isIncome ? '¿A qué cuenta entró?' : '¿De qué cuenta salió?'}
+          </SectionLabel>
+          {accounts.length === 0 ? (
+            <Warn>No hay cuentas creadas. Crea una en la pestaña Cuentas para registrar movimientos.</Warn>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {accounts.map(acc => {
+                const isActive = accountId === acc.id
+                return (
+                  <button key={acc.id} onClick={() => setAccountId(acc.id)} style={{
+                    flex: '1 1 0', minWidth: 92, padding: '10px 12px', borderRadius: 12,
+                    border: isActive ? `2px solid ${theme.main}` : `1.5px solid ${T.neutral[200]}`,
+                    background: isActive ? theme.light : '#fff',
+                    color: isActive ? theme.text : T.neutral[600],
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                    fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
+                    transition: 'all 0.15s',
+                  }}>
+                    <span style={{ fontSize: 16 }}>{acc.emoji || '💳'}</span>
+                    {acc.name}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
-      )}
 
-      {/* Note */}
-      <div style={{ padding: '12px 16px 0' }}>
-        <input
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          placeholder="Nota (ej: Caja del sábado, Harina Haz de Oros...)"
-          style={{
-            width: '100%', padding: '11px 14px', borderRadius: 10,
-            border: `1px solid ${T.neutral[200]}`, background: '#fff',
-            fontSize: 14, color: T.neutral[700], fontFamily: 'inherit',
-            outline: 'none', boxSizing: 'border-box',
-          }}
-        />
+        {/* Categoría (OBLIGATORIO) — se escribe; si ya existe, sugiere */}
+        <div style={{ padding: '16px 16px 0' }}>
+          <SectionLabel theme={theme}>
+            {isIncome ? '¿A qué categoría entró?' : '¿A qué categoría va el gasto?'}
+          </SectionLabel>
+
+          <input
+            value={catText}
+            onChange={e => setCatText(e.target.value)}
+            placeholder={isIncome ? 'Escribe la categoría (ej: Préstamo Carlos)' : 'Escribe la categoría (ej: Arriendo)'}
+            style={{
+              width: '100%', padding: '12px 14px', borderRadius: 12,
+              border: `1.5px solid ${catText.trim() ? theme.main : T.neutral[200]}`,
+              background: catText.trim() ? theme.light : '#fff',
+              color: catText.trim() ? theme.text : T.neutral[700],
+              fontSize: 14, fontWeight: 700, fontFamily: 'inherit',
+              outline: 'none', boxSizing: 'border-box',
+            }}
+          />
+
+          {/* Sugerencias de categorías existentes */}
+          {suggestions.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+              {suggestions.map(c => (
+                <button key={c} onClick={() => setCatText(c)} style={{
+                  padding: '7px 12px', borderRadius: 999,
+                  background: '#fff', color: T.neutral[700],
+                  border: `1px solid ${T.neutral[200]}`,
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
+                }}>{c}</button>
+              ))}
+            </div>
+          )}
+
+          {/* Aviso de categoría nueva */}
+          {catText.trim() && !existingCats.some(c => c.toLowerCase() === catText.trim().toLowerCase()) && (
+            <div style={{ fontSize: 11.5, color: theme.text, opacity: 0.85, marginTop: 8, fontWeight: 600 }}>
+              ✦ Se creará la categoría nueva «{catText.trim()}»
+            </div>
+          )}
+        </div>
+
+        <div style={{ height: 16 }} />
       </div>
 
       {/* Teclado */}
-      <div style={{ flex: 1 }}/>
       <div style={{
         padding: '12px 12px 100px', background: '#fff',
         borderTop: `0.5px solid ${T.neutral[100]}`,
@@ -241,6 +256,28 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave, in
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+function SectionLabel({ children, theme }) {
+  return (
+    <div style={{
+      fontSize: 10, fontWeight: 700, color: theme.text, opacity: 0.7,
+      textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8,
+    }}>
+      {children}
+    </div>
+  )
+}
+
+function Warn({ children }) {
+  return (
+    <div style={{
+      padding: '11px 14px', borderRadius: 10, background: '#FFF7E6',
+      border: '1px solid #F4E0BC', fontSize: 12.5, color: '#8A6A1A', fontWeight: 600,
+    }}>
+      {children}
     </div>
   )
 }

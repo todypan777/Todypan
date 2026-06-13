@@ -48,6 +48,20 @@ const defaultExpenseCats = {
 // con base reducida).
 export const CASH_FLOOR_DEFAULT = 200000
 
+// ─── Cuentas del administrador (Nequi / Daviplata / Efectivo / ...) ──
+// Saldos que el admin lleva a mano ("chetar"): puede fijar el saldo exacto,
+// sumar ingresos, restar egresos y crear cuentas nuevas. Viven en el doc
+// compartido /todypan/data bajo `accounts`.
+// Cada cuenta guarda solo su IDENTIDAD y sus AJUSTES manuales (adjustments).
+// El SALDO es DERIVADO: ajustes manuales + suma de los movimientos globales
+// asignados a la cuenta (accountId). No se guarda saldo duplicado, así
+// alimentar la cuenta desde "Nuevo movimiento" no cuesta escrituras extra.
+const defaultAccounts = [
+  { id: 'acc_nequi',     name: 'Nequi',     emoji: '📱', colorKey: 'burgundy', adjustments: [] },
+  { id: 'acc_daviplata', name: 'Daviplata', emoji: '📱', colorKey: 'ocean',    adjustments: [] },
+  { id: 'acc_efectivo',  name: 'Efectivo',  emoji: '💵', colorKey: 'sage',     adjustments: [] },
+]
+
 function defaultData() {
   return {
     movements: [],
@@ -58,6 +72,7 @@ function defaultData() {
     suppliers: [],            // lista maestra de proveedores { id, name }
     incomeCats: defaultIncomeCats,
     expenseCats: defaultExpenseCats,
+    accounts: defaultAccounts.map(a => ({ ...a, adjustments: [] })),
     branches: [
       { id: 1, name: 'Panadería Iglesia', colorKey: 'copper' },
       { id: 2, name: 'Panadería Esquina', colorKey: 'sage' },
@@ -84,6 +99,27 @@ function migrate(d) {
     d.incomeCats = [...d.incomeCats, { id: 'ingreso_caja', label: 'Ingreso de caja' }]
   }
   if (!d.expenseCats) d.expenseCats = defaultExpenseCats
+  // Cuentas del admin: sembrar las 3 por defecto si nunca existieron.
+  if (!Array.isArray(d.accounts)) d.accounts = defaultAccounts.map(a => ({ ...a, adjustments: [] }))
+  // Migrar modelo viejo (balance + movements) → adjustments. Si una cuenta
+  // traía un balance guardado, lo convertimos en un ajuste 'set' inicial para
+  // no perderlo. El campo `movements` viejo se reutiliza como adjustments.
+  d.accounts = d.accounts.map(a => {
+    if (Array.isArray(a.adjustments)) {
+      const { balance, movements, ...rest } = a
+      return { ...rest, adjustments: a.adjustments }
+    }
+    const adjustments = Array.isArray(a.movements) ? a.movements : []
+    const { balance, movements, ...rest } = a
+    // Si había balance guardado y no quedó rastro en adjustments, sembrarlo.
+    if ((balance || 0) !== 0 && adjustments.length === 0) {
+      adjustments.push({
+        id: 'mv_seed_' + a.id, type: 'set', amount: Number(balance) || 0,
+        note: 'Saldo inicial', date: getBogotaDateStr(), createdAt: 0,
+      })
+    }
+    return { ...rest, adjustments }
+  })
   // Migración legacy: si quedó la categoría 'nomina', la quitamos
   if (d.expenseCats?.operacion) {
     d.expenseCats.operacion = d.expenseCats.operacion.filter(c => c.id !== 'nomina')
@@ -358,6 +394,137 @@ export function getBranches() { return _data.branches }
 
 export function updateBranch(id, updates) {
   _data.branches = _data.branches.map(b => b.id === id ? { ...b, ...updates } : b)
+  persist()
+}
+
+// ─── Cuentas del administrador ───────────────────────────────
+// Modelo de cuenta (solo identidad + ajustes manuales):
+//   { id, name, emoji, colorKey, adjustments: [
+//       { id, type: 'in'|'out'|'set', amount, note, date, createdAt }
+//   ] }
+//
+// SALDO = DERIVADO, nunca se guarda:
+//   saldo = baseline(adjustments) + Σ(movimientos globales con accountId)
+//
+//   - baseline(adjustments): recorre los ajustes manuales en orden cronológico;
+//     'set' fija la base, 'in' suma, 'out' resta. Esto es la parte que el admin
+//     toca a mano dentro de la pestaña Cuentas (reconciliación / "chetar").
+//   - movimientos globales: cada movimiento creado con "Nuevo movimiento" que
+//     tenga accountId = esta cuenta. Ingreso suma, gasto resta.
+//
+// Ventaja: editar/borrar un movimiento recalcula el saldo solo (es derivado) y
+// asignar un movimiento a una cuenta NO escribe nada extra (es el mismo doc).
+
+export function getAccounts() { return _data?.accounts || [] }
+
+/** Efecto de un movimiento global sobre su cuenta: ingreso +, gasto −. */
+function movementEffect(m) {
+  const amt = Number(m.amount) || 0
+  return m.type === 'income' ? amt : -amt
+}
+
+/** Movimientos globales asignados a una cuenta (los del botón Nuevo movimiento). */
+export function getAccountAssignedMovements(accountId) {
+  return (_data?.movements || []).filter(m => m.accountId === accountId)
+}
+
+/** Suma neta de los movimientos globales asignados a la cuenta. */
+export function getAccountAssignedSum(accountId) {
+  return getAccountAssignedMovements(accountId).reduce((s, m) => s + movementEffect(m), 0)
+}
+
+/** Base manual: recorre los ajustes en orden cronológico (set fija, in/out ajustan). */
+function baselineFromAdjustments(adjustments) {
+  const chrono = [...(adjustments || [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+  let bal = 0
+  for (const m of chrono) {
+    if (m.type === 'set') bal = Number(m.amount) || 0
+    else if (m.type === 'in') bal += Math.abs(Number(m.amount) || 0)
+    else if (m.type === 'out') bal -= Math.abs(Number(m.amount) || 0)
+  }
+  return bal
+}
+
+/** Saldo DERIVADO de una cuenta = base manual + movimientos asignados. */
+export function getAccountBalance(account) {
+  if (!account) return 0
+  return baselineFromAdjustments(account.adjustments) + getAccountAssignedSum(account.id)
+}
+
+export function addAccount({ name, emoji = '💳', colorKey = 'copper', balance = 0 } = {}) {
+  const clean = String(name || '').trim()
+  if (!clean) return null
+  const id = 'acc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+  const initial = Number(balance) || 0
+  const account = {
+    id, name: clean, emoji: emoji || '💳', colorKey: colorKey || 'copper',
+    adjustments: initial !== 0
+      ? [{ id: 'mv_' + Date.now(), type: 'set', amount: initial,
+           note: 'Saldo inicial', date: getBogotaDateStr(), createdAt: Date.now() }]
+      : [],
+  }
+  _data.accounts = [...(_data.accounts || []), account]
+  persist()
+  return id
+}
+
+export function updateAccount(id, updates) {
+  const clean = { ...updates }
+  // La identidad sí (nombre/emoji/color); el saldo se toca con los ajustes.
+  delete clean.adjustments
+  delete clean.balance
+  if (clean.name != null) clean.name = String(clean.name).trim()
+  _data.accounts = (_data.accounts || []).map(a => a.id === id ? { ...a, ...clean } : a)
+  persist()
+}
+
+export function deleteAccount(id) {
+  _data.accounts = (_data.accounts || []).filter(a => a.id !== id)
+  persist()
+}
+
+/**
+ * Fija el saldo EXACTO de una cuenta (chetar / reconciliar). Como el saldo es
+ * derivado, guardamos un ajuste 'set' cuyo valor compensa los movimientos ya
+ * asignados, de modo que el saldo resultante sea exactamente `balance`.
+ */
+export function setAccountBalance(id, balance, note = '') {
+  const target = Number(balance) || 0
+  _data.accounts = (_data.accounts || []).map(a => {
+    if (a.id !== id) return a
+    const assigned = getAccountAssignedSum(a.id)
+    const setValue = target - assigned // baseline necesario para que saldo = target
+    const mv = {
+      id: 'mv_' + Date.now(), type: 'set', amount: setValue,
+      note: note || 'Saldo ajustado', date: getBogotaDateStr(), createdAt: Date.now(),
+    }
+    return { ...a, adjustments: [mv, ...(a.adjustments || [])] }
+  })
+  persist()
+}
+
+/** Ajuste manual: suma (in) o resta (out) directo sobre la base de la cuenta. */
+export function addAccountMovement(id, { type, amount, note = '' }) {
+  const amt = Math.abs(Number(amount) || 0)
+  if (amt <= 0 || (type !== 'in' && type !== 'out')) return
+  _data.accounts = (_data.accounts || []).map(a => {
+    if (a.id !== id) return a
+    const mv = {
+      id: 'mv_' + Date.now(), type, amount: amt,
+      note: note || '', date: getBogotaDateStr(), createdAt: Date.now(),
+    }
+    return { ...a, adjustments: [mv, ...(a.adjustments || [])] }
+  })
+  persist()
+}
+
+/** Borra un ajuste manual. El saldo se recalcula solo (es derivado). */
+export function deleteAccountMovement(accountId, adjustmentId) {
+  _data.accounts = (_data.accounts || []).map(a =>
+    a.id !== accountId
+      ? a
+      : { ...a, adjustments: (a.adjustments || []).filter(m => m.id !== adjustmentId) }
+  )
   persist()
 }
 

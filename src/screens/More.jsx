@@ -13,6 +13,17 @@ export default function More({ onOpen }) {
 
   const items = [
     {
+      id: 'team', label: 'Equipo', desc: 'Tu personal, turnos y asistencia',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 22 22" fill="none">
+          <circle cx="8" cy="8" r="3" stroke={T.copper[600]} strokeWidth="1.7" fill="none"/>
+          <path d="M2 18 Q2 12 8 12 Q14 12 14 18" stroke={T.copper[600]} strokeWidth="1.7" fill="none"/>
+          <circle cx="15" cy="7" r="2.3" stroke={T.copper[600]} strokeWidth="1.5" fill="none"/>
+          <path d="M13 13 Q15 11.5 17 12.5 Q20 13.5 20 17" stroke={T.copper[600]} strokeWidth="1.5" fill="none"/>
+        </svg>
+      ),
+    },
+    {
       id: 'movements', label: 'Movimientos', desc: 'Ingresos, gastos y ventas — todo en un lugar',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

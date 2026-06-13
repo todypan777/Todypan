@@ -20,6 +20,10 @@ import { digitalAmount } from './utils/payment'
 export const TRANSFER_VALUE_TOLERANCE = 500
 // Tolerancia de tiempo (minutos) al buscar una venta mal marcada por su hora.
 export const TRANSFER_TIME_TOLERANCE = 15
+// Desincronización máxima permitida: el admin registra en orden viejo→nuevo y
+// las ventas van en el mismo orden; el match solo mira las próximas N pendientes
+// después de la frontera (no alcanza a "tapar" una transferencia saltada vieja).
+export const TRANSFER_MATCH_WINDOW = 3
 
 const saleRef = (id) => doc(firestoreDb, 'sales', id)
 
@@ -435,36 +439,47 @@ function saleMinutesOf(s) {
 
 /**
  * El admin registro un ingreso por transferencia (NEQUI/DAVIPLATA) de `amount`.
- * Busca la venta a chulear, en orden viejo->nuevo, con tolerancia +-$500:
- *   1. La transferencia pendiente MAS VIEJA: si coincide (exacta o +-500) -> esa.
- *   2. Si la mas vieja no coincide, busca adelante una exacta; si no, una +-500.
- *      (al saltarse las de antes, esas quedan "saltadas" = se calculan en rojo).
+ * Empareja con una venta usando una FRONTERA + VENTANA para acotar el desfase:
+ *   - frontera = la transferencia confirmada MAS NUEVA del metodo.
+ *   - solo se consideran las proximas N pendientes DESPUES de la frontera.
+ * Dentro de la ventana (orden viejo->nuevo, tolerancia +-$500):
+ *   1. Si la primera coincide (exacta o +-500) -> esa (con desfase si aplica).
+ *   2. Si no, busca una exacta dentro de la ventana; si no, una +-500.
+ * Una transferencia saltada queda ATRAS de la frontera => NO se puede "tapar"
+ * con un pago nuevo del mismo valor: queda roja para revisar a mano.
  * Devuelve { matched: sale|null, discrepancy }.
  */
 export async function autoMatchTransferByMovement({ method, amount, sinceDate, movementId, byUid, byName }) {
   const amt = Number(amount) || 0
   const all = await getSalesSinceOnce(sinceDate)
-  const pending = all
+  // Todas las ventas-transferencia del metodo, en orden cronologico.
+  const chrono = all
     .filter(s => (s.status || 'active') !== 'deleted')
-    .filter(s => s.transferConfirmation?.status !== 'confirmed')
     .filter(s => digitalAmount(s, method) > 0)
     .sort((a, b) => saleTimeMs(a) - saleTimeMs(b))
 
-  if (pending.length === 0) return { matched: null, reason: 'no_pending' }
+  // Frontera = indice de la transferencia confirmada mas nueva (todo lo que va
+  // despues es pendiente, porque es el indice confirmado mas alto).
+  let frontierIdx = -1
+  for (let i = 0; i < chrono.length; i++) {
+    if (chrono[i].transferConfirmation?.status === 'confirmed') frontierIdx = i
+  }
+  const windowSales = chrono.slice(frontierIdx + 1, frontierIdx + 1 + TRANSFER_MATCH_WINDOW)
+  if (windowSales.length === 0) return { matched: null, reason: 'no_pending' }
 
   const diffOf = (s) => digitalAmount(s, method) - amt
   let chosen = null
   let discrepancy = 0
 
-  const s0 = pending[0]
+  const s0 = windowSales[0]
   if (Math.abs(diffOf(s0)) <= TRANSFER_VALUE_TOLERANCE) {
     chosen = s0
     discrepancy = diffOf(s0)
   } else {
-    chosen = pending.find(s => digitalAmount(s, method) === amt) || null
+    chosen = windowSales.find(s => digitalAmount(s, method) === amt) || null
     if (chosen) discrepancy = 0
     else {
-      chosen = pending.find(s => Math.abs(diffOf(s)) <= TRANSFER_VALUE_TOLERANCE) || null
+      chosen = windowSales.find(s => Math.abs(diffOf(s)) <= TRANSFER_VALUE_TOLERANCE) || null
       if (chosen) discrepancy = diffOf(chosen)
     }
   }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate } from '../db'
+import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate, normalizeCatKey } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import {
   autoMatchTransferByMovement,
@@ -55,33 +55,40 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
   const [reconcile, setReconcile] = useState(null)
 
   // Categorías existentes = fijas + las que el usuario ya usó. Sin predeterminadas.
+  // Se deduplican por clave normalizada (ignora tildes y espacios).
   const existingCats = useMemo(() => {
-    const seen = new Map()
-    FIXED_CATS.forEach(c => seen.set(c.toLowerCase(), c))
+    const seen = new Map() // key normalizada → etiqueta
+    FIXED_CATS.forEach(c => seen.set(normalizeCatKey(c), c))
     ;(getData().movements || []).forEach(m => {
       if (!m.accountId) return
-      const label = String(m.cat || '').trim()
+      const label = String(m.cat || '').trim().replace(/\s+/g, ' ')
       if (!label) return
-      const key = label.toLowerCase()
-      if (!seen.has(key)) seen.set(key, label)
+      const key = normalizeCatKey(label)
+      if (!key || seen.has(key)) return
+      seen.set(key, label)
     })
-    const fixedSet = new Set(FIXED_CATS.map(c => c.toLowerCase()))
-    const rest = [...seen.values()].filter(c => !fixedSet.has(c.toLowerCase())).sort((a, b) => a.localeCompare(b, 'es'))
+    const fixedKeys = new Set(FIXED_CATS.map(c => normalizeCatKey(c)))
+    const rest = [...seen.entries()]
+      .filter(([k]) => !fixedKeys.has(k))
+      .map(([, l]) => l)
+      .sort((a, b) => a.localeCompare(b, 'es'))
     return [...FIXED_CATS, ...rest]
   }, [])
 
   const isIncome = kind === 'income'
 
   function resolveCat(text) {
-    const t = text.trim()
-    return existingCats.find(c => c.toLowerCase() === t.toLowerCase()) || t
+    const key = normalizeCatKey(text)
+    return existingCats.find(c => normalizeCatKey(c) === key) || text.trim().replace(/\s+/g, ' ')
   }
 
-  const q = catText.trim().toLowerCase()
-  const suggestions = (q
-    ? existingCats.filter(c => c.toLowerCase().includes(q) && c.toLowerCase() !== q)
-    : existingCats
-  ).slice(0, 8)
+  // Sugerencias: solo al escribir; las existentes que contienen lo tecleado
+  // (ignorando tildes/espacios). Si nada coincide exacto, se avisa que se creará.
+  const typedKey = normalizeCatKey(catText)
+  const matching = typedKey
+    ? existingCats.filter(c => normalizeCatKey(c).includes(typedKey)).slice(0, 6)
+    : []
+  const exactExists = typedKey ? existingCats.some(c => normalizeCatKey(c) === typedKey) : false
 
   const canSave = amount && Number(amount) > 0 && !!accountId && !!catText.trim()
 
@@ -131,6 +138,18 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
       display: 'flex', flexDirection: 'column', height: '100%',
       background: theme.soft, transition: 'background 0.25s ease',
     }}>
+
+      {/* Animaciones de presentación (pulso del monto + entrada de sugerencias).
+          Respetan prefers-reduced-motion. */}
+      <style>{`
+        @keyframes tpAmountPulse { 0% { transform: scale(1); } 38% { transform: scale(1.045); } 100% { transform: scale(1); } }
+        .tp-amount-pulse { animation: tpAmountPulse 160ms ease-out; }
+        @keyframes tpSuggestIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+        .tp-suggest-in { animation: tpSuggestIn 180ms ease-out; }
+        @media (prefers-reduced-motion: reduce) {
+          .tp-amount-pulse, .tp-suggest-in { animation: none !important; }
+        }
+      `}</style>
 
       {/* ── Zona superior con color del tipo (verde / rojo) ── */}
       <div style={{
@@ -196,11 +215,14 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
           }}>
             {isIncome ? 'Monto que entra' : 'Monto que sale'}
           </div>
-          <div style={{
-            fontSize: 52, fontWeight: 800, letterSpacing: -1.5,
-            color: amount ? theme.main : `${theme.main}44`,
-            fontVariantNumeric: 'tabular-nums', lineHeight: 1,
-          }}>
+          <div
+            key={amount || 'empty'}
+            className={amount ? 'tp-amount-pulse' : undefined}
+            style={{
+              fontSize: 52, fontWeight: 800, letterSpacing: -1.5,
+              color: amount ? theme.main : `${theme.main}44`,
+              fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+            }}>
             {amount ? fmtCOP(Number(amount)) : '$ 0'}
           </div>
         </div>
@@ -260,22 +282,34 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
             }}
           />
 
-          {suggestions.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-              {suggestions.map(c => (
+          {/* Sugerencias que aparecen al escribir (las que ya existen) */}
+          {catText.trim() && matching.length > 0 && (
+            <div className="tp-suggest-in" style={{
+              marginTop: 8, borderRadius: 12, overflow: 'hidden',
+              border: `1px solid ${T.neutral[200]}`, background: '#fff',
+            }}>
+              {matching.map((c, i) => (
                 <button key={c} onClick={() => setCatText(c)} style={{
-                  padding: '7px 12px', borderRadius: 999,
-                  background: '#fff', color: T.neutral[700],
-                  border: `1px solid ${T.neutral[200]}`,
-                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700,
-                }}>{c}</button>
+                  width: '100%', padding: '11px 14px', textAlign: 'left',
+                  background: 'transparent', border: 'none',
+                  borderBottom: i === matching.length - 1 ? 'none' : `0.5px solid ${T.neutral[100]}`,
+                  cursor: 'pointer', fontFamily: 'inherit',
+                  fontSize: 13.5, fontWeight: 700, color: T.neutral[800],
+                  display: 'flex', alignItems: 'center', gap: 9,
+                }}>
+                  <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+                    <path d="M2 7.5 L5.5 11 L12 3.5" stroke={theme.main} strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  {c}
+                </button>
               ))}
             </div>
           )}
 
-          {catText.trim() && !existingCats.some(c => c.toLowerCase() === catText.trim().toLowerCase()) && (
+          {/* Aviso de categoría nueva (solo si lo escrito no coincide con ninguna) */}
+          {catText.trim() && !exactExists && (
             <div style={{ fontSize: 11.5, color: theme.text, opacity: 0.85, marginTop: 8, fontWeight: 600 }}>
-              ✦ Se creará la categoría nueva «{catText.trim()}»
+              ✦ No existe — se creará la categoría «{catText.trim()}»
             </div>
           )}
         </div>
@@ -285,7 +319,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
 
       {/* Teclado */}
       <div style={{
-        padding: '12px 12px 100px', background: '#fff',
+        padding: '12px 12px calc(env(safe-area-inset-bottom, 0px) + 16px)', background: '#fff',
         borderTop: `0.5px solid ${T.neutral[100]}`,
         borderRadius: '20px 20px 0 0',
       }}>

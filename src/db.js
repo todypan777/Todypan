@@ -5,6 +5,16 @@ import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
 const LOCAL_KEY = 'todypan_v1'
 const FS_REF = doc(firestoreDb, 'todypan', 'data')
 
+// ─── Normalización de categorías ──────────────────────────────
+// Clave de comparación: ignora tildes y espacios (inicio/final e internos) y
+// mayúsculas. Así "Inicio ", "Inició" y "inicio" se tratan como la misma.
+export function normalizeCatKey(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/\p{Diacritic}/gu, '')   // quita tildes
+    .trim().replace(/\s+/g, ' ')                        // colapsa espacios
+    .toLowerCase()
+}
+
 // ─── Defaults ─────────────────────────────────────────────────
 const defaultIncomeCats = [
   { id: 'ventas_mostrador', label: 'Ventas mostrador' },
@@ -123,6 +133,33 @@ function migrate(d) {
   // Migración legacy: si quedó la categoría 'nomina', la quitamos
   if (d.expenseCats?.operacion) {
     d.expenseCats.operacion = d.expenseCats.operacion.filter(c => c.id !== 'nomina')
+  }
+  // Unificar categorías de movimientos de cuenta que son la misma salvo tildes
+  // o espacios (ej. "Inicio " e "Inició" → una sola etiqueta canónica).
+  if (Array.isArray(d.movements)) {
+    const groups = new Map() // key normalizada → Map(label → conteo)
+    for (const m of d.movements) {
+      if (!m.accountId || !m.cat) continue
+      const key = normalizeCatKey(m.cat)
+      if (!key) continue
+      if (!groups.has(key)) groups.set(key, new Map())
+      const label = String(m.cat).trim().replace(/\s+/g, ' ')
+      const lm = groups.get(key)
+      lm.set(label, (lm.get(label) || 0) + 1)
+    }
+    if (groups.size) {
+      const canon = new Map()
+      for (const [key, lm] of groups) {
+        // Etiqueta canónica: la más usada; empate → orden alfabético.
+        const best = [...lm.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'es'))[0]
+        canon.set(key, best[0])
+      }
+      d.movements = d.movements.map(m => {
+        if (!m.accountId || !m.cat) return m
+        const c = canon.get(normalizeCatKey(m.cat))
+        return (c && c !== m.cat) ? { ...m, cat: c } : m
+      })
+    }
   }
   if (!d.attendance) d.attendance = {}
   if (!d.reminders) d.reminders = []

@@ -470,6 +470,38 @@ export function getAccountAssignedSum(accountId) {
   return getAccountAssignedMovements(accountId).reduce((s, m) => s + movementEffect(m), 0)
 }
 
+// ─── Limpieza de "Reposición de base" (cierres viejos) ──────────
+// Antes, al cerrar un turno con la caja por debajo de la base, el sistema
+// SIEMPRE generaba un gasto de "Reposición de base" sobre Efectivo, asumiendo
+// que el admin reponía. Como muchas veces no se reponía nada, esos gastos
+// bajaron el saldo de Efectivo sin que se moviera plata real. Estas funciones
+// permiten revertirlos en lote. Su firma exacta es cat 'Cierre de Caja' +
+// type 'expense' (el ingreso de "lo que se llevó" es type 'income' y NO se toca).
+
+/** Movimientos de "Reposición de base" asignados a una cuenta (gastos de cierre). */
+export function getBaseRepositionMovements(accountId) {
+  return (_data?.movements || []).filter(m =>
+    m.accountId === accountId &&
+    m.type === 'expense' &&
+    m.cat === 'Cierre de Caja'
+  )
+}
+
+/**
+ * Borra de una sola vez todos los movimientos de "Reposición de base" de una
+ * cuenta (una sola escritura). El saldo es derivado, así que al borrarlos el
+ * saldo se corrige solo. Devuelve { count, total } de lo revertido.
+ */
+export function deleteBaseRepositionMovements(accountId) {
+  const targets = getBaseRepositionMovements(accountId)
+  if (targets.length === 0) return { count: 0, total: 0 }
+  const ids = new Set(targets.map(m => m.id))
+  const total = targets.reduce((s, m) => s + (Number(m.amount) || 0), 0)
+  _data.movements = (_data.movements || []).filter(m => !ids.has(m.id))
+  persist()
+  return { count: targets.length, total }
+}
+
 /** Base manual: recorre los ajustes en orden cronológico (set fija, in/out ajustan). */
 function baselineFromAdjustments(adjustments) {
   const chrono = [...(adjustments || [])].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))

@@ -8,6 +8,7 @@ import {
   getAccounts, addAccount, updateAccount, deleteAccount,
   setAccountBalance, addAccountMovement, deleteAccountMovement,
   getAccountBalance, getAccountAssignedMovements, getData,
+  getBaseRepositionMovements, deleteBaseRepositionMovements,
   watchSharedData,
 } from '../db'
 
@@ -483,6 +484,10 @@ function AccountDetailModal({ account, onClose, onChanged, onDeleted }) {
           </div>
         )}
 
+        {/* Limpieza de "Reposición de base" de cierres viejos (solo aparece si
+            esta cuenta tiene gastos automáticos de cierre por revertir). */}
+        {mode === 'view' && <BaseRepositionCleanup account={account} onChanged={onChanged} />}
+
         {/* Historial */}
         <div style={{ padding: '18px 22px 22px' }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: T.neutral[500], letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 8 }}>
@@ -508,6 +513,124 @@ function AccountDetailModal({ account, onClose, onChanged, onDeleted }) {
             border: 'none', cursor: 'pointer', fontFamily: 'inherit',
             fontSize: 14, fontWeight: 700,
           }}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ──────────────────────────────────────────────────────────────
+// Panel de limpieza: revierte de una sola vez los gastos automáticos de
+// "Reposición de base" que dejaron los cierres viejos (cuando el sistema
+// asumía que el admin reponía y le bajaba el saldo a Efectivo sin que se
+// moviera plata real). Solo aparece si hay reposiciones por revertir; se
+// esconde solo cuando ya no queda ninguna.
+// ──────────────────────────────────────────────────────────────
+function BaseRepositionCleanup({ account, onChanged }) {
+  const [confirming, setConfirming] = useState(false)
+  const [done, setDone] = useState(null) // { count, total } tras revertir
+
+  const movs = getBaseRepositionMovements(account.id)
+  const branches = getData().branches || []
+  const branchName = (b) => b === 'both' ? 'Ambas' : (branches.find(x => x.id === b)?.name || '')
+
+  // Ya no queda nada por revertir: si acabamos de hacerlo, mostramos el OK.
+  if (movs.length === 0) {
+    if (!done) return null
+    return (
+      <div style={{ padding: '16px 22px 0' }}>
+        <div style={{
+          padding: '12px 14px', borderRadius: 12,
+          background: '#E8F4E8', border: '1px solid #C2DDC1',
+          fontSize: 12.5, color: T.ok, fontWeight: 600, lineHeight: 1.5,
+        }}>
+          ✓ Listo. Se revirtieron {done.count} {done.count === 1 ? 'reposición' : 'reposiciones'} y volvieron <b style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(done.total)}</b> al saldo de {account.name}.
+        </div>
+      </div>
+    )
+  }
+
+  const total = movs.reduce((s, m) => s + (Number(m.amount) || 0), 0)
+  const fmtRowDate = (d) => d
+    ? new Date(d + 'T00:00:00').toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '—'
+
+  function handleDeleteAll() {
+    const res = deleteBaseRepositionMovements(account.id)
+    setDone(res)
+    setConfirming(false)
+    onChanged()
+  }
+
+  return (
+    <div style={{ padding: '16px 22px 0' }}>
+      <div style={{
+        borderRadius: 14, overflow: 'hidden',
+        border: `1.5px solid ${T.copper[200]}`, background: T.copper[50],
+      }}>
+        <div style={{ padding: '14px 16px 10px' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.copper[700], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+            🧹 Arreglar cierres viejos
+          </div>
+          <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
+            Hay <b>{movs.length}</b> {movs.length === 1 ? 'gasto' : 'gastos'} de <b>"Reposición de base"</b> que bajaron este saldo sin que se moviera plata real. Al revertirlos, <b style={{ color: T.copper[700], fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(total)}</b> vuelven a {account.name}.
+          </div>
+        </div>
+
+        {/* Lista compacta de lo que se va a revertir */}
+        <div style={{ maxHeight: 168, overflowY: 'auto', background: '#fff', borderTop: `1px solid ${T.copper[100]}`, borderBottom: `1px solid ${T.copper[100]}` }}>
+          {movs.map((m, i) => (
+            <div key={m.id} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              padding: '8px 16px',
+              borderBottom: i === movs.length - 1 ? 'none' : `0.5px solid ${T.neutral[100]}`,
+            }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: T.neutral[800] }}>
+                  {fmtRowDate(m.date)}
+                </div>
+                <div style={{ fontSize: 11, color: T.neutral[500], whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {branchName(m.branch)}{m.cashierName ? ` · ${m.cashierName}` : ''}
+                </div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: T.bad, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                −{fmtCOP(Number(m.amount) || 0)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: '12px 16px' }}>
+          {!confirming ? (
+            <button
+              onClick={() => setConfirming(true)}
+              style={{
+                width: '100%', padding: '12px', borderRadius: 12, border: 'none',
+                background: T.copper[500], color: '#fff', cursor: 'pointer',
+                fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+              }}
+            >
+              Revertir todas y restaurar {fmtCOP(total)}
+            </button>
+          ) : (
+            <div>
+              <div style={{ fontSize: 12.5, color: T.neutral[700], fontWeight: 600, textAlign: 'center', marginBottom: 8 }}>
+                ¿Revertir las {movs.length} reposiciones? Esta acción no se puede deshacer.
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={() => setConfirming(false)} style={{
+                  flex: 1, padding: '11px', borderRadius: 12, background: '#fff',
+                  color: T.neutral[700], border: `1px solid ${T.neutral[200]}`,
+                  cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+                }}>Cancelar</button>
+                <button onClick={handleDeleteAll} style={{
+                  flex: 1.4, padding: '11px', borderRadius: 12, border: 'none',
+                  background: T.bad, color: '#fff', cursor: 'pointer',
+                  fontFamily: 'inherit', fontSize: 13.5, fontWeight: 700,
+                }}>Sí, revertir todas</button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -462,6 +462,9 @@ async function buildSessionSnapshot(sessionId) {
  *
  * payload opcional:
  *   - approveNote: nota interna del admin
+ *   - repayBase: solo aplica si la caja quedó por debajo de la base. true → el
+ *       admin repone físicamente y se genera el GASTO de Efectivo (base −
+ *       declarado). false/omitido → no se repone y NO se toca Efectivo.
  *   - nextCashFloor: si se pasa, persiste el cashFloor de la panadería
  *
  * Nota: la FALTA solo se registra (status 'recorded'). La app no genera
@@ -553,8 +556,13 @@ export async function adminCloseSession(sessionId, payload = {}) {
   // ── Movimiento automático de "Cierre de Caja" sobre la cuenta Efectivo ──
   //  - Si el admin SE LLEVA lo de encima de la base (handover 'admin') y hay
   //    sobrante → INGRESO a Efectivo por (declarado − base).
-  //  - Si la caja quedó por debajo de la base → el admin REPONE para volver a
-  //    la base → GASTO de Efectivo por (base − declarado).
+  //  - Si la caja quedó por debajo de la base, el movimiento depende de lo que
+  //    el admin DECIDA (payload.repayBase):
+  //      · repayBase = true  → el admin SÍ repone físicamente para volver a la
+  //        base → GASTO de Efectivo por (base − declarado).
+  //      · repayBase = false → el admin sigue trabajando con lo que quedó: no
+  //        mete plata y NO se toca Efectivo (la falta solo queda registrada en
+  //        closingDiscrepancy, no se "pone de más" en la cuenta).
   try {
     const efectivoId = resolveEfectivoAccountId()
     if (efectivoId) {
@@ -570,7 +578,7 @@ export async function adminCloseSession(sessionId, payload = {}) {
           cashierName: session.cashierName,
           note: `Cierre de caja · ${who}`,
         })
-      } else if (declared < cashFloor) {
+      } else if (declared < cashFloor && payload.repayBase) {
         addMovement({
           type: 'expense', amount: cashFloor - declared, date: getBogotaDateStr(),
           cat: 'Cierre de Caja', branch: session.branchId || 'both',

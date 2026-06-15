@@ -789,6 +789,11 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
   )
 
   const [handoverChoice, setHandoverChoice] = useState('admin') // 'admin' | 'leave'
+  // Solo aplica cuando la caja quedó por debajo de la base ($200k). El admin
+  // decide si repone físicamente hasta la base o sigue con lo que quedó.
+  //   'continue' → no repone, no se toca Efectivo (caso normal).
+  //   'repay'    → repone (base − declarado) → GASTO de Efectivo.
+  const [shortageChoice, setShortageChoice] = useState('continue') // 'continue' | 'repay'
   const [reopenAfter, setReopenAfter] = useState(false) // checkbox para abrir nuevo turno después
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
@@ -955,9 +960,16 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         }
       }
 
-      // 3. Construir handover
+      // 3. Construir handover + decisión de reposición de base
       let handover = null
-      if (handoverChoice === 'admin') {
+      let repayBase = false
+      if (baseLowered) {
+        // Caja por debajo de la base: el admin no se lleva nada. Decide entre
+        // reponer hasta $200k (repayBase) o seguir con lo que quedó (no toca
+        // Efectivo). En ambos casos la plata se queda en la caja.
+        handover = { type: 'none', amount: declared }
+        repayBase = shortageChoice === 'repay'
+      } else if (handoverChoice === 'admin') {
         handover = {
           type: 'admin',
           toName: 'Administrador',
@@ -1006,6 +1018,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         expectedCash,
         approveNote: note.trim() || null,
         handover,
+        repayBase,
         session,
         // La base SIEMPRE se restaura al default si quedó por debajo.
         // No hay opción de bajar la base — el admin repone físicamente.
@@ -1222,11 +1235,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
           </div>
 
           {/* Acción física para el admin */}
-          <AdminActionCard declared={declared} cashFloor={cashFloor} handoverChoice={handoverChoice} />
-
-          {/* Cuando baseLowered, el AdminActionCard de arriba ya muestra
-              "Repón $X.XXX para devolver la caja a $200.000". No hay
-              decisión adicional: la base es fija. */}
+          <AdminActionCard declared={declared} cashFloor={cashFloor} handoverChoice={handoverChoice} shortageChoice={shortageChoice} />
 
           {/* Mesas/burbujas pendientes — si la cajera deja mesas sin cobrar
               al cerrar, el admin debe decidir si pasárselas a la próxima
@@ -1265,20 +1274,42 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
             </div>
           )}
 
-          {/* Handover: qué hacer físicamente con la plata */}
-          <SectionLabel>¿Qué hacer con la caja?</SectionLabel>
-          <RadioOption
-            selected={handoverChoice === 'admin'}
-            onClick={() => setHandoverChoice('admin')}
-            title="Yo me llevo lo de encima de la base"
-            subtitle={`Te llevas ${fmtCOP(Math.max(0, overBase))}. La caja queda con $${cashFloor.toLocaleString('es-CO')}.`}
-          />
-          <RadioOption
-            selected={handoverChoice === 'leave'}
-            onClick={() => setHandoverChoice('leave')}
-            title="Dejar todo en la caja"
-            subtitle={`Quedan ${fmtCOP(declared)} para el próximo turno. Al abrirlo eliges a quién se lo asignas.`}
-          />
+          {/* Decisión sobre la caja. Si quedó por debajo de la base, el admin
+              elige reponer o seguir con lo que quedó. Si no, elige si se lleva
+              lo de encima de la base o lo deja todo. */}
+          {baseLowered ? (
+            <>
+              <SectionLabel>La caja quedó por debajo de la base</SectionLabel>
+              <RadioOption
+                selected={shortageChoice === 'continue'}
+                onClick={() => setShortageChoice('continue')}
+                title="Seguir con lo que quedó"
+                subtitle={`La caja sigue con ${fmtCOP(declared)}. No metes plata y no se mueve la cuenta Efectivo.`}
+              />
+              <RadioOption
+                selected={shortageChoice === 'repay'}
+                onClick={() => setShortageChoice('repay')}
+                title={`Reponer la base ($${cashFloor.toLocaleString('es-CO')})`}
+                subtitle={`Metes ${fmtCOP(cashFloor - declared)} para que la caja arranque con ${fmtCOP(cashFloor)}. Ese monto sale de Efectivo.`}
+              />
+            </>
+          ) : (
+            <>
+              <SectionLabel>¿Qué hacer con la caja?</SectionLabel>
+              <RadioOption
+                selected={handoverChoice === 'admin'}
+                onClick={() => setHandoverChoice('admin')}
+                title="Yo me llevo lo de encima de la base"
+                subtitle={`Te llevas ${fmtCOP(Math.max(0, overBase))}. La caja queda con $${cashFloor.toLocaleString('es-CO')}.`}
+              />
+              <RadioOption
+                selected={handoverChoice === 'leave'}
+                onClick={() => setHandoverChoice('leave')}
+                title="Dejar todo en la caja"
+                subtitle={`Quedan ${fmtCOP(declared)} para el próximo turno. Al abrirlo eliges a quién se lo asignas.`}
+              />
+            </>
+          )}
 
           {/* Reabrir turno después */}
           <label style={{
@@ -1343,29 +1374,39 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
 // ──────────────────────────────────────────────────────────────
 // Acción al cerrar (mensaje claro al admin sobre qué hacer físicamente)
 // ──────────────────────────────────────────────────────────────
-function AdminActionCard({ declared, cashFloor, handoverChoice }) {
+function AdminActionCard({ declared, cashFloor, handoverChoice, shortageChoice }) {
   const baseLowered = declared < cashFloor
   const overBase = declared - cashFloor
 
   if (baseLowered) {
+    // El mensaje depende de lo que el admin haya elegido: reponer la base o
+    // seguir con lo que quedó.
+    const willRepay = shortageChoice === 'repay'
     return (
       <div style={{
         padding: '14px 16px', borderRadius: 14,
-        background: '#FBE9E5', border: `1.5px solid ${T.bad}55`,
+        background: willRepay ? '#FBE9E5' : T.neutral[50],
+        border: `1.5px solid ${willRepay ? `${T.bad}55` : T.neutral[200]}`,
         marginBottom: 14,
       }}>
         <div style={{
-          fontSize: 11, fontWeight: 700, color: T.bad,
+          fontSize: 11, fontWeight: 700, color: willRepay ? T.bad : T.neutral[600],
           textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6,
         }}>
           Acción física
         </div>
         <div style={{ fontSize: 14.5, fontWeight: 700, color: T.neutral[900], lineHeight: 1.4, marginBottom: 6 }}>
-          La caja tiene <span style={{ color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</span>.
+          La caja tiene <span style={{ color: willRepay ? T.bad : T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(declared)}</span>.
         </div>
-        <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
-          Repón <b style={{ color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(cashFloor - declared)}</b> para devolver la caja a {fmtCOP(cashFloor)}.
-        </div>
+        {willRepay ? (
+          <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
+            Repón <b style={{ color: T.bad, fontVariantNumeric: 'tabular-nums' }}>{fmtCOP(cashFloor - declared)}</b> para devolver la caja a {fmtCOP(cashFloor)}. Ese monto sale de Efectivo.
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: T.neutral[700], lineHeight: 1.5 }}>
+            Sigue con lo que quedó. No metes plata y no se mueve la cuenta Efectivo.
+          </div>
+        )}
       </div>
     )
   }

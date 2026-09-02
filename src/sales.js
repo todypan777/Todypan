@@ -289,6 +289,33 @@ export function watchSalesByDate(dateStr, callback) {
   )
 }
 
+/**
+ * Suscripción a las ventas de un RANGO de fechas (ambas inclusive, formato
+ * YYYY-MM-DD en zona Bogotá).
+ *
+ * Existe para no repetir el error de `watchAllSales`: los reportes traian la
+ * coleccion entera para luego filtrar en cliente, y eso agotaba la cuota
+ * diaria de Firestore en cada arranque. `date` es un string ISO, asi que la
+ * comparacion lexicografica es cronologica y el filtro es de campo unico →
+ * Firestore lo indexa solo, sin indice compuesto.
+ */
+export function watchSalesBetween(fromDate, toDate, callback) {
+  if (!fromDate || !toDate) { callback([]); return () => {} }
+  const q = query(salesCol(), where('date', '>=', fromDate), where('date', '<=', toDate))
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => timeOf(b) - timeOf(a))
+      callback(list)
+    },
+    err => {
+      console.error('[sales] watchSalesBetween error:', err)
+      callback([])
+    }
+  )
+}
+
 // ──────────────────────────────────────────────────────────────
 // Confirmación de transferencias (admin revisa Nequi/Daviplata del día)
 // ──────────────────────────────────────────────────────────────

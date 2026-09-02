@@ -85,7 +85,7 @@ export default function More({ onOpen }) {
       ),
     },
     {
-      id: 'reports', label: 'Reportes', desc: 'Análisis del mes',
+      id: 'reports', label: 'Balance', desc: 'Ventas, costos y ganancia',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={T.copper[600]} strokeWidth="2" strokeLinecap="round"/><path d="M3 18 H17" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/></svg>
       ),

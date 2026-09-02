@@ -26,10 +26,18 @@ export function fmtMonthLabel(ym) {
   return `${months[m - 1]} ${y}`
 }
 
+// Fecha de HOY en zona Bogotá (YYYY-MM-DD).
+//
+// Antes usaba `toISOString()`, que devuelve UTC: como Colombia es UTC-5, entre
+// las 7:00 p.m. y la medianoche daba la fecha del DIA SIGUIENTE. Eso sellaba
+// con fecha equivocada los movimientos creados de noche (AddMovement) y movía
+// el corte de mes en los reportes. Las ventas siempre se guardaron con hora de
+// Bogotá, así que aquel desfase también las descuadraba contra los gastos.
 export function todayStr() {
-  return new Date().toISOString().slice(0, 10)
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
 }
 
+/** Mes actual (YYYY-MM) en zona Bogotá. Mismo motivo que `todayStr`. */
 export function currentMonth() {
-  return new Date().toISOString().slice(0, 7)
+  return todayStr().slice(0, 7)
 }

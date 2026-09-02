@@ -175,6 +175,11 @@ function ApprovedAppLoader({ children }) {
 }
 
 function AppShell() {
+  // authUser/userDoc viven en AuthGate; aquí se vuelven a pedir al contexto.
+  // Las pantallas que reciben el usuario (Balance, Inventario, Nuevo
+  // movimiento) los necesitan para saber qué panadería puede ver.
+  const { authUser, userDoc } = useAuth()
+
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
   const [modal, setModal] = useState(null)

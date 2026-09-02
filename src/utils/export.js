@@ -38,8 +38,8 @@ export function toCSV(rows, headers) {
 
 /** Dispara la descarga de un CSV en el navegador. */
 export function downloadCSV(filename, csv) {
-  // El BOM (﻿) le dice a Excel que el archivo es UTF-8.
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+  // El BOM (U+FEFF) le dice a Excel que el archivo es UTF-8.
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

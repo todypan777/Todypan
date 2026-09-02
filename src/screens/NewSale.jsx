@@ -1780,6 +1780,7 @@ export default function NewSale({
           session={session}
           authUser={authUser}
           userDoc={userDoc}
+          catalog={catalog}
           assistMode={assistMode}
           cart={cart}
           total={total}
@@ -3341,7 +3342,7 @@ function mismatchOptStyle() {
 // Cubre el costo de la transferencia. No aplica a efectivo puro ni a deuda.
 const DIGITAL_SURCHARGE = 500
 
-function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onCancel, onConfirmed }) {
+function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, total, onCancel, onConfirmed }) {
   // method primario seleccionado por la cajera. Cuando hay split, 'mixto' es
   // un estado derivado — no se elige directamente.
   const [method, setMethod] = useState(null) // 'efectivo' | 'deuda' | 'nequi' | 'daviplata'

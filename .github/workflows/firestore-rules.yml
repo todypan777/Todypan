@@ -1,0 +1,43 @@
+# Despliegue automatico de las reglas de Firestore.
+#
+# Antes cada cambio de reglas obligaba a copiarlas y pegarlas a mano en la
+# consola de Firebase. Con esto se despliegan solas cuando `firestore.rules`
+# cambia en master, y ademas queda un boton para lanzarlo a mano desde
+# cualquier rama (util para probar antes de mezclar).
+#
+# La llave de la cuenta de servicio vive en los secretos del repositorio
+# (Settings -> Secrets and variables -> Actions), NUNCA en el codigo ni en un
+# chat. Solo necesita el rol "Firebase Rules Admin": aunque se filtrara, no
+# serviria para leer ni tocar los datos de ninguna panaderia.
+name: Desplegar reglas de Firestore
+
+on:
+  push:
+    branches: [master]
+    paths: ['firestore.rules', 'firebase.json', '.firebaserc']
+  workflow_dispatch:          # boton "Run workflow" en la pestaña Actions
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # La credencial se escribe en un archivo temporal del runner, que se
+      # destruye al terminar el job. firebase-tools la lee por variable de
+      # entorno, asi no aparece en ningun comando ni en los registros.
+      - name: Preparar credencial
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
+
+      - name: Desplegar
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: npx --yes firebase-tools@15 deploy --only firestore:rules --project todypan-47059 --non-interactive
+
+      - name: Borrar credencial
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"

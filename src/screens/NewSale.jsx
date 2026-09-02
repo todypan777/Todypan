@@ -30,6 +30,7 @@ import CashierLunchWizard from '../components/CashierLunchWizard'
 import CashierSpecialWizard from '../components/CashierSpecialWizard'
 import CashierBreakfastWizard from '../components/CashierBreakfastWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
+import { branchHasFeature } from '../utils/features'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
 import { watchBreakfastConfig, getBreakfastState } from '../breakfast'
@@ -291,9 +292,18 @@ export default function NewSale({
   // flujo y permite que el cliente solo pida UNA sopa sin almuerzo
   // completo. Defensiva: filtra productos del admin con isLunch=true por
   // error histórico.
+  // Funciones encendidas en la panadería de este turno. Si la sede no vende
+  // almuerzos, la cajera no debe ver el botón: es media app que no le sirve y
+  // que solo estorba en hora pico.
+  const sedeDelTurno = (getData().branches || [])
+    .find(b => String(b.id) === String(session?.branchId))
+  const vendeAlmuerzos = branchHasFeature(sedeDelTurno, 'almuerzos')
+  const vendeDesayunos = branchHasFeature(sedeDelTurno, 'desayunos')
+
   const enrichedCatalog = useMemo(() => {
     const baseCatalog = catalog.filter(p => p.isLunch !== true)
-    const anyLunchOptionAvailable = corrienteState.available || !!specialFromDay || anyAddonAvailable
+    const anyLunchOptionAvailable = vendeAlmuerzos
+      && (corrienteState.available || !!specialFromDay || anyAddonAvailable)
     if (!anyLunchOptionAvailable) return baseCatalog
     // Precios "info" solo para mostrar en el cuadrito del catálogo.
     const priceForInfo = Number(corrienteState.priceMesa)
@@ -314,13 +324,13 @@ export default function NewSale({
       },
       ...baseCatalog,
     ]
-  }, [catalog, corrienteState, specialFromDay, anyAddonAvailable])
+  }, [catalog, corrienteState, specialFromDay, anyAddonAvailable, vendeAlmuerzos])
 
   // Catálogo enriquecido FINAL: si el desayuno está activo, lo agregamos como
   // producto virtual aparte ("Desayuno"). Lo ponemos al principio para que la
   // cajera lo encuentre rápido al buscar o al ver el top de la lista.
   const enrichedCatalogWithBreakfast = useMemo(() => {
-    if (!breakfastState.available) return enrichedCatalog
+    if (!vendeDesayunos || !breakfastState.available) return enrichedCatalog
     const breakfastEntry = {
       id: '__breakfast_chooser__',
       source: 'breakfast',
@@ -337,7 +347,7 @@ export default function NewSale({
       return [lunch, breakfastEntry, ...rest]
     }
     return [breakfastEntry, ...enrichedCatalog]
-  }, [enrichedCatalog, breakfastState])
+  }, [enrichedCatalog, breakfastState, vendeDesayunos])
 
   // ── Acceso rápido a almuerzos en hora pico ──────────────────────
   // De 11am a 2:59pm (Bogotá), si la cocinera publicó menú/especial,

@@ -320,6 +320,7 @@ function AppShell() {
         <Reports
           filter={filter}
           setFilter={setFilter}
+          userDoc={userDoc}
           movements={data.movements}
           incomeCats={data.incomeCats}
           expenseCats={data.expenseCats}
@@ -418,6 +419,7 @@ function AppShell() {
         }}>
           <AddMovement
             initialKind={modal.kind}
+            userDoc={userDoc}
             onBack={() => setModal(null)}
             onSave={() => { setModal(null); refresh() }}
             incomeCats={data.incomeCats}
@@ -433,6 +435,7 @@ function AppShell() {
       }}>
         <AddMovement
           initialKind={modal.kind}
+          userDoc={userDoc}
           onBack={() => setModal(null)}
           onSave={() => { setModal(null); refresh() }}
           incomeCats={data.incomeCats}

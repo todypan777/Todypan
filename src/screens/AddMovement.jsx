@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
+import { visibleBranches } from '../utils/branchScope'
 import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate, normalizeCatKey } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import {
@@ -39,7 +40,7 @@ function accountMethod(acc) {
   return null
 }
 
-export default function AddMovement({ initialKind = 'income', onBack, onSave }) {
+export default function AddMovement({ initialKind = 'income', userDoc, onBack, onSave }) {
   const [kind, setKind] = useState(initialKind)
   const [amount, setAmount] = useState('')
   const [catText, setCatText] = useState('')   // categoría escrita (OBLIGATORIA)
@@ -61,6 +62,12 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
     }
     return [...accounts].sort((a, b) => rank(a) - rank(b))
   }, [accounts])
+  // Panaderías que este usuario puede ver. Si tiene una sola, se elige sola y
+  // el selector ni se muestra: no tiene sentido preguntarle algo con una única
+  // respuesta posible.
+  const myBranches = visibleBranches(userDoc, getData().branches || [])
+  const [branchId, setBranchId] = useState(myBranches[0]?.id ?? null)
+
   const [accountId, setAccountId] = useState(orderedAccounts[0]?.id || null)
   const selectedAccount = accounts.find(a => a.id === accountId) || null
 
@@ -118,7 +125,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
     : []
   const exactExists = typedKey ? existingCats.some(c => normalizeCatKey(c) === typedKey) : false
 
-  const canSave = amount && Number(amount) > 0 && !!accountId && !!catText.trim()
+  const canSave = amount && Number(amount) > 0 && !!accountId && !!catText.trim() && branchId != null
 
   const theme = isIncome
     ? { main: T.ok,  text: '#356B34', light: '#E8F4E8', soft: '#F2F9F1', border: '#BFDCBE' }
@@ -135,7 +142,7 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
     const finalCat = resolveCat(catText)
     const movementId = addMovement({
       date, type: kind, amount: Number(amount),
-      cat: finalCat, branch: 'both', accountId: accountId || undefined,
+      cat: finalCat, branch: branchId, accountId: accountId || undefined,
     })
     // ¿Es una conciliación de transferencia? (ingreso + categoría fija + cuenta Nequi/Daviplata)
     const method = accountMethod(selectedAccount)
@@ -264,6 +271,31 @@ export default function AddMovement({ initialKind = 'income', onBack, onSave }) 
         paddingBottom: catFocused ? 340 : 0,
         transition: 'padding-bottom 0.2s ease',
       }}>
+
+        {/* Panadería (obligatorio si hay más de una) */}
+        {myBranches.length > 1 && (
+          <div style={{ padding: '14px 16px 0' }}>
+            <SectionLabel theme={theme}>¿De cuál panadería?</SectionLabel>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {myBranches.map(b => {
+                const isActive = branchId === b.id
+                return (
+                  <button key={b.id} onClick={() => setBranchId(b.id)} style={{
+                    flex: '1 1 0', minWidth: 92, padding: '10px 12px', borderRadius: 12,
+                    border: isActive ? `2px solid ${theme.main}` : `1.5px solid ${T.neutral[200]}`,
+                    background: isActive ? theme.light : '#fff',
+                    color: isActive ? theme.text : T.neutral[600],
+                    cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
+                    transition: 'all 0.15s',
+                  }}>
+                    {b.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Cuenta (obligatorio) */}
         <div style={{ padding: '14px 16px 0' }}>

@@ -4,6 +4,7 @@ import { fmtCOP } from '../utils/format'
 import { Card, SectionHeader, Chip, Modal, InputField, PrimaryButton, EmptyState } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
+import { visibleBranches } from '../utils/branchScope'
 import { watchCashierProducts, mergeProductCatalogs } from '../products'
 import {
   watchInventoryStock, watchInventoryMoves, addInventoryMove,
@@ -11,7 +12,7 @@ import {
 } from '../inventory'
 
 export default function Inventario({ authUser, userDoc, onBack }) {
-  const branches = getData().branches || []
+  const branches = visibleBranches(userDoc, getData().branches || [])
   const [branchId, setBranchId] = useState(branches[0]?.id ?? null)
   const [stock, setStock] = useState([])
   const [moves, setMoves] = useState([])

@@ -9,7 +9,14 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-09-02 — INVENTARIO de producto terminado: nuevas
+// Última actualización: 2026-09-02 (b) — ALCANCE POR PANADERÍA. Un usuario con
+//   `branchIds: [n]` solo lee/escribe documentos de esa sede (sales,
+//   cashSessions, inventoryMoves, inventoryStock). Un usuario SIN branchIds
+//   NO queda restringido: así, al publicar, el equipo que ya venía trabajando
+//   sigue igual y la restricción se activa persona por persona. El correo raíz
+//   siempre ve todo. PENDIENTE: /todypan/data sigue compartido (movimientos y
+//   saldos de cuentas) y /debtors no tiene branchId.
+// Cambio anterior: 2026-09-02 — INVENTARIO de producto terminado: nuevas
 //   colecciones `inventoryMoves` (libro de entradas/salidas/ajustes, sin
 //   update para nadie: se corrige con otro movimiento) e `inventoryStock`
 //   (saldo por producto y panadería). Escritura solo admin, lectura para el
@@ -72,6 +79,44 @@ service cloud.firestore {
       return isAdmin() || isApprovedStaff();
     }
 
+    // ── ALCANCE POR PANADERÍA ─────────────────────────────────────────────
+    // Un usuario con `branchIds: [2]` solo puede leer y escribir documentos de
+    // esa panadería. Un usuario SIN `branchIds` no tiene restricción y ve todo.
+    //
+    // Ese default es deliberado: al publicar estas reglas, el dueño anterior y
+    // su equipo siguen sin `branchIds` y su app no cambia en nada. La
+    // restricción se activa asignándole su panadería a cada persona, una por
+    // una — nunca de golpe para todos.
+    //
+    // El correo raíz (isAdminBootstrap) queda siempre por fuera de la
+    // restricción: es quien mantiene el sistema y necesita ver las dos.
+    function myBranches() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid))
+               .data.get('branchIds', []);
+    }
+
+    // Se pasa la lista ya resuelta para no repetir el get(): cada lectura de
+    // documento cuenta contra el tope de accesos por peticion, y isAdmin() /
+    // isApprovedStaff() ya gastan varios.
+    function listAllows(list, bid) {
+      return list.size() == 0 || (bid in list);
+    }
+
+    function branchAllowed(bid) {
+      return isAdminBootstrap() || listAllows(myBranches(), bid);
+    }
+
+    // Aplica sobre el documento existente y, en escrituras, tambien sobre el
+    // entrante: sin lo segundo alguien podria MOVER un documento a otra
+    // panaderia y sacarlo de su alcance.
+    function branchOk() {
+      return branchAllowed(resource.data.branchId);
+    }
+
+    function newBranchOk() {
+      return branchAllowed(request.resource.data.branchId);
+    }
+
     match /users/{uid} {
       allow read: if request.auth != null
                   && (request.auth.uid == uid || isApprovedAny());
@@ -92,15 +137,16 @@ service cloud.firestore {
     // cajera está abierta, y la MESERA para encontrar la caja de su panadería
     // (a la que engancha sus mesas). Crear/cerrar turnos: cajera dueña o admin.
     match /cashSessions/{sid} {
-      allow read: if isApprovedAny();
+      allow read: if isApprovedAny() && branchOk();
       allow create: if isApprovedStaff()
                     && request.resource.data.cashierUid == request.auth.uid
-                    && request.resource.data.status == 'open';
-      allow update: if (isApprovedStaff()
+                    && request.resource.data.status == 'open'
+                    && newBranchOk();
+      allow update: if ((isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid
                         && resource.data.status == 'open')
-                    || isAdmin();
-      allow delete: if isAdmin();
+                    || isAdmin()) && branchOk();
+      allow delete: if isAdmin() && branchOk();
     }
 
     match /products/{pid} {
@@ -113,14 +159,14 @@ service cloud.firestore {
     }
 
     match /sales/{sid} {
-      allow read: if isApprovedAny();
-      allow create: if (isApprovedStaff()
+      allow read: if isApprovedAny() && branchOk();
+      allow create: if ((isApprovedStaff()
                         && request.resource.data.cashierUid == request.auth.uid)
-                    || isAdmin();
-      allow update: if (isApprovedStaff()
+                    || isAdmin()) && newBranchOk();
+      allow update: if ((isApprovedStaff()
                         && resource.data.cashierUid == request.auth.uid)
-                    || isAdmin();
-      allow delete: if isAdmin();
+                    || isAdmin()) && branchOk() && newBranchOk();
+      allow delete: if isAdmin() && branchOk();
     }
 
     match /debtors/{did} {
@@ -346,8 +392,8 @@ service cloud.firestore {
     // `delete` queda solo para el admin, como salida de emergencia ante un
     // registro claramente erroneo.
     match /inventoryMoves/{mid} {
-      allow read:   if isApprovedAny();
-      allow create: if isAdmin()
+      allow read:   if isApprovedAny() && branchOk();
+      allow create: if isAdmin() && newBranchOk()
                     && request.resource.data.delta is number
                     && request.resource.data.delta != 0;
       allow update: if false;
@@ -357,8 +403,8 @@ service cloud.firestore {
     // El saldo lo escribe la misma operacion que crea el movimiento, con
     // increment() del lado del servidor.
     match /inventoryStock/{sid} {
-      allow read:  if isApprovedAny();
-      allow write: if isAdmin();
+      allow read:  if isApprovedAny() && branchOk();
+      allow write: if isAdmin() && newBranchOk();
     }
 
     match /{document=**} {

@@ -299,9 +299,21 @@ export function watchSalesByDate(dateStr, callback) {
  * comparacion lexicografica es cronologica y el filtro es de campo unico →
  * Firestore lo indexa solo, sin indice compuesto.
  */
-export function watchSalesBetween(fromDate, toDate, callback) {
+export function watchSalesBetween(fromDate, toDate, callback, branchIds = null) {
   if (!fromDate || !toDate) { callback([]); return () => {} }
-  const q = query(salesCol(), where('date', '>=', fromDate), where('date', '<=', toDate))
+  // Si el usuario tiene panaderias asignadas, la consulta DEBE pedir solo
+  // esas. Las reglas de Firestore validan documento por documento y rechazan
+  // la consulta entera si pudiera devolver algo que el usuario no puede leer:
+  // sin este filtro, un usuario restringido recibiria permission-denied en vez
+  // de una lista recortada.
+  //
+  // Rango sobre `date` + igualdad sobre `branchId` necesita indice compuesto.
+  // Firestore devuelve el enlace para crearlo en el mensaje de error.
+  const base = [where('date', '>=', fromDate), where('date', '<=', toDate)]
+  const scoped = Array.isArray(branchIds) && branchIds.length > 0
+    ? [...base, where('branchId', 'in', branchIds)]
+    : base
+  const q = query(salesCol(), ...scoped)
   return onSnapshot(
     q,
     snap => {

@@ -9,6 +9,7 @@ import { watchInventoryStockAll, stockValue } from '../inventory'
 import { watchCashierProducts, mergeProductCatalogs } from '../products'
 import { saleCost, saleHasMissingCost } from '../utils/cost'
 import { addSaleToBreakdown } from '../utils/payment'
+import { movementMatchesBranch, userBranchIds, visibleBranches } from '../utils/branchScope'
 import {
   toCSV, downloadCSV, salesToRows, movementsToRows, summaryToCSV,
   SALES_HEADERS, EXPENSE_HEADERS,
@@ -41,7 +42,7 @@ const PAY_META = [
   { id: 'deuda',     label: 'Fiado',     color: T.neutral[400] },
 ]
 
-export default function Reports({ filter, setFilter, movements, incomeCats, expenseCats }) {
+export default function Reports({ filter, setFilter, movements, incomeCats, expenseCats, userDoc }) {
   const [period, setPeriod] = useState('month')   // 'day' | 'week' | 'month'
   const [month, setMonth] = useState(currentMonth())
   const [sales, setSales] = useState([])
@@ -59,14 +60,22 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
 
   // Solo las ventas del rango. Antes se traía la colección completa y se
   // filtraba en cliente, lo que agotaba la cuota diaria de Firestore.
-  useEffect(() => watchSalesBetween(from, to, setSales), [from, to])
+  // Panaderías del usuario (null = sin restricción). Se serializa para que el
+  // efecto no se re-suscriba en cada render por recibir un array nuevo.
+  const myBranchIds = userBranchIds(userDoc)
+  const branchKey = myBranchIds ? myBranchIds.join(',') : ''
+  useEffect(
+    () => watchSalesBetween(from, to, setSales, branchKey ? branchKey.split(',') : null),
+    [from, to, branchKey]
+  )
   useEffect(() => watchInventoryStockAll(setStock), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
-  const branches = getData().branches || []
+  const branches = visibleBranches(userDoc, getData().branches || [])
 
-  const matchMov = (m) => (filter === 'all' || m.branch === filter || m.branch === 'both')
-    && m.date >= from && m.date <= to
+  // movementMatchesBranch traduce el 'both' histórico (los movimientos viejos
+  // no traían panadería) para que filtrar por sede no muestre lo del otro local.
+  const matchMov = (m) => movementMatchesBranch(m, filter) && m.date >= from && m.date <= to
   const matchSale = (s) => filter === 'all' || String(s.branchId) === String(filter)
 
   const movs = movements.filter(matchMov)

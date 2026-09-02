@@ -397,6 +397,7 @@ function AppShell() {
     } else if (moreSub === 'deudores') {
       content = (
         <Deudores
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
         />
       )

@@ -9,7 +9,11 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-09-02 (b) — ALCANCE POR PANADERÍA. Un usuario con
+// Última actualización: 2026-09-02 (c) — DEUDORES con panadería (los
+//   históricos sin el campo se leen como de Iglesia). Y branchOk/newBranchOk
+//   pasan a .get(campo, null): leer un campo ausente lanzaba error y denegaba,
+//   dejando documentos viejos sin branchId imposibles de editar.
+// Cambio anterior: 2026-09-02 (b) — ALCANCE POR PANADERÍA. Un usuario con
 //   `branchIds: [n]` solo lee/escribe documentos de esa sede (sales,
 //   cashSessions, inventoryMoves, inventoryStock). Un usuario SIN branchIds
 //   NO queda restringido: así, al publicar, el equipo que ya venía trabajando
@@ -109,12 +113,20 @@ service cloud.firestore {
     // Aplica sobre el documento existente y, en escrituras, tambien sobre el
     // entrante: sin lo segundo alguien podria MOVER un documento a otra
     // panaderia y sacarlo de su alcance.
+    // Se usa .get(campo, null) y NO resource.data.branchId directo: leer un
+    // campo ausente lanza error y la regla denegaria, dejando los documentos
+    // viejos sin ese campo imposibles de editar o borrar por nadie.
+    //
+    // Con null el resultado es el correcto en los dos casos: un usuario sin
+    // panaderias asignadas pasa (su lista esta vacia), y uno restringido no
+    // pasa (null no esta en su lista), que es justo lo que se quiere para un
+    // documento sin sede definida.
     function branchOk() {
-      return branchAllowed(resource.data.branchId);
+      return branchAllowed(resource.data.get('branchId', null));
     }
 
     function newBranchOk() {
-      return branchAllowed(request.resource.data.branchId);
+      return branchAllowed(request.resource.data.get('branchId', null));
     }
 
     match /users/{uid} {
@@ -169,10 +181,17 @@ service cloud.firestore {
       allow delete: if isAdmin() && branchOk();
     }
 
+    // DEUDORES (fiados). Los creados antes de la separacion no traen
+    // panaderia: se tratan como de Panaderia Iglesia (id 1), igual que los
+    // movimientos historicos — son los clientes de cuando el negocio era uno
+    // solo. Asi un dueño restringido a otra sede no los ve.
     match /debtors/{did} {
-      allow read: if isApprovedAny();
-      allow create, update: if isApprovedAny();
-      allow delete: if isAdmin();
+      allow read:          if isApprovedAny() && branchAllowed(resource.data.get('branchId', 1));
+      allow create:        if isApprovedAny() && branchAllowed(request.resource.data.get('branchId', 1));
+      allow update:        if isApprovedAny()
+                           && branchAllowed(resource.data.get('branchId', 1))
+                           && branchAllowed(request.resource.data.get('branchId', 1));
+      allow delete:        if isAdmin() && branchAllowed(resource.data.get('branchId', 1));
     }
 
     match /cashExpenses/{eid} {
@@ -416,12 +435,12 @@ service cloud.firestore {
     // El campo se llama `branch` (no `branchId`), por eso no sirven branchOk()
     // ni newBranchOk() y se llama a branchAllowed directamente.
     match /movements/{mid} {
-      allow read:   if isApprovedAny() && branchAllowed(resource.data.branch);
-      allow create: if isAdmin() && branchAllowed(request.resource.data.branch);
+      allow read:   if isApprovedAny() && branchAllowed(resource.data.get('branch', null));
+      allow create: if isAdmin() && branchAllowed(request.resource.data.get('branch', null));
       allow update: if isAdmin()
-                    && branchAllowed(resource.data.branch)
-                    && branchAllowed(request.resource.data.branch);
-      allow delete: if isAdmin() && branchAllowed(resource.data.branch);
+                    && branchAllowed(resource.data.get('branch', null))
+                    && branchAllowed(request.resource.data.get('branch', null));
+      allow delete: if isAdmin() && branchAllowed(resource.data.get('branch', null));
     }
 
     // SALDO CORRIENTE POR CUENTA. Evita recorrer todo el libro para saber

@@ -31,6 +31,7 @@ import CashierSpecialWizard from '../components/CashierSpecialWizard'
 import CashierBreakfastWizard from '../components/CashierBreakfastWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
 import { branchHasFeature } from '../utils/features'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
 import { watchBreakfastConfig, getBreakfastState } from '../breakfast'
@@ -3371,7 +3372,7 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
   const [splitCashStr, setSplitCashStr] = useState('')
 
   useEffect(() => {
-    const unsub = watchDebtors(setDebtors)
+    const unsub = watchDebtors(setDebtors, parseBranchKey((userBranchIds(userDoc) || []).join(',')))
     return unsub
   }, [])
 
@@ -3551,6 +3552,7 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
           amount: total,
           saleId,
           date: today,
+          branchId: session.branchId,
         })
         // Backfill: agregar debtorId a la sale para futuras ediciones del admin.
         // SIN await — en modo ahorro el await se cuelga.

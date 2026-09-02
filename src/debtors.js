@@ -54,8 +54,18 @@ export function computeDebtorOwed(debtor) {
 }
 
 /** Suscripción a todos los deudores. */
-export function watchDebtors(callback) {
-  const q = query(debtorsCol())
+export function watchDebtors(callback, branchIds = null) {
+  // Si el usuario tiene panaderias asignadas, la consulta DEBE pedir solo
+  // esas: las reglas validan documento por documento y rechazan la consulta
+  // entera si pudiera devolver algo que no puede leer. Sin este filtro
+  // recibiria permission-denied en vez de una lista recortada.
+  //
+  // Los deudores historicos no traen `branchId`, asi que quedan fuera de esa
+  // consulta — que es lo correcto: son clientes de cuando el negocio era uno
+  // solo, y las reglas los tratan como de Panaderia Iglesia.
+  const q = Array.isArray(branchIds) && branchIds.length > 0
+    ? query(debtorsCol(), where('branchId', 'in', branchIds))
+    : query(debtorsCol())
   return onSnapshot(
     q,
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
@@ -74,7 +84,7 @@ export function watchDebtors(callback) {
  *
  * Devuelve el id del deudor (existente o creado).
  */
-export async function addDebtSale(existingDebtors, { name, amount, saleId, date }) {
+export async function addDebtSale(existingDebtors, { name, amount, saleId, date, branchId }) {
   const normalized = normalizeName(name)
   // Ignorar deudores fusionados (mergedInto): si no, una venta con el nombre
   // viejo "resucitaría" un tombstone en vez de ir al deudor superviviente.
@@ -108,6 +118,9 @@ export async function addDebtSale(existingDebtors, { name, amount, saleId, date 
       name: name.trim(),
       normalizedName: normalized,
       totalOwed: Number(amount) || 0,
+      // Panaderia donde se fio. Sin esto no se puede separar el fiado de un
+      // dueño del del otro.
+      ...(branchId != null ? { branchId } : {}),
       status: 'active',
       lastUpdate: serverTimestamp(),
       createdAt: serverTimestamp(),

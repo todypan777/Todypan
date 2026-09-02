@@ -91,6 +91,15 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      id: 'inventario', label: 'Inventario', desc: 'Entradas, salidas y existencias',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 6.5 L10 3 L17 6.5 V14 L10 17.5 L3 14 Z" stroke={T.copper[600]} strokeWidth="1.6" strokeLinejoin="round" fill="none"/>
+          <path d="M3 6.5 L10 10 L17 6.5 M10 10 V17.5" stroke={T.copper[600]} strokeWidth="1.4" strokeLinejoin="round"/>
+        </svg>
+      ),
+    },
+    {
       id: 'products', label: 'Productos', desc: 'Costos, precios y márgenes de ganancia',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">

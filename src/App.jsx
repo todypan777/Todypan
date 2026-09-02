@@ -20,6 +20,7 @@ import More from './screens/More'
 import Branches from './screens/Branches'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
+import Inventario from './screens/Inventario'
 import Pendientes from './screens/Pendientes'
 import Deudores from './screens/Deudores'
 import Transferencias from './screens/Transferencias'
@@ -253,7 +254,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos', 'cuentas'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'inventario', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos', 'cuentas'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -347,6 +348,14 @@ function AppShell() {
           products={data.products || []}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
+        />
+      )
+    } else if (moreSub === 'inventario') {
+      content = (
+        <Inventario
+          authUser={authUser}
+          userDoc={userDoc}
+          onBack={() => setMoreSub(null)}
         />
       )
     } else if (moreSub === 'pendientes') {

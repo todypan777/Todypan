@@ -9,7 +9,12 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-06-06 — la CAJERA dueña del turno de la sede
+// Última actualización: 2026-09-02 — INVENTARIO de producto terminado: nuevas
+//   colecciones `inventoryMoves` (libro de entradas/salidas/ajustes, sin
+//   update para nadie: se corrige con otro movimiento) e `inventoryStock`
+//   (saldo por producto y panadería). Escritura solo admin, lectura para el
+//   equipo aprobado. Sin tocar ninguna regla existente.
+// Cambio anterior: 2026-06-06 — la CAJERA dueña del turno de la sede
 //   destino puede ATENDER pedidos web: se abre /customerOrders update a
 //   isApprovedStaff() (antes solo admin) para que markCustomerOrderConfirmed
 //   funcione desde su pantalla. delete sigue solo admin. Sin tocar nada más.
@@ -325,6 +330,35 @@ service cloud.firestore {
                                        'cancelledBy', 'cancelledByName']));
 
       allow delete: if isAdmin();
+    }
+
+    // ── INVENTARIO DE PRODUCTO TERMINADO ──────────────────────────────────
+    // Dos colecciones: `inventoryMoves` es el LIBRO (entradas, salidas y
+    // ajustes) e `inventoryStock` el SALDO derivado por producto y panaderia.
+    //
+    // Hoy solo el admin registra movimientos — asi lo pidio el dueño. La
+    // lectura si queda abierta al equipo aprobado para que mañana la cajera
+    // pueda ver existencias desde el POS sin tocar reglas.
+    //
+    // Un movimiento NO se edita: `update` esta negado para todos, incluido el
+    // admin. Una correccion se hace con otro movimiento (un ajuste), de modo
+    // que el libro conserve el rastro de que se corrigio y quien lo hizo.
+    // `delete` queda solo para el admin, como salida de emergencia ante un
+    // registro claramente erroneo.
+    match /inventoryMoves/{mid} {
+      allow read:   if isApprovedAny();
+      allow create: if isAdmin()
+                    && request.resource.data.delta is number
+                    && request.resource.data.delta != 0;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // El saldo lo escribe la misma operacion que crea el movimiento, con
+    // increment() del lado del servidor.
+    match /inventoryStock/{sid} {
+      allow read:  if isApprovedAny();
+      allow write: if isAdmin();
     }
 
     match /{document=**} {

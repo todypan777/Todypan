@@ -118,12 +118,13 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
     .sort((a, b) => b.ganancia - a.ganancia)
     .slice(0, 8)
 
-  // ── Gastos por tipo y categoría ──────────────────────────────
-  const byGroup = { proveedores: 0, operacion: 0, empresa: 0 }
-  movs.filter(m => m.type === 'expense').forEach(m => {
-    if (m.group) byGroup[m.group] = (byGroup[m.group] || 0) + m.amount
-  })
-
+  // ── Gastos por categoría ─────────────────────────────────────
+  // Aquí había también un desglose por TIPO (Proveedores / Operación /
+  // Empresa) que siempre pintaba tres barras en cero: se alimentaba de
+  // `m.group`, un campo que AddMovement dejó de escribir hace tiempo. Las
+  // categorías hoy son texto libre que escribe el usuario, así que el grupo no
+  // se puede deducir. El desglose de abajo, por categoría real, cubre lo mismo
+  // y sí funciona.
   const byCat = {}
   movs.filter(m => m.type === 'expense').forEach(m => { byCat[m.cat] = (byCat[m.cat] || 0) + m.amount })
   const topCats = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 6)
@@ -378,41 +379,6 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
                     </div>
                     <div style={{ height: 6, borderRadius: 3, background: T.neutral[100], overflow: 'hidden' }}>
                       <div style={{ width: `${pct}%`, height: '100%', background: T.copper[400], borderRadius: 3, transition: 'width 0.4s' }}/>
-                    </div>
-                  </div>
-                )
-              })}
-            </Card>
-          </div>
-        </>
-      )}
-
-      {/* Gastos por tipo */}
-      {gastos > 0 && (
-        <>
-          <SectionHeader title="Gastos por tipo"/>
-          <div style={{ padding: '0 16px' }}>
-            <Card padding={16}>
-              {[
-                { id: 'proveedores', label: 'Proveedores', color: T.copper[400] },
-                { id: 'operacion',   label: 'Operación',   color: T.copper[600] },
-                { id: 'empresa',     label: 'Empresa',     color: T.copper[300] },
-              ].map((g, i, arr) => {
-                const pct = gastos > 0 ? (byGroup[g.id] / gastos) * 100 : 0
-                return (
-                  <div key={g.id} style={{ marginBottom: i < arr.length - 1 ? 16 : 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: T.neutral[700], display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: g.color }}/>
-                        {g.label}
-                      </span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: T.neutral[800], fontVariantNumeric: 'tabular-nums' }}>
-                        {fmtCOP(byGroup[g.id])}
-                        <span style={{ color: T.neutral[400], fontWeight: 500 }}> · {pct.toFixed(0)}%</span>
-                      </span>
-                    </div>
-                    <div style={{ height: 6, borderRadius: 3, background: T.neutral[100], overflow: 'hidden' }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: g.color, borderRadius: 3, transition: 'width 0.4s' }}/>
                     </div>
                   </div>
                 )

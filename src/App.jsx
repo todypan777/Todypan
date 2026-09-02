@@ -404,7 +404,7 @@ function AppShell() {
         />
       )
     } else {
-      content = <More onOpen={id => setMoreSub(id)} />
+      content = <More onOpen={id => setMoreSub(id)} userDoc={userDoc} />
     }
   }
 

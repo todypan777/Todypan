@@ -3,6 +3,7 @@ import { T, BRANCH_PALETTE } from '../tokens'
 import { Card, BackButton, Modal, InputField, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { updateBranch } from '../db'
+import { FEATURES, branchFeatures } from '../utils/features'
 
 export default function Branches({ branches, onBack, onRefresh }) {
   const [editId, setEditId] = useState(null)
@@ -70,6 +71,9 @@ export default function Branches({ branches, onBack, onRefresh }) {
 function EditBranchModal({ branch, onClose, onSave }) {
   const [name, setName] = useState(branch?.name || '')
   const [colorKey, setColorKey] = useState(branch?.colorKey || 'copper')
+  const [features, setFeatures] = useState(() => branchFeatures(branch))
+
+  const toggle = (key) => setFeatures(f => ({ ...f, [key]: !f[key] }))
 
   return (
     <Modal onClose={onClose} title="Editar panadería">
@@ -127,9 +131,59 @@ function EditBranchModal({ branch, onClose, onSave }) {
         )
       })()}
 
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+          Qué usa esta panadería
+        </div>
+        <div style={{ fontSize: 12.5, color: T.neutral[500], marginBottom: 12, lineHeight: 1.45 }}>
+          Apaga lo que no venda aquí y desaparece del menú. No se borra nada:
+          se puede volver a encender cuando quiera.
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {FEATURES.map(f => {
+            const on = features[f.key]
+            return (
+              <button
+                key={f.key}
+                onClick={() => toggle(f.key)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+                  padding: '11px 13px', borderRadius: 12, cursor: 'pointer',
+                  fontFamily: 'inherit', width: '100%',
+                  border: on ? `1.5px solid ${T.copper[300]}` : `1px solid ${T.neutral[200]}`,
+                  background: on ? T.copper[50] : '#fff',
+                }}
+              >
+                <span style={{
+                  width: 38, height: 22, borderRadius: 999, flexShrink: 0,
+                  background: on ? T.copper[500] : T.neutral[300],
+                  display: 'flex', alignItems: 'center',
+                  padding: 2, transition: 'background 0.15s',
+                }}>
+                  <span style={{
+                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                    transform: on ? 'translateX(16px)' : 'translateX(0)',
+                    transition: 'transform 0.15s',
+                  }}/>
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 14, fontWeight: 600, color: on ? T.copper[700] : T.neutral[600] }}>
+                    {f.label}
+                  </span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: T.neutral[400], marginTop: 1 }}>
+                    {f.desc}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       <PrimaryButton
         label="Guardar"
-        onClick={() => name && onSave({ name: name.trim(), colorKey })}
+        onClick={() => name && onSave({ name: name.trim(), colorKey, features })}
         disabled={!name}
       />
     </Modal>

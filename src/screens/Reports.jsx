@@ -9,7 +9,7 @@ import { watchInventoryStockAll, stockValue } from '../inventory'
 import { watchCashierProducts, mergeProductCatalogs } from '../products'
 import { saleCost, saleHasMissingCost } from '../utils/cost'
 import { addSaleToBreakdown } from '../utils/payment'
-import { movementMatchesBranch, userBranchIds, visibleBranches } from '../utils/branchScope'
+import { movementMatchesBranch, userBranchIds, visibleBranches, parseBranchKey } from '../utils/branchScope'
 import {
   toCSV, downloadCSV, salesToRows, movementsToRows, summaryToCSV,
   SALES_HEADERS, EXPENSE_HEADERS,
@@ -65,7 +65,7 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
   const myBranchIds = userBranchIds(userDoc)
   const branchKey = myBranchIds ? myBranchIds.join(',') : ''
   useEffect(
-    () => watchSalesBetween(from, to, setSales, branchKey ? branchKey.split(',') : null),
+    () => watchSalesBetween(from, to, setSales, parseBranchKey(branchKey)),
     [from, to, branchKey]
   )
   useEffect(() => watchInventoryStockAll(setStock), [])

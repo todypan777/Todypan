@@ -4,7 +4,7 @@ import InstallPrompt from './components/UI/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
 import { getData, initDB, setCollectionMovements } from './db'
 import { watchMovementsSince } from './movements'
-import { userBranchIds } from './utils/branchScope'
+import { userBranchIds, parseBranchKey } from './utils/branchScope'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
@@ -186,7 +186,7 @@ function ApprovedAppLoader({ children }) {
     const desde = new Date()
     desde.setMonth(desde.getMonth() - 13)
     const sinceDate = desde.toISOString().slice(0, 10)
-    const branchIds = branchKey ? branchKey.split(',') : null
+    const branchIds = parseBranchKey(branchKey)
     return watchMovementsSince(sinceDate, setCollectionMovements, branchIds)
   }, [branchKey])
 

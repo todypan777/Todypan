@@ -61,3 +61,25 @@ export function movementMatchesBranch(m, filter) {
   if (filter === 'all') return true
   return String(movementBranch(m)) === String(filter)
 }
+
+/**
+ * Convierte la clave de texto de un efecto de vuelta a ids de panaderia.
+ *
+ * Los efectos de React necesitan una dependencia ESTABLE, y un array nuevo en
+ * cada render vuelve a disparar el efecto sin parar. Por eso se serializa a
+ * texto con join(',') — pero ese texto NO sirve para consultar: Firestore
+ * compara por tipo, y un `where('branchId','in',["2"])` jamas coincide con un
+ * documento que guarda `branchId: 2` como numero. La consulta devolveria cero
+ * resultados sin dar ningun error.
+ *
+ * Aqui se restaura el tipo: numerico si lo parece, texto si no.
+ */
+export function parseBranchKey(key) {
+  if (!key) return null
+  const ids = String(key).split(',').filter(Boolean)
+  if (ids.length === 0) return null
+  return ids.map(v => {
+    const n = Number(v)
+    return Number.isFinite(n) && String(n) === v ? n : v
+  })
+}

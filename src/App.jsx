@@ -2,7 +2,9 @@ import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
 import InstallPrompt from './components/UI/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
-import { getData, initDB } from './db'
+import { getData, initDB, setCollectionMovements } from './db'
+import { watchMovementsSince } from './movements'
+import { userBranchIds } from './utils/branchScope'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
@@ -163,12 +165,30 @@ function AuthGate() {
  */
 function ApprovedAppLoader({ children }) {
   const [dbLoaded, setDbLoaded] = useState(false)
+  const { userDoc } = useAuth()
 
   useEffect(() => {
     initDB()
       .then(() => setDbLoaded(true))
       .catch(() => setDbLoaded(true))
   }, [])
+
+  // Movimientos de la colección /movements. db.js los une con los históricos
+  // del documento compartido, así que las pantallas siguen leyendo una sola
+  // lista y no hubo que tocar ninguna.
+  //
+  // La ventana es de 13 meses: cubre el mes actual y el mismo mes del año
+  // pasado, que es hasta donde llega la navegación de los reportes. Traer el
+  // libro completo en cada arranque es el error que ya costó la cuota de
+  // Firestore en otras pantallas.
+  const branchKey = (userBranchIds(userDoc) || []).join(',')
+  useEffect(() => {
+    const desde = new Date()
+    desde.setMonth(desde.getMonth() - 13)
+    const sinceDate = desde.toISOString().slice(0, 10)
+    const branchIds = branchKey ? branchKey.split(',') : null
+    return watchMovementsSince(sinceDate, setCollectionMovements, branchIds)
+  }, [branchKey])
 
   if (!dbLoaded) return <LoadingScreen label="Cargando datos..." />
   return children

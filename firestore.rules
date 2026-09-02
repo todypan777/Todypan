@@ -407,6 +407,36 @@ service cloud.firestore {
       allow write: if isAdmin() && newBranchOk();
     }
 
+    // ── MOVIMIENTOS (ingresos y gastos del administrador) ─────────────────
+    // Antes vivían dentro de /todypan/data, un documento único: las reglas
+    // aplican por documento COMPLETO, así que era imposible darle a un dueño
+    // solo su parte. Aquí cada movimiento es su propio documento y sí se puede
+    // separar por panadería.
+    //
+    // El campo se llama `branch` (no `branchId`), por eso no sirven branchOk()
+    // ni newBranchOk() y se llama a branchAllowed directamente.
+    match /movements/{mid} {
+      allow read:   if isApprovedAny() && branchAllowed(resource.data.branch);
+      allow create: if isAdmin() && branchAllowed(request.resource.data.branch);
+      allow update: if isAdmin()
+                    && branchAllowed(resource.data.branch)
+                    && branchAllowed(request.resource.data.branch);
+      allow delete: if isAdmin() && branchAllowed(resource.data.branch);
+    }
+
+    // SALDO CORRIENTE POR CUENTA. Evita recorrer todo el libro para saber
+    // cuánto hay en Nequi o Daviplata; se actualiza con increment() al
+    // registrar o borrar un movimiento.
+    //
+    // PENDIENTE: las cuentas todavía son compartidas entre las dos panaderías,
+    // así que este saldo mezcla el dinero de ambas. Es la misma exposición que
+    // ya existía (el cálculo anterior tampoco filtraba por sede), pero separar
+    // las cuentas por panadería sigue en la lista.
+    match /accountBalances/{aid} {
+      allow read:  if isApprovedAny();
+      allow write: if isAdmin();
+    }
+
     // TURNOS PROGRAMADOS. No tenía regla propia: vivía del comodín de abajo,
     // que ahora es solo del correo raíz. Sin este bloque, programar turnos
     // dejaría de funcionar para cualquier otro admin.

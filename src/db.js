@@ -1,5 +1,6 @@
 import { firestoreDb } from './firebase'
-import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from 'firebase/firestore'
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
+import { createMovement, removeMovement } from './movements'
 
 // ─── Refs ─────────────────────────────────────────────────────
 const LOCAL_KEY = 'todypan_v1'
@@ -95,6 +96,38 @@ function defaultData() {
 // ─── In-memory store ──────────────────────────────────────────
 let _data = null
 
+// ─── Movimientos: dos fuentes, una sola lista ─────────────────
+//
+// Los movimientos HISTORICOS viven dentro de /todypan/data (el documento
+// compartido). Los NUEVOS van a la coleccion /movements, donde cada uno es su
+// propio documento — eso arregla la perdida de datos entre dos
+// administradores, permite separar por panaderia y quita el techo de 1 MB.
+//
+// No se migra nada: reescribir el documento compartido mientras hay gente
+// trabajando dentro es exactamente como se pierden datos. Las dos fuentes se
+// presentan unidas en `_data.movements`, asi que TODA la app sigue leyendo de
+// donde siempre y no hubo que tocar ninguna pantalla.
+let _legacyMovements = []   // los de /todypan/data (solo lectura de aqui en adelante)
+let _newMovements = []      // los de la coleccion /movements
+
+function remergeMovements() {
+  if (!_data) return
+  _data.movements = [..._newMovements, ..._legacyMovements]
+}
+
+/** Adopta un snapshot del documento compartido separando lo historico. */
+function adoptData(d) {
+  _data = d
+  _legacyMovements = Array.isArray(d.movements) ? d.movements : []
+  remergeMovements()
+}
+
+/** La suscripcion a /movements entrega aqui su resultado. */
+export function setCollectionMovements(list) {
+  _newMovements = Array.isArray(list) ? list : []
+  remergeMovements()
+}
+
 function migrate(d) {
   if (!d.dailyConfirmations) d.dailyConfirmations = {}
   if (!d.branches) d.branches = defaultData().branches
@@ -188,7 +221,7 @@ export async function initDB() {
   try {
     const snap = await getDoc(FS_REF)
     if (snap.exists()) {
-      _data = migrate(snap.data())
+      adoptData(migrate(snap.data()))
       try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
       return
     }
@@ -200,7 +233,7 @@ export async function initDB() {
   try {
     const raw = localStorage.getItem(LOCAL_KEY)
     if (raw) {
-      _data = migrate(JSON.parse(raw))
+      adoptData(migrate(JSON.parse(raw)))
       // Subir datos locales a Firestore
       const clean = JSON.parse(JSON.stringify(_data))
       setDoc(FS_REF, clean).catch(() => {})
@@ -209,7 +242,7 @@ export async function initDB() {
   } catch {}
 
   // 3. Datos vacíos
-  _data = defaultData()
+  adoptData(defaultData())
   const clean = JSON.parse(JSON.stringify(_data))
   setDoc(FS_REF, clean).catch(() => {})
 }
@@ -233,7 +266,7 @@ export function watchSharedData(callback) {
     snap => {
       if (!snap.exists()) return
       if (snap.metadata.hasPendingWrites) return // eco de nuestra propia escritura
-      _data = migrate(snap.data())
+      adoptData(migrate(snap.data()))
       try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
       if (typeof callback === 'function') callback(_data)
     },
@@ -245,8 +278,14 @@ function persist() {
   if (!_data) return
   // Guarda local inmediatamente
   try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
-  // Guarda en Firestore sin esperar (elimina undefined)
-  const clean = JSON.parse(JSON.stringify(_data))
+  // Guarda en Firestore sin esperar (elimina undefined).
+  //
+  // OJO: `_data.movements` es la lista UNIDA (historicos + los de la coleccion
+  // /movements). Escribirla tal cual meteria los nuevos DENTRO del documento
+  // compartido y quedarian duplicados: una vez en la coleccion y otra aqui.
+  // Por eso se sustituye por los historicos, que son los unicos que de verdad
+  // viven en este documento.
+  const clean = JSON.parse(JSON.stringify({ ..._data, movements: _legacyMovements }))
   setDoc(FS_REF, clean).catch(e => console.warn('[TodyPan] Error Firestore:', e.message))
 }
 
@@ -265,47 +304,41 @@ export function getBogotaHour() {
 export function getMovements() { return _data.movements }
 
 /**
- * Registra un movimiento SIN reescribir el documento compartido.
+ * Registra un movimiento en la coleccion /movements.
  *
- * `persist()` guarda `/todypan/data` completo con setDoc. Con dos
- * administradores trabajando a la vez —que es lo que pasa a la hora del
- * cierre— eso pierde datos:
+ * Antes se anexaba al arreglo dentro de /todypan/data. Aunque se hiciera de
+ * forma atomica, ese arreglo seguia sin poder separarse por panaderia (las
+ * reglas de Firestore aplican por documento completo) y seguia creciendo contra
+ * el techo de 1 MB. En una coleccion cada movimiento es su propio documento y
+ * los tres problemas desaparecen.
  *
- *   A registra un gasto  → guarda el documento entero.
- *   B registra otro antes de recibir el cambio de A → guarda el documento
- *   entero desde SU copia, que no trae el gasto de A → el gasto de A se borra.
- *
- * `arrayUnion` resuelve el caso: el anexado ocurre EN EL SERVIDOR sobre el
- * arreglo que hay allá, no sobre la copia local, así que dos movimientos
- * simultáneos no se pisan. Localmente se antepone para que la UI responda de
- * inmediato; el orden final lo fija el snapshot del servidor y da igual porque
- * todas las pantallas ordenan por fecha.
- *
- * El resto de mutaciones sigue usando `persist()` y conserva el riesgo. La
- * solución de fondo es sacar `movements` a su propia colección.
+ * Se agrega tambien a la lista en memoria para que la UI responda de inmediato;
+ * la suscripcion lo confirma un instante despues.
  */
-export function addMovement(mov) {
-  const id = 'm' + Date.now()
-  const entry = { id, ...mov }
-
-  _data.movements = [entry, ..._data.movements]
-  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
-
-  // JSON.parse(JSON.stringify(...)) elimina los undefined, que Firestore
-  // rechaza — mismo saneo que hace persist().
-  const clean = JSON.parse(JSON.stringify(entry))
-  updateDoc(FS_REF, { movements: arrayUnion(clean) })
-    .catch(e => {
-      // updateDoc falla si el documento aún no existe (instalación nueva).
-      console.warn('[TodyPan] addMovement atómico falló, se reintenta completo:', e.message)
-      persist()
-    })
-
+export function addMovement(mov, actor = {}) {
+  const id = createMovement(mov, actor)
+  _newMovements = [{ id, ...mov }, ..._newMovements]
+  remergeMovements()
   return id
 }
 
+/**
+ * Elimina un movimiento, de donde sea que viva.
+ *
+ * Los nuevos se borran como documento suelto. Los historicos siguen dentro del
+ * documento compartido, asi que ahi toca reescribirlo — con el riesgo de
+ * siempre, que desaparece a medida que los viejos dejen de usarse.
+ */
 export function deleteMovement(id) {
-  _data.movements = _data.movements.filter(m => m.id !== id)
+  const nuevo = _newMovements.find(m => m.id === id)
+  if (nuevo) {
+    removeMovement(nuevo)
+    _newMovements = _newMovements.filter(m => m.id !== id)
+    remergeMovements()
+    return
+  }
+  _legacyMovements = _legacyMovements.filter(m => m.id !== id)
+  remergeMovements()
   persist()
 }
 
@@ -528,10 +561,23 @@ export function getBaseRepositionMovements(accountId) {
 export function deleteBaseRepositionMovements(accountId) {
   const targets = getBaseRepositionMovements(accountId)
   if (targets.length === 0) return { count: 0, total: 0 }
-  const ids = new Set(targets.map(m => m.id))
   const total = targets.reduce((s, m) => s + (Number(m.amount) || 0), 0)
-  _data.movements = (_data.movements || []).filter(m => !ids.has(m.id))
-  persist()
+  const ids = new Set(targets.map(m => m.id))
+
+  // Los de la colección se borran como documentos sueltos, y cada uno tiene
+  // que revertir su efecto sobre el saldo de la cuenta.
+  const nuevos = _newMovements.filter(m => ids.has(m.id))
+  nuevos.forEach(removeMovement)
+  _newMovements = _newMovements.filter(m => !ids.has(m.id))
+
+  // Los históricos salen del documento compartido en una sola escritura, y
+  // solo se escribe si de verdad había alguno.
+  const antes = _legacyMovements.length
+  _legacyMovements = _legacyMovements.filter(m => !ids.has(m.id))
+
+  remergeMovements()
+  if (_legacyMovements.length !== antes) persist()
+
   return { count: targets.length, total }
 }
 

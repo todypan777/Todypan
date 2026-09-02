@@ -157,6 +157,24 @@ export function watchInventoryMoves(branchId, callback, max = 50) {
   return () => { stop(); if (fallback) fallback() }
 }
 
+/**
+ * Suscripción a los saldos de TODAS las panaderías, para el panel de balance.
+ *
+ * Sin filtro, pero acotada por naturaleza: hay como máximo un documento por
+ * producto y panadería, no uno por movimiento. A diferencia del libro, esta
+ * colección no crece con el uso.
+ */
+export function watchInventoryStockAll(callback) {
+  return onSnapshot(
+    collection(firestoreDb, 'inventoryStock'),
+    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => {
+      console.error('[inventory] watchInventoryStockAll error:', err)
+      callback([])
+    }
+  )
+}
+
 /** Valor total del inventario a costo, para el panel de balance. */
 export function stockValue(stockList, costOf) {
   return stockList.reduce((sum, s) => {

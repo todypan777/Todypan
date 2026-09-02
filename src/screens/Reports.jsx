@@ -5,6 +5,8 @@ import { Card, SectionHeader, Chip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
 import { watchSalesBetween } from '../sales'
+import { watchInventoryStockAll, stockValue } from '../inventory'
+import { watchCashierProducts, mergeProductCatalogs } from '../products'
 import { saleCost, saleHasMissingCost } from '../utils/cost'
 import { addSaleToBreakdown } from '../utils/payment'
 import {
@@ -43,6 +45,8 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
   const [period, setPeriod] = useState('month')   // 'day' | 'week' | 'month'
   const [month, setMonth] = useState(currentMonth())
   const [sales, setSales] = useState([])
+  const [stock, setStock] = useState([])
+  const [cashierProducts, setCashierProducts] = useState([])
 
   const today = todayStr()
 
@@ -56,6 +60,8 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
   // Solo las ventas del rango. Antes se traía la colección completa y se
   // filtraba en cliente, lo que agotaba la cuota diaria de Firestore.
   useEffect(() => watchSalesBetween(from, to, setSales), [from, to])
+  useEffect(() => watchInventoryStockAll(setStock), [])
+  useEffect(() => watchCashierProducts(setCashierProducts), [])
 
   const branches = getData().branches || []
 
@@ -121,6 +127,18 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
       .reduce((sum, s) => sum + (Number(s.total) || 0), 0),
   })).filter(b => b.total > 0)
   const branchTotal = byBranch.reduce((s, b) => s + b.total, 0)
+
+  // Valor del inventario a costo. No depende del período: es una foto de HOY,
+  // no algo que ocurrió dentro del rango, y por eso se muestra aparte.
+  const costOf = (() => {
+    const cat = mergeProductCatalogs(getData().products || [], cashierProducts)
+    const map = new Map(cat.map(p => [p.id, p.unitCost || 0]))
+    return (id) => map.get(id) || 0
+  })()
+  const stockDeSede = filter === 'all'
+    ? stock
+    : stock.filter(s => String(s.branchId) === String(filter))
+  const valorInventario = stockValue(stockDeSede, costOf)
 
   const periodLabel = period === 'day' ? 'Hoy'
     : period === 'week' ? 'Últimos 7 días'
@@ -218,6 +236,24 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
           )}
         </Card>
       </div>
+
+      {valorInventario > 0 && (
+        <div style={{ padding: '12px 16px 0' }}>
+          <Card padding={16}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[800] }}>En inventario</div>
+                <div style={{ fontSize: 11.5, color: T.neutral[400], marginTop: 2 }}>
+                  Valorizado al costo, a día de hoy
+                </div>
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: T.neutral[900], fontVariantNumeric: 'tabular-nums' }}>
+                {fmtCOP(valorInventario)}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Descargar a Excel */}
       {!vacio && (

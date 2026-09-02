@@ -122,6 +122,23 @@ function adoptData(d) {
   remergeMovements()
 }
 
+/**
+ * `_data` en la forma en que debe GUARDARSE, sea en Firestore o en la cache
+ * local.
+ *
+ * `_data.movements` es la lista UNIDA (historicos + los de la coleccion). Si se
+ * guarda tal cual pasan dos cosas, ambas malas: los de la coleccion terminan
+ * DENTRO del documento compartido, y la cache local vuelve a leerlos como
+ * "historicos" en el proximo arranque. El movimiento queda contado dos veces y
+ * el balance miente.
+ *
+ * Por eso TODO guardado pasa por aqui y sustituye por los historicos, que son
+ * los unicos que de verdad viven en ese documento.
+ */
+function storableData() {
+  return { ..._data, movements: _legacyMovements }
+}
+
 /** La suscripcion a /movements entrega aqui su resultado. */
 export function setCollectionMovements(list) {
   _newMovements = Array.isArray(list) ? list : []
@@ -222,7 +239,7 @@ export async function initDB() {
     const snap = await getDoc(FS_REF)
     if (snap.exists()) {
       adoptData(migrate(snap.data()))
-      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(storableData())) } catch {}
       return
     }
   } catch (e) {
@@ -235,7 +252,7 @@ export async function initDB() {
     if (raw) {
       adoptData(migrate(JSON.parse(raw)))
       // Subir datos locales a Firestore
-      const clean = JSON.parse(JSON.stringify(_data))
+      const clean = JSON.parse(JSON.stringify(storableData()))
       setDoc(FS_REF, clean).catch(() => {})
       return
     }
@@ -243,7 +260,7 @@ export async function initDB() {
 
   // 3. Datos vacíos
   adoptData(defaultData())
-  const clean = JSON.parse(JSON.stringify(_data))
+  const clean = JSON.parse(JSON.stringify(storableData()))
   setDoc(FS_REF, clean).catch(() => {})
 }
 
@@ -267,7 +284,7 @@ export function watchSharedData(callback) {
       if (!snap.exists()) return
       if (snap.metadata.hasPendingWrites) return // eco de nuestra propia escritura
       adoptData(migrate(snap.data()))
-      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+      try { localStorage.setItem(LOCAL_KEY, JSON.stringify(storableData())) } catch {}
       if (typeof callback === 'function') callback(_data)
     },
     err => console.warn('[TodyPan] watchSharedData:', err?.message || err),
@@ -277,7 +294,7 @@ export function watchSharedData(callback) {
 function persist() {
   if (!_data) return
   // Guarda local inmediatamente
-  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(storableData())) } catch {}
   // Guarda en Firestore sin esperar (elimina undefined).
   //
   // OJO: `_data.movements` es la lista UNIDA (historicos + los de la coleccion
@@ -285,7 +302,7 @@ function persist() {
   // compartido y quedarian duplicados: una vez en la coleccion y otra aqui.
   // Por eso se sustituye por los historicos, que son los unicos que de verdad
   // viven en este documento.
-  const clean = JSON.parse(JSON.stringify({ ..._data, movements: _legacyMovements }))
+  const clean = JSON.parse(JSON.stringify(storableData()))
   setDoc(FS_REF, clean).catch(e => console.warn('[TodyPan] Error Firestore:', e.message))
 }
 

@@ -407,8 +407,35 @@ service cloud.firestore {
       allow write: if isAdmin() && newBranchOk();
     }
 
+    // TURNOS PROGRAMADOS. No tenía regla propia: vivía del comodín de abajo,
+    // que ahora es solo del correo raíz. Sin este bloque, programar turnos
+    // dejaría de funcionar para cualquier otro admin.
+    //
+    // La escritura sí valida la panadería. La LECTURA queda sin restringir a
+    // propósito: `watchShiftsForDate` consulta por fecha sin filtrar sede, y
+    // scoping la lectura sin tocar esa consulta daría permission-denied y
+    // rompería la pantalla de Equipo. Es un horario de trabajo, no plata; se
+    // cierra en la etapa siguiente junto con el resto.
+    match /scheduledShifts/{sid} {
+      allow read:   if isApprovedAny();
+      allow create: if isAdmin() && newBranchOk();
+      allow update: if isAdmin() && branchOk() && newBranchOk();
+      allow delete: if isAdmin() && branchOk();
+    }
+
+    // Comodín de cierre. SOLO el correo raíz, nunca isAdmin().
+    //
+    // En Firestore, cuando varias reglas coinciden con una ruta, el acceso se
+    // concede si CUALQUIERA lo permite. Este bloque coincide con todas las
+    // rutas, incluida /sales: con `isAdmin()` aquí, un admin restringido a su
+    // panadería recuperaba por esta puerta el acceso a la otra, y todo el
+    // alcance por panadería quedaba en nada.
+    //
+    // Cada colección real ya tiene su regla explícita arriba, así que esto solo
+    // cubre rutas nuevas todavía sin reglas propias — y ahí conviene que llegue
+    // únicamente quien mantiene el sistema.
     match /{document=**} {
-      allow read, write: if isAdmin();
+      allow read, write: if isAdminBootstrap();
     }
   }
 }

@@ -41,7 +41,10 @@ function timeOf(doc) {
 /**
  * Crea una venta nueva. payload:
  *  - sessionId, branchId, cashierUid, cashierName
- *  - items: [{ productId, source: 'admin'|'cashier'|'inline', name, qty, unitPrice, subtotal }]
+ *  - items: [{ productId, source: 'admin'|'cashier'|'inline', name, qty, unitPrice, subtotal, unitCost? }]
+ *      unitCost es el costo CONGELADO del producto el dia de la venta. Se omite
+ *      cuando el producto aun no tiene costo cargado. Nunca se recalcula: es lo
+ *      que permite que la ganancia historica no cambie al mover precios hoy.
  *  - total
  *  - paymentMethod: 'efectivo' | 'nequi' | 'daviplata' | 'deuda' | 'mixto'
  *  - paymentSplit?  (solo si paymentMethod === 'mixto') ej: { efectivo: 10000, nequi: 5000 }

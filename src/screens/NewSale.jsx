@@ -3461,24 +3461,37 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
       // Si hay split, la venta se guarda como 'mixto' con paymentSplit. Para
       // los downstream que no conocen split (filtros antiguos, etc.), el
       // helper `addSaleToBreakdown` y `paymentDisplay` los manejan.
+      // Costo CONGELADO: guardamos lo que costaba el producto el dia de la
+      // venta. Si manana sube el proveedor, la ganancia historica no se
+      // recalcula sola — sin esto, subir un precio reescribiria el pasado.
+      // 0 (o ausente) = el producto aun no tiene costo cargado.
+      const unitCostOf = (it) => {
+        const p = catalog.find(c => c.id === it.productId && c.source === it.source)
+        return Number(p?.unitCost) || 0
+      }
+
       const payload = {
         sessionId: session.id,
         branchId: session.branchId,
         cashierUid,
         cashierName,
-        items: cart.map(it => ({
-          productId: it.productId,
-          source: it.source,
-          name: it.name,
-          qty: it.qty, // en venta libre = panes entregados (incluye ñapa)
-          unitPrice: it.unitPrice,
-          subtotal: itemLineTotal(it),
-          ...(it.freeAmount ? {
-            freeAmount: true,
-            freeTotal: Number(it.freeTotal) || itemLineTotal(it),
-            napa: Number(it.napa) || 0,
-          } : {}),
-        })),
+        items: cart.map(it => {
+          const unitCost = unitCostOf(it)
+          return {
+            productId: it.productId,
+            source: it.source,
+            name: it.name,
+            qty: it.qty, // en venta libre = panes entregados (incluye ñapa)
+            unitPrice: it.unitPrice,
+            subtotal: itemLineTotal(it),
+            ...(unitCost > 0 ? { unitCost } : {}),
+            ...(it.freeAmount ? {
+              freeAmount: true,
+              freeTotal: Number(it.freeTotal) || itemLineTotal(it),
+              napa: Number(it.napa) || 0,
+            } : {}),
+          }
+        }),
         total: effectiveTotal,
         paymentMethod: isSplit ? 'mixto' : method,
       }

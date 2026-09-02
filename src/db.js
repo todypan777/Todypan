@@ -1,5 +1,5 @@
 import { firestoreDb } from './firebase'
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc, arrayUnion, onSnapshot } from 'firebase/firestore'
 
 // ─── Refs ─────────────────────────────────────────────────────
 const LOCAL_KEY = 'todypan_v1'
@@ -264,10 +264,43 @@ export function getBogotaHour() {
 // ─── Movimientos ─────────────────────────────────────────────
 export function getMovements() { return _data.movements }
 
+/**
+ * Registra un movimiento SIN reescribir el documento compartido.
+ *
+ * `persist()` guarda `/todypan/data` completo con setDoc. Con dos
+ * administradores trabajando a la vez —que es lo que pasa a la hora del
+ * cierre— eso pierde datos:
+ *
+ *   A registra un gasto  → guarda el documento entero.
+ *   B registra otro antes de recibir el cambio de A → guarda el documento
+ *   entero desde SU copia, que no trae el gasto de A → el gasto de A se borra.
+ *
+ * `arrayUnion` resuelve el caso: el anexado ocurre EN EL SERVIDOR sobre el
+ * arreglo que hay allá, no sobre la copia local, así que dos movimientos
+ * simultáneos no se pisan. Localmente se antepone para que la UI responda de
+ * inmediato; el orden final lo fija el snapshot del servidor y da igual porque
+ * todas las pantallas ordenan por fecha.
+ *
+ * El resto de mutaciones sigue usando `persist()` y conserva el riesgo. La
+ * solución de fondo es sacar `movements` a su propia colección.
+ */
 export function addMovement(mov) {
   const id = 'm' + Date.now()
-  _data.movements = [{ id, ...mov }, ..._data.movements]
-  persist()
+  const entry = { id, ...mov }
+
+  _data.movements = [entry, ..._data.movements]
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify(_data)) } catch {}
+
+  // JSON.parse(JSON.stringify(...)) elimina los undefined, que Firestore
+  // rechaza — mismo saneo que hace persist().
+  const clean = JSON.parse(JSON.stringify(entry))
+  updateDoc(FS_REF, { movements: arrayUnion(clean) })
+    .catch(e => {
+      // updateDoc falla si el documento aún no existe (instalación nueva).
+      console.warn('[TodyPan] addMovement atómico falló, se reintenta completo:', e.message)
+      persist()
+    })
+
   return id
 }
 

@@ -7,6 +7,10 @@ import { getData } from '../db'
 import { watchSalesBetween } from '../sales'
 import { saleCost, saleHasMissingCost } from '../utils/cost'
 import { addSaleToBreakdown } from '../utils/payment'
+import {
+  toCSV, downloadCSV, salesToRows, movementsToRows, summaryToCSV,
+  SALES_HEADERS, EXPENSE_HEADERS,
+} from '../utils/export'
 
 function catLabel(cat, incomeCats, expenseCats) {
   if (cat === 'ventas_cajera') return 'Ventas (cajera)'
@@ -124,6 +128,24 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
 
   const vacio = periodSales.length === 0 && movs.length === 0
 
+  // ── Descargas ────────────────────────────────────────────────
+  const branchName = (id) => branches.find(b => String(b.id) === String(id))?.name || ''
+  const sufijo = from === to ? from : `${from}_a_${to}`
+
+  function descargarVentas() {
+    const rows = salesToRows(periodSales, branchName)
+    const resumen = summaryToCSV({ desde: from, hasta: to, sales: periodSales, movements: movs })
+    // El resumen va arriba y el detalle debajo: al abrirlo, lo primero que se
+    // ve es cuanto quedo, sin tener que sumar nada a mano.
+    const csv = resumen + '\r\n\r\n' + toCSV(rows, SALES_HEADERS)
+    downloadCSV(`ventas_${sufijo}.csv`, csv)
+  }
+
+  function descargarGastos() {
+    const rows = movementsToRows(movs, c => catLabel(c, incomeCats, expenseCats), branchName)
+    downloadCSV(`gastos_${sufijo}.csv`, toCSV(rows, EXPENSE_HEADERS))
+  }
+
   return (
     <div style={{ paddingBottom: 110 }}>
       <ScreenHeader title="Balance" subtitle={periodLabel}/>
@@ -196,6 +218,26 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
           )}
         </Card>
       </div>
+
+      {/* Descargar a Excel */}
+      {!vacio && (
+        <div style={{ padding: '12px 16px 0' }}>
+          <Card padding={14}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.neutral[800] }}>Descargar a Excel</div>
+            <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 3 }}>
+              {periodLabel}{filter !== 'all' ? ` · ${branchName(filter)}` : ''}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button onClick={descargarVentas} disabled={periodSales.length === 0} style={dlBtn(periodSales.length === 0, true)}>
+                Ventas ({periodSales.length})
+              </button>
+              <button onClick={descargarGastos} disabled={movs.length === 0} style={dlBtn(movs.length === 0, false)}>
+                Gastos ({movs.length})
+              </button>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Aviso de costos faltantes */}
       {sinCosto > 0 && (
@@ -394,5 +436,15 @@ function navBtn(disabled) {
     cursor: disabled ? 'default' : 'pointer',
     color: disabled ? T.neutral[300] : T.copper[500],
     fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+  }
+}
+
+function dlBtn(disabled, primary) {
+  return {
+    flex: 1, padding: '10px 12px', borderRadius: 10, cursor: disabled ? 'default' : 'pointer',
+    fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
+    border: primary ? 'none' : `1px solid ${T.neutral[200]}`,
+    background: disabled ? T.neutral[100] : (primary ? T.copper[500] : '#fff'),
+    color: disabled ? T.neutral[400] : (primary ? '#fff' : T.neutral[700]),
   }
 }

@@ -30,6 +30,8 @@ import CashierLunchWizard from '../components/CashierLunchWizard'
 import CashierSpecialWizard from '../components/CashierSpecialWizard'
 import CashierBreakfastWizard from '../components/CashierBreakfastWizard'
 import LunchTypeChooserModal from '../components/LunchTypeChooserModal'
+import { branchHasFeature } from '../utils/features'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
 import { watchBreakfastConfig, getBreakfastState } from '../breakfast'
@@ -291,9 +293,18 @@ export default function NewSale({
   // flujo y permite que el cliente solo pida UNA sopa sin almuerzo
   // completo. Defensiva: filtra productos del admin con isLunch=true por
   // error histórico.
+  // Funciones encendidas en la panadería de este turno. Si la sede no vende
+  // almuerzos, la cajera no debe ver el botón: es media app que no le sirve y
+  // que solo estorba en hora pico.
+  const sedeDelTurno = (getData().branches || [])
+    .find(b => String(b.id) === String(session?.branchId))
+  const vendeAlmuerzos = branchHasFeature(sedeDelTurno, 'almuerzos')
+  const vendeDesayunos = branchHasFeature(sedeDelTurno, 'desayunos')
+
   const enrichedCatalog = useMemo(() => {
     const baseCatalog = catalog.filter(p => p.isLunch !== true)
-    const anyLunchOptionAvailable = corrienteState.available || !!specialFromDay || anyAddonAvailable
+    const anyLunchOptionAvailable = vendeAlmuerzos
+      && (corrienteState.available || !!specialFromDay || anyAddonAvailable)
     if (!anyLunchOptionAvailable) return baseCatalog
     // Precios "info" solo para mostrar en el cuadrito del catálogo.
     const priceForInfo = Number(corrienteState.priceMesa)
@@ -314,13 +325,13 @@ export default function NewSale({
       },
       ...baseCatalog,
     ]
-  }, [catalog, corrienteState, specialFromDay, anyAddonAvailable])
+  }, [catalog, corrienteState, specialFromDay, anyAddonAvailable, vendeAlmuerzos])
 
   // Catálogo enriquecido FINAL: si el desayuno está activo, lo agregamos como
   // producto virtual aparte ("Desayuno"). Lo ponemos al principio para que la
   // cajera lo encuentre rápido al buscar o al ver el top de la lista.
   const enrichedCatalogWithBreakfast = useMemo(() => {
-    if (!breakfastState.available) return enrichedCatalog
+    if (!vendeDesayunos || !breakfastState.available) return enrichedCatalog
     const breakfastEntry = {
       id: '__breakfast_chooser__',
       source: 'breakfast',
@@ -337,7 +348,7 @@ export default function NewSale({
       return [lunch, breakfastEntry, ...rest]
     }
     return [breakfastEntry, ...enrichedCatalog]
-  }, [enrichedCatalog, breakfastState])
+  }, [enrichedCatalog, breakfastState, vendeDesayunos])
 
   // ── Acceso rápido a almuerzos en hora pico ──────────────────────
   // De 11am a 2:59pm (Bogotá), si la cocinera publicó menú/especial,
@@ -1780,6 +1791,7 @@ export default function NewSale({
           session={session}
           authUser={authUser}
           userDoc={userDoc}
+          catalog={catalog}
           assistMode={assistMode}
           cart={cart}
           total={total}
@@ -3341,7 +3353,7 @@ function mismatchOptStyle() {
 // Cubre el costo de la transferencia. No aplica a efectivo puro ni a deuda.
 const DIGITAL_SURCHARGE = 500
 
-function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onCancel, onConfirmed }) {
+function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, total, onCancel, onConfirmed }) {
   // method primario seleccionado por la cajera. Cuando hay split, 'mixto' es
   // un estado derivado — no se elige directamente.
   const [method, setMethod] = useState(null) // 'efectivo' | 'deuda' | 'nequi' | 'daviplata'
@@ -3360,7 +3372,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
   const [splitCashStr, setSplitCashStr] = useState('')
 
   useEffect(() => {
-    const unsub = watchDebtors(setDebtors)
+    const unsub = watchDebtors(setDebtors, parseBranchKey((userBranchIds(userDoc) || []).join(',')))
     return unsub
   }, [])
 
@@ -3461,24 +3473,37 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
       // Si hay split, la venta se guarda como 'mixto' con paymentSplit. Para
       // los downstream que no conocen split (filtros antiguos, etc.), el
       // helper `addSaleToBreakdown` y `paymentDisplay` los manejan.
+      // Costo CONGELADO: guardamos lo que costaba el producto el dia de la
+      // venta. Si manana sube el proveedor, la ganancia historica no se
+      // recalcula sola — sin esto, subir un precio reescribiria el pasado.
+      // 0 (o ausente) = el producto aun no tiene costo cargado.
+      const unitCostOf = (it) => {
+        const p = catalog.find(c => c.id === it.productId && c.source === it.source)
+        return Number(p?.unitCost) || 0
+      }
+
       const payload = {
         sessionId: session.id,
         branchId: session.branchId,
         cashierUid,
         cashierName,
-        items: cart.map(it => ({
-          productId: it.productId,
-          source: it.source,
-          name: it.name,
-          qty: it.qty, // en venta libre = panes entregados (incluye ñapa)
-          unitPrice: it.unitPrice,
-          subtotal: itemLineTotal(it),
-          ...(it.freeAmount ? {
-            freeAmount: true,
-            freeTotal: Number(it.freeTotal) || itemLineTotal(it),
-            napa: Number(it.napa) || 0,
-          } : {}),
-        })),
+        items: cart.map(it => {
+          const unitCost = unitCostOf(it)
+          return {
+            productId: it.productId,
+            source: it.source,
+            name: it.name,
+            qty: it.qty, // en venta libre = panes entregados (incluye ñapa)
+            unitPrice: it.unitPrice,
+            subtotal: itemLineTotal(it),
+            ...(unitCost > 0 ? { unitCost } : {}),
+            ...(it.freeAmount ? {
+              freeAmount: true,
+              freeTotal: Number(it.freeTotal) || itemLineTotal(it),
+              napa: Number(it.napa) || 0,
+            } : {}),
+          }
+        }),
         total: effectiveTotal,
         paymentMethod: isSplit ? 'mixto' : method,
       }
@@ -3527,6 +3552,7 @@ function PaymentModal({ session, authUser, userDoc, assistMode, cart, total, onC
           amount: total,
           saleId,
           date: today,
+          branchId: session.branchId,
         })
         // Backfill: agregar debtorId a la sale para futuras ediciones del admin.
         // SIN await — en modo ahorro el await se cuelga.

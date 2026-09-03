@@ -7,18 +7,12 @@ import { addProduct, updateProduct, deleteProduct, getData, ensureSupplier } fro
 import { useIsDesktop } from '../context/DesktopCtx'
 import { watchCashierProducts, deleteCashierProduct } from '../products'
 import { watchAllSales } from '../sales'
+import { supplierUnitCost, productUnitCost } from '../utils/cost'
 
 // ── Helpers de cálculo ─────────────────────────────────────────
-// Costo por unidad de UN proveedor: por paquete → costo/unidades; o directo.
-function supplierUnitCost(s) {
-  if (!s) return 0
-  const pc = Number(s.packageCost) || 0
-  if (s.byPackage) {
-    const u = Number(s.unitsPerPackage) || 0
-    return u > 0 ? pc / u : 0
-  }
-  return pc
-}
+// `supplierUnitCost` / `productUnitCost` viven en utils/cost.js: son la misma
+// cuenta que usa el POS al congelar el costo en cada venta, así el margen que
+// ve el admin aquí y la ganancia que sale en los reportes nunca discrepan.
 
 function calcProduct(p) {
   // Costos por proveedor (si los hay). El margen usa el MÁS ALTO (peor caso);
@@ -35,9 +29,7 @@ function calcProduct(p) {
     costPerUnit = dearest.cost
   } else {
     // Legacy / sin proveedores: costo único por paquete o por unidad.
-    costPerUnit = p.byPackage
-      ? (p.unitsPerPackage > 0 ? p.packageCost / p.unitsPerPackage : 0)
-      : p.packageCost
+    costPerUnit = productUnitCost(p)
   }
   const prices = Object.values(p.pricesByBranch || {}).map(Number).filter(n => n > 0)
   const minPrice = prices.length > 0 ? Math.min(...prices) : 0

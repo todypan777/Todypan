@@ -145,3 +145,18 @@ export async function rejectPendingUser(uid) {
     deactivatedAt: serverTimestamp(),
   })
 }
+
+/**
+ * Asigna a un usuario las panaderías que puede ver.
+ *
+ * `branchIds` vacío o ausente = SIN restricción (ve todo), que es como se
+ * comporto la app siempre. Por eso asignar sedes es una accion explicita: al
+ * publicar este cambio nadie queda restringido de golpe, y el equipo que ya
+ * venia trabajando sigue igual hasta que se le asigne su panaderia.
+ *
+ * Las reglas de Firestore aplican el mismo criterio sobre este mismo campo.
+ */
+export async function setUserBranches(uid, branchIds) {
+  const clean = Array.isArray(branchIds) ? branchIds.filter(b => b != null) : []
+  await updateDoc(doc(firestoreDb, 'users', uid), { branchIds: clean })
+}

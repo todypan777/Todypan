@@ -11,6 +11,7 @@ import { watchSessionSales, flagSale } from '../sales'
 import { createCashExpense, watchSessionExpenses, updateCashExpense, deleteCashExpense } from '../cashExpenses'
 import { createCashIncome, watchSessionIncomes, updateCashIncome, deleteCashIncome } from '../cashIncomes'
 import { watchDebtors, normalizeName, computeDebtorOwed } from '../debtors'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { watchTasksForCashier, markTaskDone, unmarkTaskDone } from '../tasks'
 import { watchPendingCallsForCashier, acknowledgeKitchenCall } from '../kitchenCalls'
 import { watchLiveOrdersForSession } from '../kitchenOrders'
@@ -952,7 +953,11 @@ export function ActiveSession({
   }, [session.id])
 
   // Deudores para enlazar un ingreso que es abono a una deuda.
-  useEffect(() => watchDebtors(setDebtors), [])
+  const debtorBranchKey = (userBranchIds(userDoc) || []).join(',')
+  useEffect(
+    () => watchDebtors(setDebtors, parseBranchKey(debtorBranchKey)),
+    [debtorBranchKey]
+  )
 
   useEffect(() => {
     const unsub = watchTasksForCashier(scopeUid, setMyTasks)

@@ -2,7 +2,9 @@ import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
 import InstallPrompt from './components/UI/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
-import { getData, initDB } from './db'
+import { getData, initDB, setCollectionMovements } from './db'
+import { watchMovementsSince } from './movements'
+import { userBranchIds, parseBranchKey } from './utils/branchScope'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
@@ -20,6 +22,7 @@ import More from './screens/More'
 import Branches from './screens/Branches'
 import Registro from './screens/Registro'
 import Products from './screens/Products'
+import Inventario from './screens/Inventario'
 import Pendientes from './screens/Pendientes'
 import Deudores from './screens/Deudores'
 import Transferencias from './screens/Transferencias'
@@ -162,6 +165,7 @@ function AuthGate() {
  */
 function ApprovedAppLoader({ children }) {
   const [dbLoaded, setDbLoaded] = useState(false)
+  const { userDoc } = useAuth()
 
   useEffect(() => {
     initDB()
@@ -169,11 +173,33 @@ function ApprovedAppLoader({ children }) {
       .catch(() => setDbLoaded(true))
   }, [])
 
+  // Movimientos de la colección /movements. db.js los une con los históricos
+  // del documento compartido, así que las pantallas siguen leyendo una sola
+  // lista y no hubo que tocar ninguna.
+  //
+  // La ventana es de 13 meses: cubre el mes actual y el mismo mes del año
+  // pasado, que es hasta donde llega la navegación de los reportes. Traer el
+  // libro completo en cada arranque es el error que ya costó la cuota de
+  // Firestore en otras pantallas.
+  const branchKey = (userBranchIds(userDoc) || []).join(',')
+  useEffect(() => {
+    const desde = new Date()
+    desde.setMonth(desde.getMonth() - 13)
+    const sinceDate = desde.toISOString().slice(0, 10)
+    const branchIds = parseBranchKey(branchKey)
+    return watchMovementsSince(sinceDate, setCollectionMovements, branchIds)
+  }, [branchKey])
+
   if (!dbLoaded) return <LoadingScreen label="Cargando datos..." />
   return children
 }
 
 function AppShell() {
+  // authUser/userDoc viven en AuthGate; aquí se vuelven a pedir al contexto.
+  // Las pantallas que reciben el usuario (Balance, Inventario, Nuevo
+  // movimiento) los necesitan para saber qué panadería puede ver.
+  const { authUser, userDoc } = useAuth()
+
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
   const [modal, setModal] = useState(null)
@@ -253,7 +279,7 @@ function AppShell() {
       return
     }
     // En desktop, los sub-ítems de "Más" se navegan directamente desde el sidebar
-    if (['movements', 'reports', 'reminders', 'branches', 'products', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos', 'cuentas'].includes(t)) {
+    if (['movements', 'reports', 'reminders', 'branches', 'products', 'inventario', 'pendientes', 'deudores', 'transferencias', 'tasks', 'almuerzos', 'desayunos', 'cuentas'].includes(t)) {
       setMoreSub(t)
       setTab('more')
       return
@@ -319,6 +345,7 @@ function AppShell() {
         <Reports
           filter={filter}
           setFilter={setFilter}
+          userDoc={userDoc}
           movements={data.movements}
           incomeCats={data.incomeCats}
           expenseCats={data.expenseCats}
@@ -349,6 +376,14 @@ function AppShell() {
           onRefresh={refresh}
         />
       )
+    } else if (moreSub === 'inventario') {
+      content = (
+        <Inventario
+          authUser={authUser}
+          userDoc={userDoc}
+          onBack={() => setMoreSub(null)}
+        />
+      )
     } else if (moreSub === 'pendientes') {
       content = (
         <Pendientes
@@ -362,6 +397,7 @@ function AppShell() {
     } else if (moreSub === 'deudores') {
       content = (
         <Deudores
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
         />
       )
@@ -389,7 +425,7 @@ function AppShell() {
         />
       )
     } else {
-      content = <More onOpen={id => setMoreSub(id)} />
+      content = <More onOpen={id => setMoreSub(id)} userDoc={userDoc} />
     }
   }
 
@@ -409,6 +445,7 @@ function AppShell() {
         }}>
           <AddMovement
             initialKind={modal.kind}
+            userDoc={userDoc}
             onBack={() => setModal(null)}
             onSave={() => { setModal(null); refresh() }}
             incomeCats={data.incomeCats}
@@ -424,6 +461,7 @@ function AppShell() {
       }}>
         <AddMovement
           initialKind={modal.kind}
+          userDoc={userDoc}
           onBack={() => setModal(null)}
           onSave={() => { setModal(null); refresh() }}
           incomeCats={data.incomeCats}

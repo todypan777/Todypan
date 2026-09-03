@@ -41,7 +41,10 @@ function timeOf(doc) {
 /**
  * Crea una venta nueva. payload:
  *  - sessionId, branchId, cashierUid, cashierName
- *  - items: [{ productId, source: 'admin'|'cashier'|'inline', name, qty, unitPrice, subtotal }]
+ *  - items: [{ productId, source: 'admin'|'cashier'|'inline', name, qty, unitPrice, subtotal, unitCost? }]
+ *      unitCost es el costo CONGELADO del producto el dia de la venta. Se omite
+ *      cuando el producto aun no tiene costo cargado. Nunca se recalcula: es lo
+ *      que permite que la ganancia historica no cambie al mover precios hoy.
  *  - total
  *  - paymentMethod: 'efectivo' | 'nequi' | 'daviplata' | 'deuda' | 'mixto'
  *  - paymentSplit?  (solo si paymentMethod === 'mixto') ej: { efectivo: 10000, nequi: 5000 }
@@ -281,6 +284,45 @@ export function watchSalesByDate(dateStr, callback) {
     },
     err => {
       console.error('[sales] watchSalesByDate error:', err)
+      callback([])
+    }
+  )
+}
+
+/**
+ * Suscripción a las ventas de un RANGO de fechas (ambas inclusive, formato
+ * YYYY-MM-DD en zona Bogotá).
+ *
+ * Existe para no repetir el error de `watchAllSales`: los reportes traian la
+ * coleccion entera para luego filtrar en cliente, y eso agotaba la cuota
+ * diaria de Firestore en cada arranque. `date` es un string ISO, asi que la
+ * comparacion lexicografica es cronologica y el filtro es de campo unico →
+ * Firestore lo indexa solo, sin indice compuesto.
+ */
+export function watchSalesBetween(fromDate, toDate, callback, branchIds = null) {
+  if (!fromDate || !toDate) { callback([]); return () => {} }
+  // Si el usuario tiene panaderias asignadas, la consulta DEBE pedir solo
+  // esas. Las reglas de Firestore validan documento por documento y rechazan
+  // la consulta entera si pudiera devolver algo que el usuario no puede leer:
+  // sin este filtro, un usuario restringido recibiria permission-denied en vez
+  // de una lista recortada.
+  //
+  // Rango sobre `date` + igualdad sobre `branchId` necesita indice compuesto.
+  // Firestore devuelve el enlace para crearlo en el mensaje de error.
+  const base = [where('date', '>=', fromDate), where('date', '<=', toDate)]
+  const scoped = Array.isArray(branchIds) && branchIds.length > 0
+    ? [...base, where('branchId', 'in', branchIds)]
+    : base
+  const q = query(salesCol(), ...scoped)
+  return onSnapshot(
+    q,
+    snap => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      list.sort((a, b) => timeOf(b) - timeOf(a))
+      callback(list)
+    },
+    err => {
+      console.error('[sales] watchSalesBetween error:', err)
       callback([])
     }
   )

@@ -10,6 +10,7 @@ import {
   onSnapshot,
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
+import { productUnitCost } from './utils/cost'
 
 const productsCol = () => collection(firestoreDb, 'products')
 
@@ -144,6 +145,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     freeUnitPrice: Number(p.freeUnitPrice) || 0,
     createdByCashier: false,
     needsCostReview: false,
+    unitCost: productUnitCost(p),
   }))
   const cashierList = cashierProducts.map(p => ({
     id: p.id,
@@ -155,6 +157,7 @@ export function mergeProductCatalogs(adminProducts = [], cashierProducts = []) {
     freeUnitPrice: Number(p.freeUnitPrice) || 0,
     createdByCashier: true,
     needsCostReview: !!p.needsCostReview,
+    unitCost: productUnitCost(p),
   }))
   // Si hay un producto admin con el mismo nombre que uno cajera, prioridad al admin
   const adminNames = new Set(adminList.map(p => p.name.toLowerCase()))

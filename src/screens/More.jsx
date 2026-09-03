@@ -3,10 +3,13 @@ import { T } from '../tokens'
 import { Card, TodyMark, UserAvatar } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useAuth } from '../context/AuthCtx'
+import { getData } from '../db'
+import { visibleBranches } from '../utils/branchScope'
+import { anyBranchHasFeature } from '../utils/features'
 import { signOut } from '../auth'
 import ContactSupportButton from '../components/ContactSupportButton'
 
-export default function More({ onOpen }) {
+export default function More({ onOpen, userDoc }) {
   const { user } = useAuth()
   const [signingOut, setSigningOut] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
@@ -33,6 +36,7 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      feature: 'almuerzos',
       id: 'almuerzos', label: 'Almuerzos', desc: 'Cuántos almuerzos vendidos y qué se pidió más',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -44,6 +48,7 @@ export default function More({ onOpen }) {
       ),
     },
     {
+      feature: 'desayunos',
       id: 'desayunos', label: 'Desayunos', desc: 'Cuántos desayunos vendidos y qué combos se pidieron',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -85,9 +90,18 @@ export default function More({ onOpen }) {
       ),
     },
     {
-      id: 'reports', label: 'Reportes', desc: 'Análisis del mes',
+      id: 'reports', label: 'Balance', desc: 'Ventas, costos y ganancia',
       icon: (
         <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 16 V8 M9 16 V4 M14 16 V11" stroke={T.copper[600]} strokeWidth="2" strokeLinecap="round"/><path d="M3 18 H17" stroke={T.copper[600]} strokeWidth="1.5" strokeLinecap="round"/></svg>
+      ),
+    },
+    {
+      id: 'inventario', label: 'Inventario', desc: 'Entradas, salidas y existencias',
+      icon: (
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M3 6.5 L10 3 L17 6.5 V14 L10 17.5 L3 14 Z" stroke={T.copper[600]} strokeWidth="1.6" strokeLinejoin="round" fill="none"/>
+          <path d="M3 6.5 L10 10 L17 6.5 M10 10 V17.5" stroke={T.copper[600]} strokeWidth="1.4" strokeLinejoin="round"/>
+        </svg>
       ),
     },
     {
@@ -124,6 +138,12 @@ export default function More({ onOpen }) {
       setConfirmSignOut(false)
     }
   }
+
+  // Se ocultan las secciones que ninguna de sus panaderías usa. Una panadería
+  // sin `features` las tiene todas, así que quien no haya configurado nada ve
+  // exactamente el mismo menú de siempre.
+  const misSedes = visibleBranches(userDoc, getData().branches || [])
+  const visibles = items.filter(it => !it.feature || anyBranchHasFeature(misSedes, it.feature))
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -166,11 +186,11 @@ export default function More({ onOpen }) {
 
       <div style={{ padding: '4px 16px 0' }}>
         <Card padding={0}>
-          {items.map((it, i) => (
+          {visibles.map((it, i) => (
             <div key={it.id} onClick={() => onOpen(it.id)} style={{
               padding: '15px 16px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 14,
-              borderBottom: i < items.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+              borderBottom: i < visibles.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
             }}>
               <div style={{
                 width: 38, height: 38, borderRadius: 10, background: T.copper[50],

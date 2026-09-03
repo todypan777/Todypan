@@ -4,6 +4,7 @@ import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { watchDebtors, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances, deleteDebtorHistoryEntry, editDebtorPaymentAmount, deleteDebtorSaleEntry } from '../debtors'
 import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
@@ -11,7 +12,7 @@ import { useAuth } from '../context/AuthCtx'
 import { getData } from '../db'
 import { SaleDetailModal } from './Ventas'
 
-export default function Deudores({ onBack }) {
+export default function Deudores({ onBack, userDoc }) {
   const isDesktop = useIsDesktop()
   const { isAdmin } = useAuth()
   const [debtors, setDebtors] = useState([])
@@ -31,13 +32,17 @@ export default function Deudores({ onBack }) {
   const [saleToManage, setSaleToManage] = useState(null)
   const branches = getData().branches || []
 
+  // Solo los deudores de las panaderías del usuario. Sin este filtro, un
+  // usuario restringido recibiría permission-denied: las reglas rechazan la
+  // consulta entera si pudiera devolver algo que no puede leer.
+  const debtorBranchKey = (userBranchIds(userDoc) || []).join(',')
   useEffect(() => {
     const unsub = watchDebtors(list => {
       setDebtors(list)
       setLoading(false)
-    })
+    }, parseBranchKey(debtorBranchKey))
     return unsub
-  }, [])
+  }, [debtorBranchKey])
 
   // Deudores "vivos": excluimos los fusionados (mergedInto). Son tombstones
   // ocultos que solo existen para auditoría; no deben listarse, contarse ni

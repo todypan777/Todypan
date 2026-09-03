@@ -40,7 +40,9 @@ export default function Dashboard({ onNav, filter, setFilter, movements, reminde
   const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
 
   const upcoming = reminders
-    .filter(r => !r.paid && (filtroReal === 'all' || r.branch === filtroReal || r.branch === 'both'))
+    // Sede por texto: con `===` un recordatorio guardado con la sede como "1"
+    // no coincide con el id numerico 1 y el pago desaparece de la lista.
+    .filter(r => !r.paid && (filtroReal === 'all' || String(r.branch) === String(filtroReal) || r.branch === 'both'))
     .sort((a, b) => a.due.localeCompare(b.due))
     .slice(0, 3)
 

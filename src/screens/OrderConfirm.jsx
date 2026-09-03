@@ -492,7 +492,10 @@ function AttendView({ order, orderId, isAdmin, authUser }) {
   // de mesera/cocina que también pueda estar abierta en la misma panadería.
   const targetSession = useMemo(
     () => targetBranch
-      ? openSessions.find(s => s.branchId === targetBranch.id && (!s.type || s.type === 'cash'))
+      // Por texto: con `===`, una sede guardada como "2" no coincide con el id
+      // numerico 2, no se encuentra la caja abierta y el pedido web se queda
+      // sin atender sin que salte ningun error.
+      ? openSessions.find(s => String(s.branchId) === String(targetBranch.id) && (!s.type || s.type === 'cash'))
       : null,
     [openSessions, targetBranch]
   )

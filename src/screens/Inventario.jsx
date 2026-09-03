@@ -64,7 +64,7 @@ export default function Inventario({ authUser, userDoc, onBack }) {
       {branches.length > 1 && (
         <div style={{ padding: '0 20px 12px', display: 'flex', gap: 8, overflowX: 'auto' }}>
           {branches.map(b => (
-            <Chip key={b.id} label={b.name} active={branchId === b.id} onClick={() => setBranchId(b.id)} />
+            <Chip key={b.id} label={b.name} active={String(branchId) === String(b.id)} onClick={() => setBranchId(b.id)} />
           ))}
         </div>
       )}

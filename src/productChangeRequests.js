@@ -36,9 +36,21 @@ import { addDocOffline } from './utils/firestoreOffline'
 const reqCol = () => collection(firestoreDb, 'productChangeRequests')
 const reqRef = (id) => doc(firestoreDb, 'productChangeRequests', id)
 
-/** Suscripción a TODAS las solicitudes pendientes (vista admin). */
-export function watchPendingChangeRequests(callback) {
-  const q = query(reqCol(), where('status', '==', 'pending'))
+/** Suscripción a las solicitudes pendientes de las panaderías del usuario. */
+export function watchPendingChangeRequests(callback, branchIds = null) {
+  // Acotada por panaderia: alimenta la campana de notificaciones. Sin el
+  // filtro un dueño ve las peticiones de cambio de precio del otro.
+  //
+  // Ojo: las peticiones viejas pueden traer `branchId: null` (se guarda con
+  // `?? null`) y esas quedan fuera del filtro. Es lo mismo que hace el resto
+  // de la app con los datos sin sede, y es preferible a enseñarlas a los dos.
+  //
+  // Dos igualdades: no necesita indice compuesto.
+  const parts = [where('status', '==', 'pending')]
+  if (Array.isArray(branchIds) && branchIds.length > 0) {
+    parts.push(where('branchId', 'in', branchIds))
+  }
+  const q = query(reqCol(), ...parts)
   return onSnapshot(
     q,
     snap => {

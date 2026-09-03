@@ -715,8 +715,16 @@ export async function recomputeClosedSession(sessionId, { byUid } = {}) {
  * el panel central, así que ya no aparecen aquí. Este watcher queda para
  * limpiar discrepancias antiguas que quedaron pendientes.)
  */
-export function watchSessionsWithPendingReview(callback) {
-  const q = query(sessionsCol())
+export function watchSessionsWithPendingReview(callback, branchIds = null) {
+  // Acotada por panaderia: estas sesiones llevan descuadres de caja —cuanto
+  // falto o sobro y de quien era el turno— y alimentan la campana de
+  // notificaciones, que esta visible en todas las pantallas. Sin el filtro un
+  // dueño ve los descuadres del otro; y a uno con `branchIds` las reglas le
+  // rechazan la consulta entera y el catch de abajo emite lista vacia: la
+  // campana queda en cero, como si no tuviera nada pendiente.
+  const q = Array.isArray(branchIds) && branchIds.length > 0
+    ? query(sessionsCol(), where('branchId', 'in', branchIds))
+    : query(sessionsCol())
   return onSnapshot(
     q,
     snap => {

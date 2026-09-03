@@ -4,6 +4,7 @@ import { fmtCOP, fmtDate, todayStr } from '../utils/format'
 import { Card, SectionHeader, CatIcon, BranchChip, Amount, IconButton, BackButton, Modal, InputField, PrimaryButton } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { addReminder, updateReminder, deleteReminder, toggleReminderPaid, getData } from '../db'
+import { visibleBranches } from '../utils/branchScope'
 
 const CATS = [
   { id: 'arriendo', label: 'Arriendo' },
@@ -16,7 +17,7 @@ const CATS = [
   { id: 'otros_prov', label: 'Otro' },
 ]
 
-export default function Reminders({ reminders, onBack, onRefresh }) {
+export default function Reminders({ reminders, onBack, onRefresh, userDoc }) {
   const [showAdd, setShowAdd] = useState(false)
   const [editId, setEditId] = useState(null)
   const [confirmDel, setConfirmDel] = useState(null)
@@ -179,6 +180,7 @@ export default function Reminders({ reminders, onBack, onRefresh }) {
       {/* Add modal */}
       {showAdd && (
         <ReminderForm
+          userDoc={userDoc}
           onClose={() => setShowAdd(false)}
           onSave={() => { setShowAdd(false); onRefresh() }}
         />
@@ -188,6 +190,7 @@ export default function Reminders({ reminders, onBack, onRefresh }) {
       {editId && (
         <ReminderForm
           initial={reminders.find(r => r.id === editId)}
+          userDoc={userDoc}
           onClose={() => setEditId(null)}
           onSave={() => { setEditId(null); onRefresh() }}
           isEdit
@@ -208,12 +211,22 @@ export default function Reminders({ reminders, onBack, onRefresh }) {
   )
 }
 
-function ReminderForm({ initial, onClose, onSave, isEdit }) {
+function ReminderForm({ initial, onClose, onSave, isEdit, userDoc }) {
+  // Solo sus panaderias. Y si solo ve una, "Ambas" desaparece: ese valor
+  // guarda el recordatorio para las dos sedes, o sea tambien para la del otro
+  // dueño. Con una sola sede visible, la opcion no es que sobre — es que
+  // escribiria donde no debe.
+  const misSedes = visibleBranches(userDoc, getData().branches || [])
+  const sedeUnica = misSedes.length === 1 ? misSedes[0].id : null
+  const opcionesSede = sedeUnica != null
+    ? misSedes.map(b => ({ v: b.id, l: b.name }))
+    : [{ v: 'both', l: 'Ambas' }, ...misSedes.map(b => ({ v: b.id, l: b.name }))]
+
   const [title, setTitle] = useState(initial?.title || '')
   const [amount, setAmount] = useState(initial?.amount ? String(initial.amount) : '')
   const [due, setDue] = useState(initial?.due || todayStr())
   const [cat, setCat] = useState(initial?.cat || 'otros_prov')
-  const [branch, setBranch] = useState(initial?.branch ?? 'both')
+  const [branch, setBranch] = useState(initial?.branch ?? (sedeUnica ?? 'both'))
   const [recurring, setRecurring] = useState(initial?.recurring === 'monthly')
 
   const canSave = title && amount && due
@@ -258,7 +271,7 @@ function ReminderForm({ initial, onClose, onSave, isEdit }) {
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: T.neutral[500], textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Panadería</div>
         <div style={{ display: 'flex', gap: 6 }}>
-          {[{ v: 'both', l: 'Ambas' }, ...getData().branches.map(b => ({ v: b.id, l: b.name }))].map(b => (
+          {opcionesSede.map(b => (
             <button key={b.v} onClick={() => setBranch(b.v)} style={{
               flex: 1, padding: '9px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
               background: branch === b.v ? T.copper[500] : T.neutral[100],

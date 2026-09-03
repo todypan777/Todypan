@@ -402,6 +402,7 @@ function AppShell() {
       content = (
         <Reminders
           reminders={data.reminders}
+          userDoc={effectiveUserDoc}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />
@@ -434,6 +435,7 @@ function AppShell() {
     } else if (moreSub === 'pendientes') {
       content = (
         <Pendientes
+          userDoc={effectiveUserDoc}
           onBack={() => setMoreSub(null)}
           onOpenUsers={() => { setMoreSub(null); setTab('team') }}
           onOpenProducts={() => setMoreSub('products')}
@@ -566,6 +568,7 @@ function AppShell() {
 
         {/* Campanita de notificaciones global (oculta cuando ya estamos en Pendientes) */}
         <NotificationBell
+          userDoc={effectiveUserDoc}
           onOpenPendientes={() => handleNav('pendientes')}
           onOpenUsers={() => handleNav('users')}
           dataTick={dataTick}

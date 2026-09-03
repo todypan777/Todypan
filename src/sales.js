@@ -609,8 +609,15 @@ export async function findMismarkedTransferCandidates({ sinceDate, method, amoun
     .map(x => x.sale)
 }
 
-export function watchFlaggedSales(callback) {
-  const q = query(salesCol(), where('status', '==', 'flagged'))
+export function watchFlaggedSales(callback, branchIds = null) {
+  // Acotada por panaderia: alimenta la campana de notificaciones. Sin el
+  // filtro un dueño ve las ventas marcadas del otro (monto, cajera, motivo).
+  // Dos igualdades: no necesita indice compuesto.
+  const parts = [where('status', '==', 'flagged')]
+  if (Array.isArray(branchIds) && branchIds.length > 0) {
+    parts.push(where('branchId', 'in', branchIds))
+  }
+  const q = query(salesCol(), ...parts)
   return onSnapshot(
     q,
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),

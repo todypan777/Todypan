@@ -122,18 +122,6 @@ export function deleteCashExpense(id) {
   })
 }
 
-/** Suscripción a TODOS los gastos pendientes (para admin). */
-export function watchPendingExpenses(callback) {
-  const q = query(expensesCol(), where('status', '==', 'pending'))
-  return onSnapshot(
-    q,
-    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-    err => {
-      console.error('[cashExpenses] watchPendingExpenses error:', err)
-      callback([])
-    }
-  )
-}
 
 /**
  * Solo admin: aprueba un gasto. En Fase 6 se llamará desde la pestaña

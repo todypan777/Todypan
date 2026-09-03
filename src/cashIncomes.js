@@ -126,18 +126,6 @@ export function deleteCashIncome(id) {
   })
 }
 
-/** Suscripción a TODOS los ingresos pendientes (para admin). */
-export function watchPendingIncomes(callback) {
-  const q = query(incomesCol(), where('status', '==', 'pending'))
-  return onSnapshot(
-    q,
-    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-    err => {
-      console.error('[cashIncomes] watchPendingIncomes error:', err)
-      callback([])
-    }
-  )
-}
 
 /**
  * Solo admin: aprueba un ingreso. Liga el movement creado (movementId) y, si

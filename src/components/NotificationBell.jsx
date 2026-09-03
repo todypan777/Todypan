@@ -5,6 +5,7 @@ import { watchAllUsers, rejectPendingUser } from '../users'
 import { watchSessionsWithPendingReview } from '../cashSessions'
 import { watchFlaggedSales } from '../sales'
 import { watchPendingChangeRequests } from '../productChangeRequests'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { getData, getBogotaDateStr } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import { ApprovalModal } from '../screens/Users'
@@ -20,7 +21,7 @@ import { ApprovalModal } from '../screens/Users'
  * En el modelo D25 los cierres y aperturas se manejan desde el panel central del
  * Dashboard, no aquí — por eso ya no hay popup de "cierre por aprobar".
  */
-export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden }) {
+export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTick, hidden, userDoc }) {
   const [pendingUsers, setPendingUsers] = useState([])
   const [pendingSessions, setPendingSessions] = useState([])
   const [flaggedSales, setFlaggedSales] = useState([])
@@ -31,10 +32,24 @@ export default function NotificationBell({ onOpenPendientes, onOpenUsers, dataTi
   const [usersPopup, setUsersPopup] = useState(null)
   const seenUserIdsRef = useRef(new Set())
 
+  // La campana se ve en todas las pantallas, asi que es el sitio donde una
+  // fuga se nota mas: sin acotar, un dueño recibe los avisos del otro
+  // (descuadres de caja, ventas marcadas, peticiones de precio).
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
   useEffect(() => watchAllUsers(list => setPendingUsers(list.filter(u => u.status === 'pending'))), [])
-  useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchFlaggedSales(setFlaggedSales), [])
-  useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
+  useEffect(
+    () => watchSessionsWithPendingReview(setPendingSessions, parseBranchKey(branchKey)),
+    [branchKey]
+  )
+  useEffect(
+    () => watchFlaggedSales(setFlaggedSales, parseBranchKey(branchKey)),
+    [branchKey]
+  )
+  useEffect(
+    () => watchPendingChangeRequests(setChangeRequests, parseBranchKey(branchKey)),
+    [branchKey]
+  )
   // (D25) Cierres y aperturas se manejan desde el panel central. Acá solo
   // contamos las shortages legacy que quedaron pendientes.
   const orphanShortages = pendingSessions.filter(s =>

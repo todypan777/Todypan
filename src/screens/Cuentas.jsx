@@ -818,9 +818,9 @@ function NewAccountModal({ branches = [], onCancel, onCreated }) {
                   style={{
                     flex: '1 1 0', minWidth: 100, padding: '10px 12px', borderRadius: 12,
                     cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
-                    border: branchId === b.id ? `2px solid ${T.copper[500]}` : `1.5px solid ${T.neutral[200]}`,
-                    background: branchId === b.id ? T.copper[50] : '#fff',
-                    color: branchId === b.id ? T.copper[700] : T.neutral[600],
+                    border: String(branchId) === String(b.id) ? `2px solid ${T.copper[500]}` : `1.5px solid ${T.neutral[200]}`,
+                    background: String(branchId) === String(b.id) ? T.copper[50] : '#fff',
+                    color: String(branchId) === String(b.id) ? T.copper[700] : T.neutral[600],
                   }}
                 >
                   {b.name}

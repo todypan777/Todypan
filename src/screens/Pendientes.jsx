@@ -19,10 +19,11 @@ import {
   rejectChangeRequest,
 } from '../productChangeRequests'
 import { getData, getBogotaDateStr, toggleReminderPaid } from '../db'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { doc, updateDoc } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
 
-export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminders, dataTick }) {
+export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminders, dataTick, userDoc }) {
   const { authUser } = useAuth()
 
   const [pendingUsers, setPendingUsers] = useState([])
@@ -30,12 +31,26 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [flaggedSales, setFlaggedSales] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
 
+  // Mismas tres consultas que la campana, y por el mismo motivo hay que
+  // acotarlas: descuadres de caja, ventas marcadas y peticiones de precio son
+  // datos del negocio de un dueño concreto.
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
   useEffect(() => watchAllUsers(list => {
     setPendingUsers(list.filter(u => u.status === 'pending'))
   }), [])
-  useEffect(() => watchSessionsWithPendingReview(setPendingSessions), [])
-  useEffect(() => watchFlaggedSales(setFlaggedSales), [])
-  useEffect(() => watchPendingChangeRequests(setChangeRequests), [])
+  useEffect(
+    () => watchSessionsWithPendingReview(setPendingSessions, parseBranchKey(branchKey)),
+    [branchKey]
+  )
+  useEffect(
+    () => watchFlaggedSales(setFlaggedSales, parseBranchKey(branchKey)),
+    [branchKey]
+  )
+  useEffect(
+    () => watchPendingChangeRequests(setChangeRequests, parseBranchKey(branchKey)),
+    [branchKey]
+  )
 
   // Reminders vencidos — recalcula al cambiar dataTick
   // eslint-disable-next-line react-hooks/exhaustive-deps

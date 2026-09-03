@@ -1976,8 +1976,10 @@ function CallCashierFAB({ authUser, userDoc }) {
     if (!targetBranch) return null
     // La llamada va a la CAJERA, no a una mesera/cocina que también pueda
     // tener turno abierto en la misma panadería. Filtramos por sesión de caja.
+    // Comparacion por texto: con `===`, una sede guardada como "2" no coincide
+    // con el id numerico 2 y no se encuentra la caja, sin ningun error visible.
     return openSessions.find(
-      s => s.branchId === targetBranch.id && s.status === 'open' && (!s.type || s.type === 'cash')
+      s => String(s.branchId) === String(targetBranch.id) && s.status === 'open' && (!s.type || s.type === 'cash')
     ) || null
   }, [openSessions, targetBranch])
 

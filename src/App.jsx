@@ -340,6 +340,7 @@ function AppShell() {
     content = (
       <Dashboard
         onNav={handleNav}
+        userDoc={effectiveUserDoc}
         filter={filter}
         setFilter={setFilter}
         movements={data.movements}
@@ -349,6 +350,7 @@ function AppShell() {
   } else if (tab === 'movements') {
     content = (
       <Movements
+        userDoc={effectiveUserDoc}
         filter={filter}
         setFilter={setFilter}
         movements={data.movements}
@@ -360,7 +362,7 @@ function AppShell() {
     )
   } else if (tab === 'registro') {
     content = (
-      <Registro onRefresh={refresh} />
+      <Registro onRefresh={refresh} userDoc={effectiveUserDoc} />
     )
   } else if (tab === 'team') {
     content = (

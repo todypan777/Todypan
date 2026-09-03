@@ -6,21 +6,29 @@ import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
 import { watchAllSales } from '../sales'
 import ActiveTurnsCard from '../components/ActiveTurnsCard'
+import { visibleBranches, movementMatchesBranch } from '../utils/branchScope'
 import CookAssistCard from '../components/CookAssistCard'
 
-export default function Dashboard({ onNav, filter, setFilter, movements, reminders }) {
+export default function Dashboard({ onNav, filter, setFilter, movements, reminders, userDoc }) {
   const today = todayStr()
   const month = currentMonth()
 
   const [sales, setSales] = useState([])
   useEffect(() => watchAllSales(setSales), [])
 
-  const matchesBranch = (m) => filter === 'all' || m.branch === filter || m.branch === 'both'
-  const matchesSaleBranch = (s) => filter === 'all' || String(s.branchId) === String(filter)
+  // Panaderías visibles. En modo "ver como" queda una sola, y entonces el
+  // filtro se fija en ella: dejarlo en "Ambas" mostraría totales de las dos y
+  // la pantalla mentiría sobre lo que ve el dueño de esa sede.
+  const misSedes = visibleBranches(userDoc, getData().branches || [])
+  const sedeUnica = misSedes.length === 1 ? misSedes[0].id : null
+  const filtroReal = sedeUnica != null ? sedeUnica : filter
+
+  const matchesBranch = (m) => movementMatchesBranch(m, filtroReal)
+  const matchesSaleBranch = (s) => filtroReal === 'all' || String(s.branchId) === String(filtroReal)
   const isActiveSale = (s) => (s.status || 'active') !== 'deleted'
 
   const upcoming = reminders
-    .filter(r => !r.paid && (filter === 'all' || r.branch === filter || r.branch === 'both'))
+    .filter(r => !r.paid && (filtroReal === 'all' || r.branch === filtroReal || r.branch === 'both'))
     .sort((a, b) => a.due.localeCompare(b.due))
     .slice(0, 3)
 
@@ -37,13 +45,15 @@ export default function Dashboard({ onNav, filter, setFilter, movements, reminde
       />
 
       <div style={{ padding: '4px 20px 16px', display: 'flex', gap: 8, overflowX: 'auto' }}>
-        <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
-        {getData().branches.map(br => (
+        {misSedes.length > 1 && (
+          <Chip label="Ambas" active={filter === 'all'} onClick={() => setFilter('all')} />
+        )}
+        {misSedes.map(br => (
           <Chip key={br.id} label={br.name} active={filter === br.id} onClick={() => setFilter(br.id)} />
         ))}
       </div>
 
-      <ActiveTurnsCard />
+      <ActiveTurnsCard viewUserDoc={userDoc} />
 
       <CookAssistCard />
 

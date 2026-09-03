@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Card } from './Atoms'
 import { fmtCOP } from '../utils/format'
 import { useAuth } from '../context/AuthCtx'
+import { visibleBranches } from '../utils/branchScope'
 import {
   watchOpenSessions,
   openSession,
@@ -65,8 +66,13 @@ const ASSIST_STORAGE_KEY = 'todypan_assist_session_id'
  *
  * Reemplaza el flujo anterior donde la cajera abría/cerraba.
  */
-export default function ActiveTurnsCard() {
-  const { authUser, userDoc } = useAuth()
+export default function ActiveTurnsCard({ viewUserDoc }) {
+  const { authUser, userDoc: realUserDoc } = useAuth()
+  // `viewUserDoc` llega desde arriba y puede traer el modo "ver como". Se usa
+  // SOLO para decidir qué panaderías se muestran; la identidad (nombre de quien
+  // asiste un turno, permisos) sigue saliendo del usuario real.
+  const userDoc = realUserDoc
+  const scopeDoc = viewUserDoc || realUserDoc
   const [openSessions, setOpenSessions] = useState([])
   const [allUsers, setAllUsers] = useState([])
   // Turno que el admin está asistiendo. Cuando está poblado se monta la
@@ -184,7 +190,11 @@ export default function ActiveTurnsCard() {
     return () => { cancelled = true }
   }, [openSessions, assistingSession])
 
-  const branches = getData().branches || []
+  // Panaderías que se muestran. En modo "ver como" queda solo la elegida, así
+  // la pantalla de Inicio refleja lo mismo que ve el dueño de esa sede.
+  const branches = visibleBranches(scopeDoc, getData().branches || [])
+  const idsVisibles = new Set(branches.map(b => String(b.id)))
+  const openSessionsVisibles = openSessions.filter(s => idsVisibles.has(String(s.branchId)))
   if (branches.length === 0) return null
 
   const adminName = `${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser?.email || 'Admin'
@@ -193,14 +203,16 @@ export default function ActiveTurnsCard() {
   // 'cash' o legacy sin type). Las sessions de cocina/mesera viven en la lista
   // de "Otros turnos" más abajo.
   const branchRows = branches.map(b => {
-    const session = openSessions.find(s => s.branchId === b.id && (!s.type || s.type === 'cash'))
+    const session = openSessionsVisibles.find(s => s.branchId === b.id && (!s.type || s.type === 'cash'))
     return { branch: b, session }
   })
 
   const occupiedCount = branchRows.filter(r => r.session).length
 
   // Sessions de cocina / domiciliaria activas (cualquier panadería).
-  const nonCashSessions = openSessions.filter(s => s.type === 'kitchen' || s.type === 'waitress')
+  // "Otros turnos" (cocina y mesera) también respeta la vista: si no, al mirar
+  // como una panadería seguían apareciendo los turnos de la otra.
+  const nonCashSessions = openSessionsVisibles.filter(s => s.type === 'kitchen' || s.type === 'waitress')
 
   return (
     <>

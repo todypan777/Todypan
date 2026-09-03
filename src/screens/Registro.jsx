@@ -3,7 +3,8 @@ import { T } from '../tokens'
 import { fmtCOP, fmtDate } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
-import { getBogotaDateStr, getCashFloor } from '../db'
+import { visibleBranches } from '../utils/branchScope'
+import { getBogotaDateStr, getCashFloor, getData } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import { watchClosedSessionsForDate, discardEmptySession, recomputeClosedSession } from '../cashSessions'
 import { watchSessionSales, editSaleItems, deleteSaleAsAdmin } from '../sales'
@@ -15,12 +16,18 @@ import { paymentIcon } from '../utils/payment'
 
 // Registro = visualización del historial de cierres de caja por día.
 
-export default function Registro() {
+export default function Registro({ userDoc }) {
   const todayStr = getBogotaDateStr()
   const [date, setDate] = useState(todayStr)
   const [closures, setClosures] = useState([])
 
   useEffect(() => watchClosedSessionsForDate(date, setClosures), [date])
+
+  // Solo los cierres de las panaderías del usuario. En modo "ver como" queda
+  // la elegida, para que la pantalla refleje lo que ve el dueño de esa sede.
+  const sedesVisibles = visibleBranches(userDoc, getData().branches || [])
+  const idsVisibles = new Set(sedesVisibles.map(b => String(b.id)))
+  const cierres = closures.filter(c => idsVisibles.has(String(c.branchId)))
 
   const isToday = date === todayStr
   const isFuture = date > todayStr
@@ -69,13 +76,13 @@ export default function Registro() {
           <div style={{ fontSize: 36 }}>📅</div>
           <div style={{ fontSize: 14, color: T.neutral[400], marginTop: 12 }}>Fecha futura</div>
         </div>
-      ) : closures.length === 0 ? (
+      ) : cierres.length === 0 ? (
         <div style={{ padding: '48px 24px', textAlign: 'center' }}>
           <div style={{ fontSize: 36 }}>📭</div>
           <div style={{ fontSize: 15, fontWeight: 600, color: T.neutral[600], marginTop: 12 }}>Sin cierres este día</div>
         </div>
       ) : (
-        <ClosuresHistory closures={closures} />
+        <ClosuresHistory closures={cierres} />
       )}
     </div>
   )

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtDate, currentMonth, fmtMonthLabel } from '../utils/format'
+import { visibleBranches } from '../utils/branchScope'
 import { Card, Chip, BranchChip, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { deleteMovement, getData } from '../db'
@@ -26,7 +27,7 @@ function groupLabel(group) {
   return ''
 }
 
-export default function Movements({ filter, setFilter, movements, incomeCats, expenseCats, onNav, onRefresh }) {
+export default function Movements({ filter, setFilter, movements, incomeCats, expenseCats, onNav, onRefresh, userDoc }) {
   const [typeFilter, setTypeFilter] = useState('all')
   const [originFilter, setOriginFilter] = useState('all')  // all | manual | cashier
   const [month, setMonth] = useState(currentMonth())
@@ -37,7 +38,8 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
   const [sales, setSales] = useState([])
   useEffect(() => watchAllSales(setSales), [])
 
-  const branches = getData().branches || []
+  // Solo las panaderías del usuario (o la elegida en modo "ver como").
+  const branches = visibleBranches(userDoc, getData().branches || [])
 
   // ── Convertir ventas en items unificados ──
   const saleItems = useMemo(

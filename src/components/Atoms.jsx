@@ -54,7 +54,11 @@ export function TodyMark({ size = 20, color = T.copper[500] }) {
 export function BranchChip({ branch, size = 'md' }) {
   const b = T.branch[branch] || T.branch.both
   const branches = getData().branches || []
-  const found = branches.find(br => br.id === branch)
+  // Comparacion por texto a proposito. Con `===` una sede guardada como "1" no
+  // coincide con el id numerico 1 y el chip cae al 'Ambas' de reserva: no
+  // falla, MIENTE — dice "Ambas" sobre una fila que es de una sola panaderia.
+  // El resto de branchScope.js ya compara asi, por este mismo motivo.
+  const found = branches.find(br => String(br.id) === String(branch))
   const label = found ? found.name : 'Ambas'
   const pad = size === 'sm' ? '2px 7px' : '3px 9px'
   const fs = size === 'sm' ? 10.5 : 11.5

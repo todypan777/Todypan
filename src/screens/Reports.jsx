@@ -45,7 +45,7 @@ const PAY_META = [
 export default function Reports({ filter, setFilter, movements, incomeCats, expenseCats, userDoc }) {
   const [period, setPeriod] = useState('month')   // 'day' | 'week' | 'month'
   const [month, setMonth] = useState(currentMonth())
-  const [sales, setSales] = useState([])
+  const [venta, setVenta] = useState({ key: null, list: [] })
   const [stock, setStock] = useState([])
   const [cashierProducts, setCashierProducts] = useState([])
 
@@ -64,10 +64,18 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
   // efecto no se re-suscriba en cada render por recibir un array nuevo.
   const myBranchIds = userBranchIds(userDoc)
   const branchKey = myBranchIds ? myBranchIds.join(',') : ''
-  useEffect(
-    () => watchSalesBetween(from, to, setSales, parseBranchKey(branchKey)),
-    [from, to, branchKey]
-  )
+  // Las ventas se guardan CON la etiqueta del rango y las panaderias a las que
+  // pertenecen. Los movimientos ya estan en memoria y cambian al instante; las
+  // ventas tardan lo que tarde Firestore. Sin la etiqueta, en ese hueco se
+  // mezclan los gastos de un periodo con los ingresos de otro y el balance no
+  // corresponde a ninguno de los dos. Estado derivado, no un reset dentro del
+  // efecto: eso costaria un render en cascada.
+  useEffect(() => {
+    const key = `${from}|${to}|${branchKey}`
+    return watchSalesBetween(from, to, list => setVenta({ key, list }), parseBranchKey(branchKey))
+  }, [from, to, branchKey])
+  const cargandoVentas = venta.key !== `${from}|${to}|${branchKey}`
+  const sales = cargandoVentas ? [] : venta.list
   useEffect(() => watchInventoryStockAll(setStock), [])
   useEffect(() => watchCashierProducts(setCashierProducts), [])
 
@@ -219,12 +227,27 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
           background: `linear-gradient(145deg, ${T.neutral[800]} 0%, ${T.neutral[900]} 100%)`,
           color: '#fff',
         }}>
-          <div style={{ fontSize: 11, color: T.copper[300], fontWeight: 600, letterSpacing: 0.8, textTransform: 'uppercase' }}>
+          {/* Mientras faltan las ventas la cifra esta incompleta (solo lleva los
+              movimientos manuales): se atenua y se avisa, en vez de enseñar un
+              provisional que se lee como definitivo. */}
+          <div style={{
+            fontSize: 11, color: T.copper[300], fontWeight: 600, letterSpacing: 0.8,
+            textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 7,
+          }}>
             Le quedó
+            {cargandoVentas && (
+              <span style={{
+                textTransform: 'none', letterSpacing: 0.2, fontWeight: 600,
+                fontSize: 10, color: 'rgba(255,255,255,0.55)',
+              }}>
+                · actualizando…
+              </span>
+            )}
           </div>
           <div style={{
             fontSize: 34, fontWeight: 700, marginTop: 6, fontVariantNumeric: 'tabular-nums',
             letterSpacing: -1, color: utilidadNeta >= 0 ? '#fff' : '#E8A090',
+            opacity: cargandoVentas ? 0.35 : 1, transition: 'opacity 0.18s ease',
           }}>
             {fmtCOP(utilidadNeta, { sign: true })}
           </div>
@@ -232,6 +255,7 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
           <div style={{
             marginTop: 16, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,0.1)',
             display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14,
+            opacity: cargandoVentas ? 0.35 : 1, transition: 'opacity 0.18s ease',
           }}>
             <MiniStat label="Vendió"          value={ventas}        color="#fff"/>
             <MiniStat label="Costo de lo vendido" value={costoVentas} color={T.copper[300]}/>

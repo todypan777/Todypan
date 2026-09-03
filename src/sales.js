@@ -272,9 +272,21 @@ export function watchCashierSalesByDate(cashierUid, dateStr, callback) {
  * cierra. Filtro de campo único (`date`) → Firestore lo indexa solo, no
  * requiere índice compuesto. No muta nada.
  */
-export function watchSalesByDate(dateStr, callback) {
+export function watchSalesByDate(dateStr, callback, branchIds = null) {
   if (!dateStr) { callback([]); return () => {} }
-  const q = query(salesCol(), where('date', '==', dateStr))
+  // Igual que watchSalesBetween: si el usuario tiene panaderias asignadas, la
+  // consulta DEBE pedir solo esas. No es solo cosmetico —las reglas de
+  // Firestore rechazan la consulta ENTERA si pudiera devolver documentos que
+  // el usuario no puede leer, asi que sin este filtro un dueño acotado se
+  // queda con la pantalla vacia y sin ningun mensaje de error.
+  //
+  // Dos igualdades (date + branchId) las resuelve el indice branchId+date que
+  // ya existe para watchSalesBetween; no hace falta uno nuevo.
+  const parts = [where('date', '==', dateStr)]
+  if (Array.isArray(branchIds) && branchIds.length > 0) {
+    parts.push(where('branchId', 'in', branchIds))
+  }
+  const q = query(salesCol(), ...parts)
   return onSnapshot(
     q,
     snap => {
@@ -335,7 +347,11 @@ export function watchSalesBetween(fromDate, toDate, callback, branchIds = null) 
       // tambien —las reglas rechazan la consulta sin el filtro— y ahi si no
       // hay atajo: el indice es obligatorio.
       if (err?.code === 'failed-precondition' && scoped !== base) {
-        console.warn('[sales] falta el indice branchId+date; filtrando en cliente')
+        // Se imprime el mensaje ORIGINAL de Firestore, no solo el resumen: ahi
+        // viene el enlace "create index" con la definicion exacta que falta.
+        // Sin el, un indice que existe pero no coincide con la consulta es
+        // indistinguible de uno que todavia se esta construyendo.
+        console.warn('[sales] falta el indice branchId+date; filtrando en cliente.', err?.message || err)
         corte = onSnapshot(
           query(salesCol(), ...base),
           snap => emit(snap, true),
@@ -447,8 +463,16 @@ export async function convertTransferToCash(saleId, { byUid, byName } = {}) {
 }
 
 /** Suscripción a TODAS las ventas (para admin, futuras fases). */
-export function watchAllSales(callback) {
-  const q = query(salesCol())
+export function watchAllSales(callback, branchIds = null) {
+  // Sin acotar por panaderia esta consulta le devuelve `permission-denied` a
+  // cualquier dueño que tenga `branchIds`: las reglas rechazan la consulta
+  // ENTERA si pudiera incluir documentos ajenos, y el catch de abajo emite una
+  // lista vacia — la pantalla se queda en blanco sin decir por que.
+  //
+  // Igualdad sobre un solo campo: no necesita indice compuesto.
+  const q = branchIds && branchIds.length > 0
+    ? query(salesCol(), where('branchId', 'in', branchIds))
+    : query(salesCol())
   return onSnapshot(
     q,
     snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),

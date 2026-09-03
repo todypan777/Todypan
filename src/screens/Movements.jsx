@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtDate, currentMonth, fmtMonthLabel } from '../utils/format'
-import { visibleBranches, movementMatchesBranch, userBranchIds, parseBranchKey } from '../utils/branchScope'
+import { visibleBranches, movementMatchesBranch, movementBranch, userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { Card, Chip, BranchChip, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { deleteMovement, getData } from '../db'
@@ -20,14 +20,12 @@ function allCatLabel(cat, incomeCats, expenseCats) {
   return all.find(c => c.id === cat)?.label || cat
 }
 
-function groupLabel(group) {
-  if (group === 'proveedores') return 'Proveedores'
-  if (group === 'operacion') return 'Operación'
-  if (group === 'empresa') return 'Empresa'
-  return ''
-}
+// Referencia estable para "todavia no hay ventas". Un `[]` escrito en el render
+// es un array NUEVO cada vez, y eso invalida el useMemo que depende de el en
+// cada pasada.
+const SIN_VENTAS = Object.freeze([])
 
-export default function Movements({ filter, setFilter, movements, incomeCats, expenseCats, onNav, onRefresh, userDoc }) {
+export default function Movements({ filter, setFilter, movements, incomeCats, expenseCats, onRefresh, userDoc }) {
   const [typeFilter, setTypeFilter] = useState('all')
   const [originFilter, setOriginFilter] = useState('all')  // all | manual | cashier
   const [month, setMonth] = useState(currentMonth())
@@ -41,13 +39,30 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
   // en pantalla: eso agotaba la cuota diaria de Firestore, y a un usuario
   // acotado a una sede las reglas le rechazan esa consulta completa —se
   // quedaba sin ventas, sin ningun mensaje de error.
-  const [sales, setSales] = useState([])
+  // Las ventas se guardan CON la etiqueta de a que mes y a que panaderias
+  // pertenecen. Los movimientos ya estan en memoria y cambian de golpe al
+  // navegar; las ventas tardan lo que tarde Firestore. Sin la etiqueta, en ese
+  // hueco el balance suma los gastos del mes que se abre con los ingresos del
+  // que se venia viendo y enseña una cifra que no es de ningun mes — se vio en
+  // pantalla: agosto de una sede aparecio en -$11M antes de asentarse en +$27M.
+  //
+  // Comparar la etiqueta con lo que se esta pidiendo dice si lo que hay sirve.
+  // Es estado DERIVADO, no un `setSales([])` dentro del efecto: eso obligaria a
+  // un render extra en cascada y React lo marca.
   const alcance = userBranchIds(userDoc)
   const branchKey = alcance ? alcance.join(',') : ''
-  useEffect(
-    () => watchSalesBetween(`${month}-01`, `${month}-31`, setSales, parseBranchKey(branchKey)),
-    [month, branchKey]
-  )
+  const [venta, setVenta] = useState({ key: null, list: [] })
+  useEffect(() => {
+    const key = `${month}|${branchKey}`
+    return watchSalesBetween(
+      `${month}-01`,
+      `${month}-31`,
+      list => setVenta({ key, list }),
+      parseBranchKey(branchKey),
+    )
+  }, [month, branchKey])
+  const cargandoVentas = venta.key !== `${month}|${branchKey}`
+  const sales = cargandoVentas ? SIN_VENTAS : venta.list
 
   // Solo las panaderias del usuario (o la elegida en modo "ver como").
   //
@@ -90,7 +105,12 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
       type: m.type,
       date: m.date,
       amount: Number(m.amount) || 0,
-      branch: m.branch,
+      // Sede ya resuelta: los movimientos historicos guardan `branch: 'both'`
+      // porque no habia selector, y el filtro de esta pantalla ya los cuenta
+      // como de la sede antigua. Si aqui se dejara el 'both' en crudo, la fila
+      // se veria etiquetada "Ambas" dentro de la vista de UNA panaderia —
+      // contradiciendo al total que la incluye. movementBranch es idempotente.
+      branch: movementBranch(m),
       cat: m.cat,
       group: m.group,
       note: m.note,
@@ -142,10 +162,17 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
   })
   const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a))
 
+  // Aritmetica de meses sin pasar por Date: `toISOString()` convierte a UTC y
+  // en un dispositivo por delante de Greenwich devuelve el mes ANTERIOR. Es la
+  // misma trampa que ya corrompio fechas de gastos reales. Aqui el mes es solo
+  // texto 'YYYY-MM', asi que se calcula con numeros y no hay zona horaria que
+  // valga.
   function changeMonth(delta) {
     const [y, m] = month.split('-').map(Number)
-    const d = new Date(y, m - 1 + delta, 1)
-    setMonth(d.toISOString().slice(0, 7))
+    const total = y * 12 + (m - 1) + delta
+    const ny = Math.floor(total / 12)
+    const nm = total % 12 + 1
+    setMonth(`${ny}-${String(nm).padStart(2, '0')}`)
   }
 
   function handleDelete(id) {
@@ -154,7 +181,6 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
     onRefresh?.()
   }
 
-  const isPrevMonth = () => true
   const isNextMonth = month >= currentMonth()
   const net = totalInc - totalExp
 
@@ -186,15 +212,33 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
             </button>
           </div>
 
-          {/* Hero: neto en grande */}
+          {/* Hero: neto en grande.
+              Mientras faltan las ventas la cifra esta incompleta —solo lleva
+              los movimientos manuales—, asi que se atenua y se avisa. Enseñarla
+              en firme la haria pasar por definitiva, y en una pantalla de plata
+              un numero provisional sin marcar se lee como una perdida real. */}
           <div style={{ padding: '18px 20px 14px' }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6, color: T.copper[300], textTransform: 'uppercase' }}>
+            <div style={{
+              fontSize: 10.5, fontWeight: 700, letterSpacing: 0.6,
+              color: T.copper[300], textTransform: 'uppercase',
+              display: 'flex', alignItems: 'center', gap: 7,
+            }}>
               Balance del mes
+              {cargandoVentas && (
+                <span style={{
+                  textTransform: 'none', letterSpacing: 0.2, fontWeight: 600,
+                  fontSize: 10, color: 'rgba(255,255,255,0.55)',
+                }}>
+                  · actualizando…
+                </span>
+              )}
             </div>
             <div style={{
               fontSize: 36, fontWeight: 800, letterSpacing: -1.2, marginTop: 4,
               fontVariantNumeric: 'tabular-nums',
               color: net >= 0 ? '#fff' : '#FFB4A8',
+              opacity: cargandoVentas ? 0.35 : 1,
+              transition: 'opacity 0.18s ease',
             }}>
               {net >= 0 ? '+ ' : '− '}{fmtCOP(Math.abs(net))}
             </div>
@@ -209,7 +253,11 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>
                 Ingresos
               </div>
-              <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4, color: '#9DCC9C', fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
+              <div style={{
+                fontSize: 17, fontWeight: 800, marginTop: 4, color: '#9DCC9C',
+                fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4,
+                opacity: cargandoVentas ? 0.35 : 1, transition: 'opacity 0.18s ease',
+              }}>
                 {fmtCOP(totalInc)}
               </div>
             </div>
@@ -217,7 +265,11 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.6, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase' }}>
                 Gastos
               </div>
-              <div style={{ fontSize: 17, fontWeight: 800, marginTop: 4, color: T.copper[300], fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4 }}>
+              <div style={{
+                fontSize: 17, fontWeight: 800, marginTop: 4, color: T.copper[300],
+                fontVariantNumeric: 'tabular-nums', letterSpacing: -0.4,
+                opacity: cargandoVentas ? 0.35 : 1, transition: 'opacity 0.18s ease',
+              }}>
                 {fmtCOP(totalExp)}
               </div>
             </div>
@@ -466,10 +518,6 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
       </div>
     )
   }
-}
-
-const monthBtnStyle = {
-  background: 'none', border: 'none', padding: '8px 12px', cursor: 'pointer',
 }
 
 function navBtnStyle() {

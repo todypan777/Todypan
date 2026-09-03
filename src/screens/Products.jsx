@@ -7,6 +7,7 @@ import { addProduct, updateProduct, deleteProduct, getData, ensureSupplier } fro
 import { useIsDesktop } from '../context/DesktopCtx'
 import { watchCashierProducts, deleteCashierProduct } from '../products'
 import { watchAllSales } from '../sales'
+import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { supplierUnitCost, productUnitCost } from '../utils/cost'
 
 // ── Helpers de cálculo ─────────────────────────────────────────
@@ -311,7 +312,7 @@ function PricesByBranchBlock({ product, setterFor }) {
 }
 
 // ── Componente principal ───────────────────────────────────────
-export default function Products({ products, onRefresh }) {
+export default function Products({ products, onRefresh, userDoc }) {
   const isDesktop = useIsDesktop()
   const [search, setSearch] = useState('')
   // Filtro por estado de configuración: 'all' | 'configured' | 'pending'.
@@ -325,7 +326,15 @@ export default function Products({ products, onRefresh }) {
   const [sales, setSales] = useState([])
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
-  useEffect(() => watchAllSales(setSales), [])
+  // Solo las ventas de las panaderias del usuario. La estimacion de abajo ya
+  // agrupa por sede, asi que acotar no le cambia el resultado: simplemente deja
+  // de mirar productos de la otra panaderia, que no le incumben.
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
+  useEffect(
+    () => watchAllSales(setSales, parseBranchKey(branchKey)),
+    [branchKey]
+  )
 
   // Backfill: para precios viejos (sin atribución guardada) deducimos quién
   // los puso a partir de la venta MÁS ANTIGUA de ese producto en esa panadería

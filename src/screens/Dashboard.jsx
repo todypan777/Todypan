@@ -4,17 +4,29 @@ import { fmtCOP, todayStr, currentMonth, fmtMonthLabel } from '../utils/format'
 import { Card, SectionHeader, Chip, BranchChip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { getData } from '../db'
-import { watchAllSales } from '../sales'
+import { watchSalesByDate } from '../sales'
 import ActiveTurnsCard from '../components/ActiveTurnsCard'
-import { visibleBranches, movementMatchesBranch } from '../utils/branchScope'
+import { visibleBranches, movementMatchesBranch, userBranchIds, parseBranchKey } from '../utils/branchScope'
 import CookAssistCard from '../components/CookAssistCard'
 
 export default function Dashboard({ onNav, filter, setFilter, movements, reminders, userDoc }) {
   const today = todayStr()
   const month = currentMonth()
 
+  // Ventas de HOY y solo de las panaderias del usuario.
+  //
+  // Antes se traia la coleccion ENTERA (`watchAllSales`) para quedarse con las
+  // de un solo dia: eso agota la cuota diaria de Firestore, y a un dueño
+  // acotado a una sede las reglas le rechazan esa consulta completa —Inicio se
+  // le quedaria en ceros, sin ningun mensaje de error. Es el mismo fallo que ya
+  // se habia corregido en Movimientos.
   const [sales, setSales] = useState([])
-  useEffect(() => watchAllSales(setSales), [])
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
+  useEffect(
+    () => watchSalesByDate(today, setSales, parseBranchKey(branchKey)),
+    [today, branchKey]
+  )
 
   // Panaderías visibles. En modo "ver como" queda una sola, y entonces el
   // filtro se fija en ella: dejarlo en "Ambas" mostraría totales de las dos y

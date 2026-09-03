@@ -335,6 +335,23 @@ function AppShell() {
 
   const activeTab = ['home','registro','team','more'].includes(tab) ? tab : 'more'
 
+  // Movimientos se alcanza por dos rutas (el sidebar de escritorio manda
+  // tab='movements'; "Mas > Movimientos" manda moreSub='movements'). Estuvo
+  // escrito dos veces y a una de las copias se le olvido `userDoc`: sin el,
+  // la pantalla cree que el usuario no tiene restriccion y mezcla el dinero
+  // de las dos panaderias. Una sola definicion para las dos rutas.
+  const movementsScreen = (
+    <Movements
+      userDoc={effectiveUserDoc}
+      filter={filter}
+      setFilter={setFilter}
+      movements={data.movements}
+      incomeCats={data.incomeCats}
+      expenseCats={data.expenseCats}
+      onRefresh={refresh}
+    />
+  )
+
   let content
   if (tab === 'home') {
     content = (
@@ -348,18 +365,7 @@ function AppShell() {
       />
     )
   } else if (tab === 'movements') {
-    content = (
-      <Movements
-        userDoc={effectiveUserDoc}
-        filter={filter}
-        setFilter={setFilter}
-        movements={data.movements}
-        incomeCats={data.incomeCats}
-        expenseCats={data.expenseCats}
-        onNav={handleNav}
-        onRefresh={refresh}
-      />
-    )
+    content = movementsScreen
   } else if (tab === 'registro') {
     content = (
       <Registro onRefresh={refresh} userDoc={effectiveUserDoc} />
@@ -375,17 +381,7 @@ function AppShell() {
     )
   } else if (tab === 'more') {
     if (moreSub === 'movements') {
-      content = (
-        <Movements
-          filter={filter}
-          setFilter={setFilter}
-          movements={data.movements}
-          incomeCats={data.incomeCats}
-          expenseCats={data.expenseCats}
-          onNav={handleNav}
-          onRefresh={refresh}
-        />
-      )
+      content = movementsScreen
     } else if (moreSub === 'reports') {
       content = (
         <Reports
@@ -418,6 +414,7 @@ function AppShell() {
       content = (
         <Products
           products={data.products || []}
+          userDoc={effectiveUserDoc}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />
@@ -448,7 +445,7 @@ function AppShell() {
         />
       )
     } else if (moreSub === 'transferencias') {
-      content = <Transferencias />
+      content = <Transferencias userDoc={effectiveUserDoc} />
     } else if (moreSub === 'tasks') {
       content = (
         <Tasks

@@ -1019,8 +1019,12 @@ function DeleteSaleModal({ sale, onCancel, onDeleted }) {
 // ──────────────────────────────────────────────────────────────
 function EditSaleModal({ sale, onCancel, onSaved }) {
   const { authUser } = useAuth()
+  // Inicializador perezoso (una funcion, no el valor). Sin el, esta expresion
+  // —Date.now() incluido— se evalua en CADA render aunque React descarte el
+  // resultado despues del primero: trabajo tirado y una impureza que React
+  // marca. Con la funcion se ejecuta una sola vez, al montar.
   const [items, setItems] = useState(
-    (sale.items || []).map((it, i) => ({ ...it, key: `existing_${i}_${Date.now()}` }))
+    () => (sale.items || []).map((it, i) => ({ ...it, key: `existing_${i}_${Date.now()}` }))
   )
   const [searchOpen, setSearchOpen] = useState(false)
   const [busy, setBusy] = useState(false)

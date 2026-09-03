@@ -17,6 +17,7 @@ import {
 } from '../sales'
 import { recomputeClosedSession } from '../cashSessions'
 import { digitalAmount } from '../utils/payment'
+import { visibleBranches, userBranchIds, parseBranchKey } from '../utils/branchScope'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Confirmación de transferencias (admin)
@@ -36,13 +37,16 @@ const METHODS = [
 const VALUE_TOLERANCE = 500   // pesos hacia arriba/abajo
 const TIME_TOLERANCE = 15     // minutos hacia adelante/atrás
 
-export default function Transferencias() {
+export default function Transferencias({ userDoc }) {
   const todayStr = getBogotaDateStr()
   const [date, setDate] = useState(todayStr)
   const [sales, setSales] = useState([])
   const [detail, setDetail] = useState(null)   // venta a revisar
   const [searchMethod, setSearchMethod] = useState(null) // 'nequi' | 'daviplata' para el buscador
-  const branches = getData().branches || []
+  // Solo las panaderias del usuario: si no, un dueño sin `branchIds` veria las
+  // transferencias del otro (monto, cajera y hora), que es justo lo que la
+  // separacion promete que no pasa.
+  const branches = visibleBranches(userDoc, getData().branches || [])
 
   // Control automático: se fija la fecha de inicio la primera vez que se abre.
   useEffect(() => { ensureTransfersStartDate() }, [])
@@ -50,7 +54,14 @@ export default function Transferencias() {
   // Antes del inicio del control automático = solo historial (sin pendientes/rojo).
   const beforeStart = date < startDate
 
-  useEffect(() => watchSalesByDate(date, setSales), [date])
+  // La clave de texto (join) da al efecto una dependencia estable; parseBranchKey
+  // le devuelve el tipo numerico, que es el que Firestore necesita para comparar.
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
+  useEffect(
+    () => watchSalesByDate(date, setSales, parseBranchKey(branchKey)),
+    [date, branchKey]
+  )
 
   const isToday = date === todayStr
   const isFuture = date > todayStr

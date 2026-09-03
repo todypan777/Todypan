@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useRef } from 'react'
-import { onAuthChange, consumeRedirectResult, ADMIN_EMAIL } from '../auth'
+import { onAuthChange, consumeRedirectResult, isRootEmail } from '../auth'
 import { firebaseAuth } from '../firebase'
 import { watchUserDoc, bootstrapAdminIfNeeded } from '../users'
 import { isDataSaverEnabled, disableDataSaver, applyDataSaverOnBoot } from '../utils/network'
@@ -200,7 +200,7 @@ export function AuthProvider({ children }) {
       if (doc) writeUserDocCache(authUser.uid, doc)
 
       // Si es admin email y no tiene doc → bootstrap
-      if (!doc && authUser.email === ADMIN_EMAIL && bootstrappedFor.current !== authUser.uid) {
+      if (!doc && isRootEmail(authUser.email) && bootstrappedFor.current !== authUser.uid) {
         bootstrappedFor.current = authUser.uid
         bootstrapAdminIfNeeded(authUser).catch(err => {
           console.error('[Auth] bootstrap admin falló:', err)

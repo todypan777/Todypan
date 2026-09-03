@@ -7,7 +7,23 @@ import {
 } from 'firebase/auth'
 import { firebaseAuth, googleProvider } from './firebase'
 
-export const ADMIN_EMAIL = 'todypan777@gmail.com'
+// Correos DUEÑOS del sistema. Entran siempre, ven las dos panaderías y no
+// quedan sujetos al alcance por sede: son quienes mantienen la app.
+//
+// Es una lista y no un solo correo porque quien desarrolla necesita su propia
+// cuenta para probar sin usar la del negocio.
+export const ROOT_EMAILS = [
+  'todypan777@gmail.com',
+  'sinfiniity@gmail.com',
+]
+
+/** True si el correo es de un dueño del sistema. */
+export function isRootEmail(email) {
+  return !!email && ROOT_EMAILS.includes(String(email).toLowerCase())
+}
+
+// Compatibilidad: varias pantallas todavía comparan contra un único correo.
+export const ADMIN_EMAIL = ROOT_EMAILS[0]
 
 const isStandalonePWA = () => {
   if (typeof window === 'undefined') return false
@@ -103,5 +119,5 @@ export function onAuthChange(callback) {
 }
 
 export function isAdmin(user) {
-  return !!user && user.email === ADMIN_EMAIL
+  return isRootEmail(user?.email)
 }

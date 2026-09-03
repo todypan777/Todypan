@@ -6,10 +6,11 @@ import { useAuth } from '../context/AuthCtx'
 import { getData } from '../db'
 import { visibleBranches } from '../utils/branchScope'
 import { anyBranchHasFeature } from '../utils/features'
+import BranchViewSwitcher from '../components/BranchViewSwitcher'
 import { signOut } from '../auth'
 import ContactSupportButton from '../components/ContactSupportButton'
 
-export default function More({ onOpen, userDoc }) {
+export default function More({ onOpen, userDoc, canViewAs, allBranches, viewAs, onViewAs }) {
   const { user } = useAuth()
   const [signingOut, setSigningOut] = useState(false)
   const [confirmSignOut, setConfirmSignOut] = useState(false)
@@ -148,6 +149,16 @@ export default function More({ onOpen, userDoc }) {
   return (
     <div style={{ paddingBottom: 110 }}>
       <ScreenHeader title="Más" subtitle="TodyPan" right={<TodyMark size={30}/>}/>
+
+      {/* Solo para los dueños del sistema: permite ver la app tal cual la ve
+          el dueño de cada panadería, sin tener que entrar con su cuenta. */}
+      {canViewAs && (
+        <BranchViewSwitcher
+          branches={allBranches}
+          value={viewAs}
+          onChange={onViewAs}
+        />
+      )}
 
       {/* Bloque de cuenta */}
       {user && (

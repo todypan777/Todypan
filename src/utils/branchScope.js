@@ -83,3 +83,23 @@ export function parseBranchKey(key) {
     return Number.isFinite(n) && String(n) === v ? n : v
   })
 }
+
+// Panaderia de una CUENTA. Las tres cuentas historicas (Nequi, Daviplata,
+// Efectivo) se crearon cuando el negocio era uno solo y no traen sede: se leen
+// como de Panaderia Iglesia, igual que los movimientos y los fiados viejos.
+export function accountBranch(a) {
+  return a?.branchId ?? LEGACY_MOVEMENT_BRANCH
+}
+
+/** Cuentas que el usuario puede ver, segun sus panaderias. */
+export function visibleAccounts(userDoc, accounts = []) {
+  const allowed = userBranchIds(userDoc)
+  if (allowed === null) return accounts
+  return accounts.filter(a => allowed.some(b => String(b) === String(accountBranch(a))))
+}
+
+/** Cuentas de UNA panaderia concreta (para el selector de movimientos). */
+export function accountsOfBranch(accounts = [], branchId) {
+  if (branchId == null) return accounts
+  return accounts.filter(a => String(accountBranch(a)) === String(branchId))
+}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T, BRANCH_PALETTE } from '../tokens'
+import { visibleAccounts, visibleBranches } from '../utils/branchScope'
 import { fmtCOP } from '../utils/format'
 import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
@@ -16,15 +17,19 @@ import {
 const EMOJI_OPTIONS = ['📱', '💵', '🏦', '💳', '💰', '🪙', '📲', '🧾', '💼', '🐷']
 const COLOR_KEYS = Object.keys(BRANCH_PALETTE)
 
-export default function Cuentas() {
+export default function Cuentas({ userDoc }) {
   const isDesktop = useIsDesktop()
   // El doc compartido se refresca con watchSharedData; usamos un tick para
   // repintar cuando llega un cambio (de este u otro dispositivo).
   const [, setTick] = useState(0)
   useEffect(() => watchSharedData(() => setTick(t => t + 1)), [])
 
-  const accounts = getAccounts()
+  // Solo las cuentas de las panaderías de este usuario. El Nequi de un dueño no
+  // es el del otro: son personas y números distintos.
+  const accounts = visibleAccounts(userDoc, getAccounts())
+  const misSedes = visibleBranches(userDoc, getData().branches || [])
   const [detail, setDetail] = useState(null)      // cuenta abierta en modal
+  const [creating, setCreating] = useState(false)  // modal de cuenta nueva
   const [visible, setVisible] = useState(15)      // cuántos movimientos del feed se muestran
 
   const total = useMemo(
@@ -95,7 +100,30 @@ export default function Cuentas() {
         {accounts.map(acc => (
           <AccountCard key={acc.id} account={acc} onOpen={() => setDetail(acc)} />
         ))}
+
+        {/* El modal de cuenta nueva existía pero nunca se había conectado: no
+            había forma de crear una cuenta desde la app. Hace falta ahora, que
+            cada panadería lleva las suyas. */}
+        <button
+          onClick={() => setCreating(true)}
+          style={{
+            padding: '16px', borderRadius: 16, cursor: 'pointer',
+            border: `1.5px dashed ${T.neutral[300]}`, background: 'transparent',
+            color: T.neutral[500], fontFamily: 'inherit',
+            fontSize: 14, fontWeight: 600, minHeight: 64,
+          }}
+        >
+          ＋ Nueva cuenta
+        </button>
       </div>
+
+      {creating && (
+        <NewAccountModal
+          branches={misSedes}
+          onCancel={() => setCreating(false)}
+          onCreated={() => { setCreating(false); setTick(t => t + 1) }}
+        />
+      )}
 
       {/* Feed de movimientos */}
       <div style={{ padding: '22px 16px 0' }}>
@@ -698,16 +726,22 @@ function MovementRow({ mov, isLast, onDelete }) {
 // ──────────────────────────────────────────────────────────────
 // Modal de cuenta nueva
 // ──────────────────────────────────────────────────────────────
-function NewAccountModal({ onCancel, onCreated }) {
+function NewAccountModal({ branches = [], onCancel, onCreated }) {
   const [name, setName] = useState('')
+  const [branchId, setBranchId] = useState(branches[0]?.id ?? null)
   const [emoji, setEmoji] = useState('💳')
   const [colorKey, setColorKey] = useState('copper')
   const [balanceStr, setBalanceStr] = useState('')
 
-  const valid = name.trim().length >= 1
+  // Sin panadería no se puede crear: una cuenta que no pertenece a ninguna sede
+  // no se podría separar después.
+  const valid = name.trim().length >= 1 && branchId != null
   function handleCreate() {
     if (!valid) return
-    addAccount({ name, emoji, colorKey, balance: Number(balanceStr.replace(/[^0-9]/g, '')) || 0 })
+    addAccount({
+      name, emoji, colorKey, branchId,
+      balance: Number(balanceStr.replace(/[^0-9]/g, '')) || 0,
+    })
     onCreated()
   }
 
@@ -772,6 +806,29 @@ function NewAccountModal({ onCancel, onCreated }) {
             />
           </div>
         </div>
+
+        {branches.length > 1 && (
+          <div style={{ marginTop: 12 }}>
+            <Label>¿De cuál panadería?</Label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {branches.map(b => (
+                <button
+                  key={b.id}
+                  onClick={() => setBranchId(b.id)}
+                  style={{
+                    flex: '1 1 0', minWidth: 100, padding: '10px 12px', borderRadius: 12,
+                    cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+                    border: branchId === b.id ? `2px solid ${T.copper[500]}` : `1.5px solid ${T.neutral[200]}`,
+                    background: branchId === b.id ? T.copper[50] : '#fff',
+                    color: branchId === b.id ? T.copper[700] : T.neutral[600],
+                  }}
+                >
+                  {b.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
           <button onClick={onCancel} style={btnSecondary}>Cancelar</button>

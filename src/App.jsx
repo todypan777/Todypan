@@ -114,7 +114,10 @@ function AuthGate() {
   // la red y authUser llega antes que el snapshot del listener de Firestore.
   const cachedDoc = !ctxUserDoc && authUser ? readUserDocCache(authUser.uid) : null
   const userDoc = ctxUserDoc || cachedDoc
-  const isAdmin = ctxIsAdmin || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
+  // El correo raíz es admin aunque su documento diga otra cosa (ver AuthCtx).
+  const isAdmin = ctxIsAdmin
+    || isRootEmail(authUser?.email)
+    || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
   // Cualquier miembro del equipo que no sea admin. Acepta el rol nuevo 'staff'
   // y también los roles viejos 'cashier'/'cook' por compat (data legacy).
   const isStaff = !!userDoc

@@ -77,7 +77,24 @@ export async function createPendingUser(authUser, nombre, apellido) {
 export async function bootstrapAdminIfNeeded(authUser) {
   if (!authUser || !isRootEmail(authUser.email)) return
   const snap = await getDoc(userRef(authUser.uid))
-  if (snap.exists()) return
+
+  // El documento YA existe pero no es de admin: pasa cuando el correo se
+  // agrega a ROOT_EMAILS despues de que esa persona ya se habia registrado
+  // como empleada. Sin esto se quedaria viendo la pantalla de "no tienes
+  // turno abierto" para siempre, porque el arranque solo creaba documentos
+  // nuevos y nunca corregia los existentes.
+  if (snap.exists()) {
+    const d = snap.data() || {}
+    if (d.role !== 'admin' || d.status !== 'approved') {
+      await updateDoc(userRef(authUser.uid), {
+        role: 'admin',
+        status: 'approved',
+        approvedAt: serverTimestamp(),
+        approvedBy: authUser.uid,
+      })
+    }
+    return
+  }
 
   const data = {
     email: authUser.email,

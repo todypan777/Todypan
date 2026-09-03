@@ -200,7 +200,9 @@ export function AuthProvider({ children }) {
       if (doc) writeUserDocCache(authUser.uid, doc)
 
       // Si es admin email y no tiene doc → bootstrap
-      if (!doc && isRootEmail(authUser.email) && bootstrappedFor.current !== authUser.uid) {
+      const necesitaAscenso = isRootEmail(authUser.email)
+        && (!doc || doc.role !== 'admin' || doc.status !== 'approved')
+      if (necesitaAscenso && bootstrappedFor.current !== authUser.uid) {
         bootstrappedFor.current = authUser.uid
         bootstrapAdminIfNeeded(authUser).catch(err => {
           console.error('[Auth] bootstrap admin falló:', err)
@@ -214,7 +216,13 @@ export function AuthProvider({ children }) {
   }, [authUser])
 
   const loading = authLoading || (authUser && docLoading)
-  const isAdmin = !!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved'
+  // Un correo dueño del sistema es admin SIEMPRE, diga lo que diga su
+  // documento. Si no, alguien que se hubiera registrado antes como empleada
+  // se quedaria atrapada en la pantalla de "sin turno" hasta que alguien le
+  // corrigiera el rol a mano — justo el caso que no puede pasarle a quien
+  // mantiene la app.
+  const isAdmin = isRootEmail(authUser?.email)
+    || (!!userDoc && userDoc.role === 'admin' && userDoc.status === 'approved')
   const isCashier = !!userDoc && userDoc.role === 'cashier' && userDoc.status === 'approved'
   const isCook = !!userDoc && userDoc.role === 'cook' && userDoc.status === 'approved'
 

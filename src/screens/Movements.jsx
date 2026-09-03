@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, fmtDate, currentMonth, fmtMonthLabel } from '../utils/format'
-import { visibleBranches } from '../utils/branchScope'
+import { visibleBranches, movementMatchesBranch, userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { Card, Chip, BranchChip, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { deleteMovement, getData } from '../db'
-import { watchAllSales } from '../sales'
+import { watchSalesBetween } from '../sales'
 import { SaleDetailModal } from './Ventas'
 
 function allCatLabel(cat, incomeCats, expenseCats) {
@@ -34,12 +34,30 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
   const [confirmDel, setConfirmDel] = useState(null)
   const [openSale, setOpenSale] = useState(null)
 
-  // Ventas en tiempo real (modelo devengado)
+  // Ventas en tiempo real (modelo devengado).
+  //
+  // Solo las del mes que se esta mirando y solo las de las panaderias del
+  // usuario. Antes se traia la coleccion ENTERA para luego descartar casi todo
+  // en pantalla: eso agotaba la cuota diaria de Firestore, y a un usuario
+  // acotado a una sede las reglas le rechazan esa consulta completa —se
+  // quedaba sin ventas, sin ningun mensaje de error.
   const [sales, setSales] = useState([])
-  useEffect(() => watchAllSales(setSales), [])
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
+  useEffect(
+    () => watchSalesBetween(`${month}-01`, `${month}-31`, setSales, parseBranchKey(branchKey)),
+    [month, branchKey]
+  )
 
-  // Solo las panaderías del usuario (o la elegida en modo "ver como").
+  // Solo las panaderias del usuario (o la elegida en modo "ver como").
+  //
+  // `filter` lo comparten Inicio, Movimientos y Balance, asi que puede venir en
+  // 'all' de otra pantalla. Cuando el usuario solo ve UNA sede, ese 'all' no
+  // puede significar "las dos": se fuerza a su panaderia. Sin esto la pantalla
+  // muestra el dinero del otro dueño aunque la lista de chips ya este acotada.
   const branches = visibleBranches(userDoc, getData().branches || [])
+  const sedeUnica = branches.length === 1 ? branches[0].id : null
+  const filtroReal = sedeUnica != null ? sedeUnica : filter
 
   // ── Convertir ventas en items unificados ──
   const saleItems = useMemo(
@@ -89,12 +107,14 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
     const all = [...movementItems, ...saleItems]
     return all.filter(it => {
       if (!it.date?.startsWith(month)) return false
-      // Branch
-      if (filter !== 'all') {
+      // Panaderia. Los movimientos historicos guardan branch: 'both' porque no
+      // habia selector; movementMatchesBranch los atribuye a la sede antigua en
+      // vez de dejarlos aparecer en las dos.
+      if (filtroReal !== 'all') {
         if (it.source === 'sale') {
-          if (String(it.branch) !== String(filter)) return false
-        } else {
-          if (it.branch !== filter && it.branch !== 'both') return false
+          if (String(it.branch) !== String(filtroReal)) return false
+        } else if (!movementMatchesBranch(it, filtroReal)) {
+          return false
         }
       }
       // Type
@@ -109,7 +129,7 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
       if (dateCompare !== 0) return dateCompare
       return b.createdMs - a.createdMs
     })
-  }, [movementItems, saleItems, month, filter, typeFilter, originFilter])
+  }, [movementItems, saleItems, month, filtroReal, typeFilter, originFilter])
 
   const totalInc = filtered.filter(x => x.type === 'income').reduce((s, x) => s + x.amount, 0)
   const totalExp = filtered.filter(x => x.type === 'expense').reduce((s, x) => s + x.amount, 0)
@@ -233,12 +253,17 @@ export default function Movements({ filter, setFilter, movements, incomeCats, ex
             ]}
           />
           <CompactSelect
-            value={String(filter)}
+            value={String(filtroReal)}
             onChange={v => setFilter(v === 'all' ? 'all' : Number(v))}
-            options={[
-              { value: 'all', label: 'Todas las panaderías' },
-              ...branches.map(br => ({ value: String(br.id), label: br.name })),
-            ]}
+            disabled={sedeUnica != null}
+            options={
+              sedeUnica != null
+                ? branches.map(br => ({ value: String(br.id), label: br.name }))
+                : [
+                    { value: 'all', label: 'Todas las panaderías' },
+                    ...branches.map(br => ({ value: String(br.id), label: br.name })),
+                  ]
+            }
           />
         </div>
       </div>
@@ -456,12 +481,14 @@ function navBtnStyle() {
   }
 }
 
-function CompactSelect({ value, onChange, options }) {
+function CompactSelect({ value, onChange, options, disabled = false }) {
   return (
     <select
       value={value}
       onChange={e => onChange(e.target.value)}
+      disabled={disabled}
       style={{
+        opacity: disabled ? 0.65 : 1,
         padding: '7px 28px 7px 12px', borderRadius: 10,
         border: `1px solid ${T.neutral[200]}`,
         fontSize: 12.5, fontFamily: 'inherit', fontWeight: 600,

@@ -313,19 +313,41 @@ export function watchSalesBetween(fromDate, toDate, callback, branchIds = null) 
   const scoped = Array.isArray(branchIds) && branchIds.length > 0
     ? [...base, where('branchId', 'in', branchIds)]
     : base
-  const q = query(salesCol(), ...scoped)
-  return onSnapshot(
-    q,
-    snap => {
-      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      list.sort((a, b) => timeOf(b) - timeOf(a))
-      callback(list)
-    },
+  const emit = (snap, filtrar) => {
+    let list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    if (filtrar) {
+      list = list.filter(v => branchIds.some(b => String(b) === String(v.branchId)))
+    }
+    list.sort((a, b) => timeOf(b) - timeOf(a))
+    callback(list)
+  }
+
+  let corte = null
+  const cancel = onSnapshot(
+    query(salesCol(), ...scoped),
+    snap => emit(snap, false),
     err => {
+      // 'failed-precondition' = falta el indice compuesto (rango sobre `date`
+      // + igualdad sobre `branchId`). Crear el indice tarda minutos y mientras
+      // tanto la pantalla se quedaria vacia, que se lee como "perdi mis
+      // ventas". Se reintenta solo por fecha y se acota en el cliente: mismo
+      // resultado, mas lecturas. Al usuario restringido esto le fallara
+      // tambien —las reglas rechazan la consulta sin el filtro— y ahi si no
+      // hay atajo: el indice es obligatorio.
+      if (err?.code === 'failed-precondition' && scoped !== base) {
+        console.warn('[sales] falta el indice branchId+date; filtrando en cliente')
+        corte = onSnapshot(
+          query(salesCol(), ...base),
+          snap => emit(snap, true),
+          e2 => { console.error('[sales] watchSalesBetween error:', e2); callback([]) }
+        )
+        return
+      }
       console.error('[sales] watchSalesBetween error:', err)
       callback([])
     }
   )
+  return () => { cancel(); corte?.() }
 }
 
 // ──────────────────────────────────────────────────────────────

@@ -335,11 +335,12 @@ function AppShell() {
 
   const activeTab = ['home','registro','team','more'].includes(tab) ? tab : 'more'
 
-  // Movimientos se alcanza por dos rutas (el sidebar de escritorio manda
-  // tab='movements'; "Mas > Movimientos" manda moreSub='movements'). Estuvo
-  // escrito dos veces y a una de las copias se le olvido `userDoc`: sin el,
-  // la pantalla cree que el usuario no tiene restriccion y mezcla el dinero
-  // de las dos panaderias. Una sola definicion para las dos rutas.
+  // Movimientos y Equipo se alcanzan por dos rutas cada una (el sidebar de
+  // escritorio manda tab='...'; "Mas > ..." manda moreSub='...'). Las dos
+  // estaban escritas por duplicado, y a una copia de Movimientos se le habia
+  // olvidado `userDoc`: sin el, la pantalla cree que el usuario no tiene
+  // restriccion y mezcla el dinero de las dos panaderias. Una sola definicion
+  // por pantalla, para que no se pueda volver a ir de sincronia.
   const movementsScreen = (
     <Movements
       userDoc={effectiveUserDoc}
@@ -349,6 +350,16 @@ function AppShell() {
       incomeCats={data.incomeCats}
       expenseCats={data.expenseCats}
       onRefresh={refresh}
+    />
+  )
+
+  const teamScreen = (
+    <Team
+      employees={data.employees}
+      userDoc={effectiveUserDoc}
+      onRefresh={refresh}
+      initialEmpId={pendingEmpId}
+      onClearEmpId={() => setPendingEmpId(null)}
     />
   )
 
@@ -371,14 +382,7 @@ function AppShell() {
       <Registro onRefresh={refresh} userDoc={effectiveUserDoc} />
     )
   } else if (tab === 'team') {
-    content = (
-      <Team
-        employees={data.employees}
-        onRefresh={refresh}
-        initialEmpId={pendingEmpId}
-        onClearEmpId={() => setPendingEmpId(null)}
-      />
-    )
+    content = teamScreen
   } else if (tab === 'more') {
     if (moreSub === 'movements') {
       content = movementsScreen
@@ -459,14 +463,7 @@ function AppShell() {
     } else if (moreSub === 'cuentas') {
       content = <Cuentas userDoc={effectiveUserDoc} />
     } else if (moreSub === 'team') {
-      content = (
-        <Team
-          employees={data.employees}
-          onRefresh={refresh}
-          initialEmpId={pendingEmpId}
-          onClearEmpId={() => setPendingEmpId(null)}
-        />
-      )
+      content = teamScreen
     } else {
       content = (
         <More

@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { Card, BackButton, Modal, InputField, EmptyState, UserAvatar } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { updateEmployee, deleteEmployee, getData } from '../db'
+import { visibleBranches, userBranchIds, parseBranchKey } from '../utils/branchScope'
 import { watchAllUsers, rejectPendingUser } from '../users'
 import { useAuth } from '../context/AuthCtx'
 import { ApprovalModal, ConfirmUserModal } from './Users'
@@ -18,7 +19,7 @@ import { fmtDate } from '../utils/format'
 // Vista principal: Turnos del día (con navegador de fecha).
 // Sub-vista: "Administrar personal" (lista de empleados + pendientes).
 // ──────────────────────────────────────────────────────────────
-export default function Team({ employees, onRefresh, initialEmpId, onClearEmpId }) {
+export default function Team({ employees, onRefresh, initialEmpId, onClearEmpId, userDoc }) {
   // Si llegamos con initialEmpId (desde Dashboard "Ir a empleado"), abre
   // directamente la sub-vista de personal.
   const [view, setView] = useState(initialEmpId ? 'personal' : 'shifts')
@@ -38,6 +39,7 @@ export default function Team({ employees, onRefresh, initialEmpId, onClearEmpId 
   return (
     <ShiftsView
       employees={employees}
+      userDoc={userDoc}
       onOpenPersonal={() => setView('personal')}
     />
   )
@@ -84,14 +86,19 @@ function fmtDateLong(dateStr) {
   return `${days[d.getDay()]} ${d.getDate()} de ${months[d.getMonth()]} de ${d.getFullYear()}`
 }
 
-function ShiftsView({ employees, onOpenPersonal }) {
+function ShiftsView({ employees, onOpenPersonal, userDoc }) {
   const today = todayStr()
   const [date, setDate] = useState(today)
   const [shifts, setShifts] = useState([])
   const [showAssign, setShowAssign] = useState(false)
   const [editingShift, setEditingShift] = useState(null)
 
-  useEffect(() => watchShiftsForDate(date, setShifts), [date])
+  const alcance = userBranchIds(userDoc)
+  const branchKey = alcance ? alcance.join(',') : ''
+  useEffect(
+    () => watchShiftsForDate(date, setShifts, parseBranchKey(branchKey)),
+    [date, branchKey]
+  )
 
   function changeDate(delta) {
     setDate(d => addDaysStr(d, delta))
@@ -312,6 +319,7 @@ function ShiftsView({ employees, onOpenPersonal }) {
         <AssignShiftModal
           date={date}
           employees={employees}
+          userDoc={userDoc}
           onCancel={() => setShowAssign(false)}
           onSaved={() => setShowAssign(false)}
         />
@@ -321,6 +329,7 @@ function ShiftsView({ employees, onOpenPersonal }) {
         <EditShiftModal
           shift={editingShift}
           employees={employees}
+          userDoc={userDoc}
           onCancel={() => setEditingShift(null)}
           onSaved={() => setEditingShift(null)}
         />
@@ -332,9 +341,11 @@ function ShiftsView({ employees, onOpenPersonal }) {
 // ──────────────────────────────────────────────────────────────
 // Mini modal: Asignar turno
 // ──────────────────────────────────────────────────────────────
-function AssignShiftModal({ date, employees, onCancel, onSaved }) {
+function AssignShiftModal({ date, employees, onCancel, onSaved, userDoc }) {
   const { authUser } = useAuth()
-  const branches = getData().branches || []
+  // Solo sus panaderias: sin esto el selector le deja asignarle un turno a la
+  // sede del otro dueño.
+  const branches = visibleBranches(userDoc, getData().branches || [])
 
   const [employeeId, setEmployeeId] = useState('')
   const [branchId, setBranchId] = useState(branches[0]?.id || '')
@@ -345,7 +356,10 @@ function AssignShiftModal({ date, employees, onCancel, onSaved }) {
   const [error, setError] = useState(null)
 
   const selectedEmp = employees.find(e => e.id === employeeId)
-  const selectedBranch = branches.find(b => b.id === branchId)
+  // Por texto: hoy el selector fuerza Number() y coincide, pero basta con que
+  // un id llegue como cadena para que `===` falle en silencio y el turno no se
+  // pueda guardar sin motivo aparente.
+  const selectedBranch = branches.find(b => String(b.id) === String(branchId))
   const validHours = startTime && endTime && endTime > startTime
   const canSave = !busy && employeeId && branchId && role && validHours
 
@@ -418,8 +432,8 @@ function AssignShiftModal({ date, employees, onCancel, onSaved }) {
 // ──────────────────────────────────────────────────────────────
 // Modal: Editar / eliminar turno asignado
 // ──────────────────────────────────────────────────────────────
-function EditShiftModal({ shift, employees, onCancel, onSaved }) {
-  const branches = getData().branches || []
+function EditShiftModal({ shift, employees, onCancel, onSaved, userDoc }) {
+  const branches = visibleBranches(userDoc, getData().branches || [])
   const [employeeId, setEmployeeId] = useState(shift.employeeId || '')
   const [branchId, setBranchId] = useState(shift.branchId ?? '')
   const [role, setRole] = useState(shift.role || 'cash')
@@ -430,7 +444,10 @@ function EditShiftModal({ shift, employees, onCancel, onSaved }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const selectedEmp = employees.find(e => e.id === employeeId)
-  const selectedBranch = branches.find(b => b.id === branchId)
+  // Por texto: hoy el selector fuerza Number() y coincide, pero basta con que
+  // un id llegue como cadena para que `===` falle en silencio y el turno no se
+  // pueda guardar sin motivo aparente.
+  const selectedBranch = branches.find(b => String(b.id) === String(branchId))
   const validHours = startTime && endTime && endTime > startTime
   const canSave = !busy && employeeId && branchId && role && validHours && selectedEmp && selectedBranch
 

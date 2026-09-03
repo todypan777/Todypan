@@ -64,10 +64,21 @@ export async function deleteScheduledShift(id) {
   await deleteDoc(shiftRef(id))
 }
 
-/** Suscripción a los turnos planificados de una fecha. */
-export function watchShiftsForDate(date, callback) {
+/** Suscripción a los turnos planificados de una fecha, acotada por panadería. */
+export function watchShiftsForDate(date, callback, branchIds = null) {
   if (!date) { callback([]); return () => {} }
-  const q = query(shiftsCol(), where('date', '==', date))
+  // La escritura ya estaba acotada por panaderia; la lectura no. Sin este
+  // filtro un dueño ve los turnos del otro (nombre del empleado, sede y
+  // horario), y a uno con `branchIds` las reglas le rechazan la consulta
+  // entera —el catch de abajo emite una lista vacia y la pantalla se queda
+  // sin turnos, sin decir por que.
+  //
+  // Dos igualdades (date + branchId): no necesita indice compuesto.
+  const parts = [where('date', '==', date)]
+  if (Array.isArray(branchIds) && branchIds.length > 0) {
+    parts.push(where('branchId', 'in', branchIds))
+  }
+  const q = query(shiftsCol(), ...parts)
   return onSnapshot(
     q,
     snap => {

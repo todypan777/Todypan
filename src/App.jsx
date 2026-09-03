@@ -2,8 +2,9 @@ import { useState, useReducer, useCallback, useEffect } from 'react'
 import { T } from './tokens'
 import InstallPrompt from './components/UI/InstallPrompt'
 import ErrorBoundary from './components/ErrorBoundary'
-import { getData, initDB, setCollectionMovements } from './db'
+import { getData, initDB, setCollectionMovements, setCollectionAccounts } from './db'
 import { watchMovementsSince } from './movements'
+import { watchAccounts } from './accounts'
 import { userBranchIds, parseBranchKey } from './utils/branchScope'
 import { TabBar, Sidebar } from './components/Nav'
 import NotificationBell from './components/NotificationBell'
@@ -189,6 +190,13 @@ function ApprovedAppLoader({ children }) {
     const branchIds = parseBranchKey(branchKey)
     return watchMovementsSince(sinceDate, setCollectionMovements, branchIds)
   }, [branchKey])
+
+  // Cuentas de la colección. db.js las une con las históricas del documento
+  // compartido, igual que con los movimientos.
+  useEffect(
+    () => watchAccounts(setCollectionAccounts, parseBranchKey(branchKey)),
+    [branchKey]
+  )
 
   if (!dbLoaded) return <LoadingScreen label="Cargando datos..." />
   return children
@@ -414,7 +422,7 @@ function AppShell() {
     } else if (moreSub === 'desayunos') {
       content = <Desayunos />
     } else if (moreSub === 'cuentas') {
-      content = <Cuentas />
+      content = <Cuentas userDoc={userDoc} />
     } else if (moreSub === 'team') {
       content = (
         <Team

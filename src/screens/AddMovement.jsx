@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { T } from '../tokens'
 import { fmtCOP, todayStr } from '../utils/format'
-import { visibleBranches } from '../utils/branchScope'
+import { visibleBranches, accountsOfBranch } from '../utils/branchScope'
 import { addMovement, getAccounts, getData, getBogotaDateStr, getTransfersStartDate, normalizeCatKey } from '../db'
 import { useAuth } from '../context/AuthCtx'
 import {
@@ -47,10 +47,19 @@ export default function AddMovement({ initialKind = 'income', userDoc, onBack, o
   const date = todayStr()
 
   // Cuentas del admin: a cuál entra/sale la plata. Elegir cuenta es OBLIGATORIO.
+  // Panaderías que este usuario puede ver. Si tiene una sola, se elige sola y
+  // el selector ni se muestra: no tiene sentido preguntarle algo con una única
+  // respuesta posible.
+  const myBranches = visibleBranches(userDoc, getData().branches || [])
+  const [branchId, setBranchId] = useState(myBranches[0]?.id ?? null)
+
+  // Solo las cuentas de la panadería elegida. Antes salían todas juntas, así
+  // que era posible cargarle un gasto de una sede al Nequi de la otra.
+  const accounts = accountsOfBranch(getAccounts(), branchId)
+
   // En el formulario los botones van en orden Efectivo → Nequi → Daviplata
   // (las creadas por el usuario quedan después). NO cambia el orden de la
   // pestaña Cuentas, solo el de estos botones.
-  const accounts = getAccounts()
   const orderedAccounts = useMemo(() => {
     const pref = ['acc_efectivo', 'acc_nequi', 'acc_daviplata']
     const rank = (a) => {
@@ -62,13 +71,15 @@ export default function AddMovement({ initialKind = 'income', userDoc, onBack, o
     }
     return [...accounts].sort((a, b) => rank(a) - rank(b))
   }, [accounts])
-  // Panaderías que este usuario puede ver. Si tiene una sola, se elige sola y
-  // el selector ni se muestra: no tiene sentido preguntarle algo con una única
-  // respuesta posible.
-  const myBranches = visibleBranches(userDoc, getData().branches || [])
-  const [branchId, setBranchId] = useState(myBranches[0]?.id ?? null)
-
   const [accountId, setAccountId] = useState(orderedAccounts[0]?.id || null)
+
+  // Al cambiar de panadería, la cuenta elegida puede ser de la otra sede y ya
+  // no estar en la lista. Sin esto el movimiento se guardaría contra el Nequi
+  // del otro dueño, que es justo lo que este filtro viene a evitar.
+  useEffect(() => {
+    if (accountId && orderedAccounts.some(a => a.id === accountId)) return
+    setAccountId(orderedAccounts[0]?.id || null)
+  }, [orderedAccounts, accountId])
   const selectedAccount = accounts.find(a => a.id === accountId) || null
 
   // Conciliación de transferencias: cuando se dispara, reemplazamos el form

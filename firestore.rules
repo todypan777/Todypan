@@ -9,7 +9,10 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-09-02 (c) — DEUDORES con panadería (los
+// Última actualización: 2026-09-03 — CUENTAS por panadería: nueva colección
+//   `accounts` (Nequi/Daviplata/Efectivo de cada sede). Las tres históricas
+//   siguen en /todypan/data y se leen como de Iglesia.
+// Cambio anterior: 2026-09-02 (c) — DEUDORES con panadería (los
 //   históricos sin el campo se leen como de Iglesia). Y branchOk/newBranchOk
 //   pasan a .get(campo, null): leer un campo ausente lanzaba error y denegaba,
 //   dejando documentos viejos sin branchId imposibles de editar.
@@ -424,6 +427,24 @@ service cloud.firestore {
     match /inventoryStock/{sid} {
       allow read:  if isApprovedAny() && branchOk();
       allow write: if isAdmin() && newBranchOk();
+    }
+
+    // ── CUENTAS (Nequi / Daviplata / Efectivo) ────────────────────────────
+    // El Nequi de un dueño y el del otro no son la misma cuenta. Antes vivian
+    // todas dentro de /todypan/data, donde no habia forma de separarlas.
+    //
+    // Solo el admin las administra; el equipo aprobado puede leerlas porque la
+    // pantalla de caja necesita mostrar a que cuenta entro un pago.
+    //
+    // Las tres cuentas HISTORICAS siguen en el documento compartido y no pasan
+    // por aqui: se leen como de Panaderia Iglesia. Es una fuga en una sola
+    // direccion —el dueño nuevo queda protegido, el anterior no— y se cierra
+    // migrando esas tres cuando se pueda hacer con calma.
+    match /accounts/{aid} {
+      allow read:   if isApprovedAny() && branchOk();
+      allow create: if isAdmin() && newBranchOk();
+      allow update: if isAdmin() && branchOk() && newBranchOk();
+      allow delete: if isAdmin() && branchOk();
     }
 
     // ── MOVIMIENTOS (ingresos y gastos del administrador) ─────────────────

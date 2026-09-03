@@ -1,6 +1,7 @@
 import { firestoreDb } from './firebase'
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
 import { createMovement, removeMovement } from './movements'
+import { createAccount, patchAccount, removeAccount, pushAdjustment, pullAdjustment } from './accounts'
 
 // ─── Refs ─────────────────────────────────────────────────────
 const LOCAL_KEY = 'todypan_v1'
@@ -110,16 +111,29 @@ let _data = null
 let _legacyMovements = []   // los de /todypan/data (solo lectura de aqui en adelante)
 let _newMovements = []      // los de la coleccion /movements
 
+// Las CUENTAS siguen el mismo patron y por el mismo motivo: el Nequi de un
+// dueño y el del otro no son la misma cuenta, y dentro de un documento
+// compartido no hay forma de separarlas.
+let _legacyAccounts = []    // las de /todypan/data
+let _newAccounts = []       // las de la coleccion /accounts
+
 function remergeMovements() {
   if (!_data) return
   _data.movements = [..._newMovements, ..._legacyMovements]
+}
+
+function remergeAccounts() {
+  if (!_data) return
+  _data.accounts = [..._legacyAccounts, ..._newAccounts]
 }
 
 /** Adopta un snapshot del documento compartido separando lo historico. */
 function adoptData(d) {
   _data = d
   _legacyMovements = Array.isArray(d.movements) ? d.movements : []
+  _legacyAccounts = Array.isArray(d.accounts) ? d.accounts : []
   remergeMovements()
+  remergeAccounts()
 }
 
 /**
@@ -136,13 +150,24 @@ function adoptData(d) {
  * los unicos que de verdad viven en ese documento.
  */
 function storableData() {
-  return { ..._data, movements: _legacyMovements }
+  return { ..._data, movements: _legacyMovements, accounts: _legacyAccounts }
 }
 
 /** La suscripcion a /movements entrega aqui su resultado. */
 export function setCollectionMovements(list) {
   _newMovements = Array.isArray(list) ? list : []
   remergeMovements()
+}
+
+/** La suscripcion a /accounts entrega aqui su resultado. */
+export function setCollectionAccounts(list) {
+  _newAccounts = Array.isArray(list) ? list : []
+  remergeAccounts()
+}
+
+/** True si la cuenta vive en la coleccion (y no en el documento compartido). */
+export function isCollectionAccount(id) {
+  return _newAccounts.some(a => a.id === id)
 }
 
 function migrate(d) {
@@ -616,21 +641,17 @@ export function getAccountBalance(account) {
   return baselineFromAdjustments(account.adjustments) + getAccountAssignedSum(account.id)
 }
 
-export function addAccount({ name, emoji = '💳', colorKey = 'copper', balance = 0 } = {}) {
-  const clean = String(name || '').trim()
-  if (!clean) return null
-  const id = 'acc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
-  const initial = Number(balance) || 0
-  const account = {
-    id, name: clean, emoji: emoji || '💳', colorKey: colorKey || 'copper',
-    adjustments: initial !== 0
-      ? [{ id: 'mv_' + Date.now(), type: 'set', amount: initial,
-           note: 'Saldo inicial', date: getBogotaDateStr(), createdAt: Date.now() }]
-      : [],
+/**
+ * Crea una cuenta. Las nuevas SIEMPRE van a la coleccion /accounts, donde cada
+ * una es su propio documento y lleva su panaderia — es la unica forma de que
+ * las reglas puedan separarlas. Requiere `branchId`.
+ */
+export function addAccount({ name, emoji = '💳', colorKey = 'copper', balance = 0, branchId } = {}) {
+  if (branchId == null) {
+    console.warn('[TodyPan] addAccount sin panaderia: no se crea')
+    return null
   }
-  _data.accounts = [...(_data.accounts || []), account]
-  persist()
-  return id
+  return createAccount({ name, emoji, colorKey, balance, branchId })
 }
 
 export function updateAccount(id, updates) {
@@ -639,12 +660,17 @@ export function updateAccount(id, updates) {
   delete clean.adjustments
   delete clean.balance
   if (clean.name != null) clean.name = String(clean.name).trim()
-  _data.accounts = (_data.accounts || []).map(a => a.id === id ? { ...a, ...clean } : a)
+
+  if (isCollectionAccount(id)) { patchAccount(id, clean); return }
+  _legacyAccounts = _legacyAccounts.map(a => a.id === id ? { ...a, ...clean } : a)
+  remergeAccounts()
   persist()
 }
 
 export function deleteAccount(id) {
-  _data.accounts = (_data.accounts || []).filter(a => a.id !== id)
+  if (isCollectionAccount(id)) { removeAccount(id); return }
+  _legacyAccounts = _legacyAccounts.filter(a => a.id !== id)
+  remergeAccounts()
   persist()
 }
 
@@ -655,16 +681,18 @@ export function deleteAccount(id) {
  */
 export function setAccountBalance(id, balance, note = '') {
   const target = Number(balance) || 0
-  _data.accounts = (_data.accounts || []).map(a => {
-    if (a.id !== id) return a
-    const assigned = getAccountAssignedSum(a.id)
-    const setValue = target - assigned // baseline necesario para que saldo = target
-    const mv = {
-      id: 'mv_' + Date.now(), type: 'set', amount: setValue,
-      note: note || 'Saldo ajustado', date: getBogotaDateStr(), createdAt: Date.now(),
-    }
-    return { ...a, adjustments: [mv, ...(a.adjustments || [])] }
-  })
+  const assigned = getAccountAssignedSum(id)
+  const mv = {
+    id: 'mv_' + Date.now(), type: 'set',
+    amount: target - assigned,          // base necesaria para que saldo = target
+    note: note || 'Saldo ajustado', date: getBogotaDateStr(), createdAt: Date.now(),
+  }
+
+  if (isCollectionAccount(id)) { pushAdjustment(id, mv); return }
+  _legacyAccounts = _legacyAccounts.map(a =>
+    a.id === id ? { ...a, adjustments: [mv, ...(a.adjustments || [])] } : a
+  )
+  remergeAccounts()
   persist()
 }
 
@@ -672,24 +700,28 @@ export function setAccountBalance(id, balance, note = '') {
 export function addAccountMovement(id, { type, amount, note = '' }) {
   const amt = Math.abs(Number(amount) || 0)
   if (amt <= 0 || (type !== 'in' && type !== 'out')) return
-  _data.accounts = (_data.accounts || []).map(a => {
-    if (a.id !== id) return a
-    const mv = {
-      id: 'mv_' + Date.now(), type, amount: amt,
-      note: note || '', date: getBogotaDateStr(), createdAt: Date.now(),
-    }
-    return { ...a, adjustments: [mv, ...(a.adjustments || [])] }
-  })
+  const mv = {
+    id: 'mv_' + Date.now(), type, amount: amt,
+    note: note || '', date: getBogotaDateStr(), createdAt: Date.now(),
+  }
+
+  if (isCollectionAccount(id)) { pushAdjustment(id, mv); return }
+  _legacyAccounts = _legacyAccounts.map(a =>
+    a.id === id ? { ...a, adjustments: [mv, ...(a.adjustments || [])] } : a
+  )
+  remergeAccounts()
   persist()
 }
 
 /** Borra un ajuste manual. El saldo se recalcula solo (es derivado). */
 export function deleteAccountMovement(accountId, adjustmentId) {
-  _data.accounts = (_data.accounts || []).map(a =>
+  if (isCollectionAccount(accountId)) { pullAdjustment(accountId, adjustmentId); return }
+  _legacyAccounts = _legacyAccounts.map(a =>
     a.id !== accountId
       ? a
       : { ...a, adjustments: (a.adjustments || []).filter(m => m.id !== adjustmentId) }
   )
+  remergeAccounts()
   persist()
 }
 

@@ -11,7 +11,8 @@ import NotificationBell from './components/NotificationBell'
 import ConnectionChip from './components/ConnectionChip'
 import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth, hasCachedFirebaseSession, readUserDocCache } from './context/AuthCtx'
-import { ADMIN_EMAIL } from './auth'
+import { isRootEmail } from './auth'
+import BranchViewSwitcher, { BranchViewBanner } from './components/BranchViewSwitcher'
 import { useOnlineStatus } from './utils/network'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
@@ -142,7 +143,7 @@ function AuthGate() {
     if (!online) {
       return <LoadingScreen label="Sin conexión — cargando tu cuenta..." />
     }
-    if (authUser.email === ADMIN_EMAIL) return <BootstrappingAdmin />
+    if (isRootEmail(authUser.email)) return <BootstrappingAdmin />
     return <RegistrationForm authUser={authUser} />
   }
 
@@ -207,6 +208,38 @@ function AppShell() {
   // Las pantallas que reciben el usuario (Balance, Inventario, Nuevo
   // movimiento) los necesitan para saber qué panadería puede ver.
   const { authUser, userDoc } = useAuth()
+
+  // ── "Ver como" una panadería (solo para los dueños del sistema) ──
+  //
+  // Al elegir una sede se le pone esa panadería al usuario EFECTIVO, y todas
+  // las pantallas —que ya saben respetar el alcance por sede— se comportan
+  // exactamente como las ve ese dueño. No hay ninguna rama especial de código:
+  // si funciona aquí, funciona para Andrés o para Jhonatan.
+  //
+  // Se recuerda entre recargas: probando, uno recarga muchas veces y volver a
+  // "Todas" en cada una haría el trabajo insufrible.
+  const puedeVerComo = isRootEmail(authUser?.email)
+  const [viewAsBranch, setViewAsBranch] = useState(() => {
+    try {
+      const raw = localStorage.getItem('todypan_ver_como')
+      if (!raw) return null
+      const n = Number(raw)
+      return Number.isFinite(n) && String(n) === raw ? n : raw
+    } catch { return null }
+  })
+
+  function cambiarVista(id) {
+    setViewAsBranch(id)
+    try {
+      if (id == null) localStorage.removeItem('todypan_ver_como')
+      else localStorage.setItem('todypan_ver_como', String(id))
+    } catch { /* modo privado: la vista simplemente no se recuerda */ }
+  }
+
+  // El userDoc que reciben las pantallas. Fuera del modo "ver como" es el real.
+  const effectiveUserDoc = (puedeVerComo && viewAsBranch != null)
+    ? { ...userDoc, branchIds: [viewAsBranch] }
+    : userDoc
 
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
@@ -353,7 +386,7 @@ function AppShell() {
         <Reports
           filter={filter}
           setFilter={setFilter}
-          userDoc={userDoc}
+          userDoc={effectiveUserDoc}
           movements={data.movements}
           incomeCats={data.incomeCats}
           expenseCats={data.expenseCats}
@@ -388,7 +421,7 @@ function AppShell() {
       content = (
         <Inventario
           authUser={authUser}
-          userDoc={userDoc}
+          userDoc={effectiveUserDoc}
           onBack={() => setMoreSub(null)}
         />
       )
@@ -405,7 +438,7 @@ function AppShell() {
     } else if (moreSub === 'deudores') {
       content = (
         <Deudores
-          userDoc={userDoc}
+          userDoc={effectiveUserDoc}
           onBack={() => setMoreSub(null)}
         />
       )
@@ -422,7 +455,7 @@ function AppShell() {
     } else if (moreSub === 'desayunos') {
       content = <Desayunos />
     } else if (moreSub === 'cuentas') {
-      content = <Cuentas userDoc={userDoc} />
+      content = <Cuentas userDoc={effectiveUserDoc} />
     } else if (moreSub === 'team') {
       content = (
         <Team
@@ -433,7 +466,16 @@ function AppShell() {
         />
       )
     } else {
-      content = <More onOpen={id => setMoreSub(id)} userDoc={userDoc} />
+      content = (
+        <More
+          onOpen={id => setMoreSub(id)}
+          userDoc={effectiveUserDoc}
+          canViewAs={puedeVerComo}
+          allBranches={getData().branches || []}
+          viewAs={viewAsBranch}
+          onViewAs={cambiarVista}
+        />
+      )
     }
   }
 
@@ -453,7 +495,7 @@ function AppShell() {
         }}>
           <AddMovement
             initialKind={modal.kind}
-            userDoc={userDoc}
+            userDoc={effectiveUserDoc}
             onBack={() => setModal(null)}
             onSave={() => { setModal(null); refresh() }}
             incomeCats={data.incomeCats}
@@ -469,7 +511,7 @@ function AppShell() {
       }}>
         <AddMovement
           initialKind={modal.kind}
-          userDoc={userDoc}
+          userDoc={effectiveUserDoc}
           onBack={() => setModal(null)}
           onSave={() => { setModal(null); refresh() }}
           incomeCats={data.incomeCats}
@@ -487,6 +529,13 @@ function AppShell() {
         fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
         color: T.neutral[800],
       }}>
+
+        {puedeVerComo && viewAsBranch != null && (
+          <BranchViewBanner
+            branchName={(getData().branches || []).find(b => String(b.id) === String(viewAsBranch))?.name}
+            onClear={() => cambiarVista(null)}
+          />
+        )}
 
         {isDesktop ? (
           /* ── Layout desktop ── */

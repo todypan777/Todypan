@@ -1,5 +1,5 @@
 import { firestoreDb } from './firebase'
-import { ADMIN_EMAIL } from './auth'
+import { isRootEmail } from './auth'
 import {
   doc,
   getDoc,
@@ -75,7 +75,7 @@ export async function createPendingUser(authUser, nombre, apellido) {
  * Idempotente: si el doc ya existe, no hace nada.
  */
 export async function bootstrapAdminIfNeeded(authUser) {
-  if (!authUser || authUser.email !== ADMIN_EMAIL) return
+  if (!authUser || !isRootEmail(authUser.email)) return
   const snap = await getDoc(userRef(authUser.uid))
   if (snap.exists()) return
 

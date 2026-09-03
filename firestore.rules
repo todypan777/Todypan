@@ -9,7 +9,10 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-09-03 — CUENTAS por panadería: nueva colección
+// Última actualización: 2026-09-03 (b) — el correo raíz pasa a ser una LISTA
+//   (todypan777 + sinfiniity), para poder probar sin usar la cuenta del
+//   negocio. Debe coincidir con ROOT_EMAILS en src/auth.js.
+// Cambio anterior: 2026-09-03 — CUENTAS por panadería: nueva colección
 //   `accounts` (Nequi/Daviplata/Efectivo de cada sede). Las tres históricas
 //   siguen en /todypan/data y se leen como de Iglesia.
 // Cambio anterior: 2026-09-02 (c) — DEUDORES con panadería (los
@@ -53,9 +56,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Correos DUEÑOS del sistema: entran siempre, ven las dos panaderias y
+    // quedan por fuera del alcance por sede. Es una lista y no un solo correo
+    // porque quien desarrolla necesita su propia cuenta para probar sin usar
+    // la del negocio.
+    //
+    // Debe coincidir con ROOT_EMAILS en src/auth.js.
     function isAdminBootstrap() {
       return request.auth != null
-        && request.auth.token.email == 'todypan777@gmail.com'
+        && request.auth.token.email in ['todypan777@gmail.com', 'sinfiniity@gmail.com']
         && request.auth.token.email_verified == true;
     }
 

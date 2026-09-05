@@ -3,6 +3,7 @@ import { T } from '../tokens'
 import { fmtCOP, fmtMonthLabel, currentMonth, todayStr } from '../utils/format'
 import { Card, SectionHeader, Chip, Amount, CatIcon } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
+import BranchPdfReportCard from '../components/BranchPdfReportCard'
 import { getData } from '../db'
 import { watchSalesBetween } from '../sales'
 import { watchInventoryStockAll, stockValue } from '../inventory'
@@ -148,9 +149,9 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
 
   // Valor del inventario a costo. No depende del período: es una foto de HOY,
   // no algo que ocurrió dentro del rango, y por eso se muestra aparte.
+  const catalogo = mergeProductCatalogs(getData().products || [], cashierProducts)
   const costOf = (() => {
-    const cat = mergeProductCatalogs(getData().products || [], cashierProducts)
-    const map = new Map(cat.map(p => [p.id, p.unitCost || 0]))
+    const map = new Map(catalogo.map(p => [p.id, p.unitCost || 0]))
     return (id) => map.get(id) || 0
   })()
   const stockDeSede = filter === 'all'
@@ -308,6 +309,17 @@ export default function Reports({ filter, setFilter, movements, incomeCats, expe
           </Card>
         </div>
       )}
+
+      {/* Reporte en PDF de UNA panadería, desde una hora exacta.
+          No depende del período de arriba: el traspaso de una sede ocurre a una
+          hora concreta y ese corte no coincide con "hoy", "semana" ni "mes". */}
+      <BranchPdfReportCard
+        branches={branches}
+        defaultBranchId={filter !== 'all' ? filter : branches[0]?.id}
+        products={catalogo}
+        catLabel={(c) => catLabel(c, incomeCats, expenseCats)}
+        generadoPor={userDoc?.name || userDoc?.displayName || userDoc?.email || ''}
+      />
 
       {/* Aviso de costos faltantes */}
       {sinCosto > 0 && (

@@ -288,7 +288,27 @@ export async function cancelOrdersForTab(tabId, { reason, cancelledBy, cancelled
  */
 export function watchKitchenQueue(callback) {
   try {
-    const q = query(ordersCol(), where('status', 'in', ['pending', 'ready']))
+    // ── Solo lo de HOY ──
+    //
+    // Antes esto pedia TODAS las comandas pending/ready sin mirar la fecha. En
+    // un dia normal da igual, pero las comandas que se quedan colgadas —
+    // enviadas y nunca marcadas como entregadas, porque la cajera cerro sin
+    // cobrar o se cayo el internet— NO SE VAN NUNCA. Se acumulan, y la cocina
+    // las relee enteras cada vez que se abre, durante todo el servicio.
+    //
+    // El 2026-09-05 la cuota diaria de Firestore de este proyecto se agoto y la
+    // app se quedo sin poder leer nada (RESOURCE_EXHAUSTED). Esta consulta es
+    // la sospechosa principal: es la que corre 12 horas seguidas en la pantalla
+    // que nunca se cierra.
+    //
+    // Con el filtro, la cocina lee lo de hoy. Una comanda de hace tres semanas
+    // no tiene por que aparecer en la cola de esta mañana.
+    const desdeAyer = Timestamp.fromMillis(Date.now() - 36 * 60 * 60 * 1000)
+    const q = query(
+      ordersCol(),
+      where('status', 'in', ['pending', 'ready']),
+      where('createdAt', '>=', desdeAyer),
+    )
     return onSnapshot(
       q,
       snap => {

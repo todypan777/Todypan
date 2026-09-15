@@ -952,10 +952,14 @@ export function ActiveSession({
     return unsub
   }, [session.id])
 
-  // Deudores para enlazar un ingreso que es abono a una deuda.
+  // Deudores para enlazar un ingreso que es abono a una deuda. Si la lectura
+  // falla se conserva la ultima lista buena: vaciarla haria que un abono no
+  // encuentre a su deudor y quede suelto.
   const debtorBranchKey = (userBranchIds(userDoc) || []).join(',')
   useEffect(
-    () => watchDebtors(setDebtors, parseBranchKey(debtorBranchKey)),
+    () => watchDebtors(setDebtors, parseBranchKey(debtorBranchKey), err => {
+      if (err) console.warn('[caja] no se pudo actualizar la lista de deudores:', err.code || err.message)
+    }),
     [debtorBranchKey]
   )
 

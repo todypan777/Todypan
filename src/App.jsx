@@ -12,7 +12,6 @@ import ConnectionChip from './components/ConnectionChip'
 import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth, hasCachedFirebaseSession, readUserDocCache } from './context/AuthCtx'
 import { isRootEmail } from './auth'
-import BranchViewSwitcher, { BranchViewBanner } from './components/BranchViewSwitcher'
 import { useOnlineStatus } from './utils/network'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
@@ -212,37 +211,19 @@ function AppShell() {
   // movimiento) los necesitan para saber qué panadería puede ver.
   const { authUser, userDoc } = useAuth()
 
-  // ── "Ver como" una panadería (solo para los dueños del sistema) ──
+  // Aquí vivía "Ver como", que le ponía al usuario efectivo los `branchIds` de
+  // una panadería para previsualizar cómo veía la app el otro dueño. Se quitó
+  // el 2026-09-14: La Gran Esquina es una app aparte con su propia base, así
+  // que TodyPan tiene un solo dueño y no hay a quién previsualizar.
   //
-  // Al elegir una sede se le pone esa panadería al usuario EFECTIVO, y todas
-  // las pantallas —que ya saben respetar el alcance por sede— se comportan
-  // exactamente como las ve ese dueño. No hay ninguna rama especial de código:
-  // si funciona aquí, funciona para Andrés o para Jhonatan.
+  // No era inofensivo. La vista se recordaba entre recargas, y al fabricar un
+  // usuario restringido hacía que la pantalla de Deudores pidiera
+  // `where('branchId','in',[n])`. Los 49 deudores históricos no tienen ese
+  // campo —y Firestore nunca devuelve un documento al que le falta el campo
+  // del filtro—, así que desaparecían $1.298.200 en fiados sin ningún aviso.
   //
-  // Se recuerda entre recargas: probando, uno recarga muchas veces y volver a
-  // "Todas" en cada una haría el trabajo insufrible.
-  const puedeVerComo = isRootEmail(authUser?.email)
-  const [viewAsBranch, setViewAsBranch] = useState(() => {
-    try {
-      const raw = localStorage.getItem('todypan_ver_como')
-      if (!raw) return null
-      const n = Number(raw)
-      return Number.isFinite(n) && String(n) === raw ? n : raw
-    } catch { return null }
-  })
-
-  function cambiarVista(id) {
-    setViewAsBranch(id)
-    try {
-      if (id == null) localStorage.removeItem('todypan_ver_como')
-      else localStorage.setItem('todypan_ver_como', String(id))
-    } catch { /* modo privado: la vista simplemente no se recuerda */ }
-  }
-
-  // El userDoc que reciben las pantallas. Fuera del modo "ver como" es el real.
-  const effectiveUserDoc = (puedeVerComo && viewAsBranch != null)
-    ? { ...userDoc, branchIds: [viewAsBranch] }
-    : userDoc
+  // Si algún día vuelven a convivir dos negocios aquí, la separación se hace
+  // con bases separadas, no con un filtro que se puede quedar pegado.
 
   const [tab, setTab] = useState('home')
   const [filter, setFilter] = useState('all')
@@ -343,7 +324,7 @@ function AppShell() {
   // por pantalla, para que no se pueda volver a ir de sincronia.
   const movementsScreen = (
     <Movements
-      userDoc={effectiveUserDoc}
+      userDoc={userDoc}
       filter={filter}
       setFilter={setFilter}
       movements={data.movements}
@@ -356,7 +337,7 @@ function AppShell() {
   const teamScreen = (
     <Team
       employees={data.employees}
-      userDoc={effectiveUserDoc}
+      userDoc={userDoc}
       onRefresh={refresh}
       initialEmpId={pendingEmpId}
       onClearEmpId={() => setPendingEmpId(null)}
@@ -368,7 +349,7 @@ function AppShell() {
     content = (
       <Dashboard
         onNav={handleNav}
-        userDoc={effectiveUserDoc}
+        userDoc={userDoc}
         filter={filter}
         setFilter={setFilter}
         movements={data.movements}
@@ -379,7 +360,7 @@ function AppShell() {
     content = movementsScreen
   } else if (tab === 'registro') {
     content = (
-      <Registro onRefresh={refresh} userDoc={effectiveUserDoc} />
+      <Registro onRefresh={refresh} userDoc={userDoc} />
     )
   } else if (tab === 'team') {
     content = teamScreen
@@ -391,7 +372,7 @@ function AppShell() {
         <Reports
           filter={filter}
           setFilter={setFilter}
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           movements={data.movements}
           incomeCats={data.incomeCats}
           expenseCats={data.expenseCats}
@@ -402,7 +383,7 @@ function AppShell() {
       content = (
         <Reminders
           reminders={data.reminders}
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />
@@ -419,7 +400,7 @@ function AppShell() {
       content = (
         <Products
           products={data.products || []}
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
           onRefresh={refresh}
         />
@@ -428,14 +409,14 @@ function AppShell() {
       content = (
         <Inventario
           authUser={authUser}
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
         />
       )
     } else if (moreSub === 'pendientes') {
       content = (
         <Pendientes
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
           onOpenUsers={() => { setMoreSub(null); setTab('team') }}
           onOpenProducts={() => setMoreSub('products')}
@@ -446,12 +427,12 @@ function AppShell() {
     } else if (moreSub === 'deudores') {
       content = (
         <Deudores
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setMoreSub(null)}
         />
       )
     } else if (moreSub === 'transferencias') {
-      content = <Transferencias userDoc={effectiveUserDoc} />
+      content = <Transferencias userDoc={userDoc} />
     } else if (moreSub === 'tasks') {
       content = (
         <Tasks
@@ -463,18 +444,14 @@ function AppShell() {
     } else if (moreSub === 'desayunos') {
       content = <Desayunos />
     } else if (moreSub === 'cuentas') {
-      content = <Cuentas userDoc={effectiveUserDoc} />
+      content = <Cuentas userDoc={userDoc} />
     } else if (moreSub === 'team') {
       content = teamScreen
     } else {
       content = (
         <More
           onOpen={id => setMoreSub(id)}
-          userDoc={effectiveUserDoc}
-          canViewAs={puedeVerComo}
-          allBranches={getData().branches || []}
-          viewAs={viewAsBranch}
-          onViewAs={cambiarVista}
+          userDoc={userDoc}
         />
       )
     }
@@ -496,7 +473,7 @@ function AppShell() {
         }}>
           <AddMovement
             initialKind={modal.kind}
-            userDoc={effectiveUserDoc}
+            userDoc={userDoc}
             onBack={() => setModal(null)}
             onSave={() => { setModal(null); refresh() }}
             incomeCats={data.incomeCats}
@@ -512,7 +489,7 @@ function AppShell() {
       }}>
         <AddMovement
           initialKind={modal.kind}
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onBack={() => setModal(null)}
           onSave={() => { setModal(null); refresh() }}
           incomeCats={data.incomeCats}
@@ -530,13 +507,6 @@ function AppShell() {
         fontFamily: '-apple-system, "SF Pro Text", "Inter", system-ui, sans-serif',
         color: T.neutral[800],
       }}>
-
-        {puedeVerComo && viewAsBranch != null && (
-          <BranchViewBanner
-            branchName={(getData().branches || []).find(b => String(b.id) === String(viewAsBranch))?.name}
-            onClear={() => cambiarVista(null)}
-          />
-        )}
 
         {isDesktop ? (
           /* ── Layout desktop ── */
@@ -568,7 +538,7 @@ function AppShell() {
 
         {/* Campanita de notificaciones global (oculta cuando ya estamos en Pendientes) */}
         <NotificationBell
-          userDoc={effectiveUserDoc}
+          userDoc={userDoc}
           onOpenPendientes={() => handleNav('pendientes')}
           onOpenUsers={() => handleNav('users')}
           dataTick={dataTick}

@@ -53,27 +53,73 @@ export function computeDebtorOwed(debtor) {
   }, 0)
 }
 
-/** Suscripción a todos los deudores. */
-export function watchDebtors(callback, branchIds = null) {
+/**
+ * Suscripción a todos los deudores.
+ *
+ * Un error NO vacía la lista. Antes esto hacía `callback([])` ante cualquier
+ * fallo, y eso causaba dos daños distintos:
+ *
+ *   1. La pantalla decía "Sin deudores" cuando la verdad era "no se pudo
+ *      leer". Un fallo de cuota o de permisos se veía igual que un negocio
+ *      sin fiados, y el dueño creía que había perdido los datos.
+ *   2. Peor: en el POS, `addDebtSale` busca al deudor dentro de esta lista.
+ *      Con la lista vacía no encuentra al que ya existe y CREA OTRO con el
+ *      mismo nombre. El fiado queda partido en dos deudores y toca
+ *      fusionarlos a mano.
+ *
+ * Ahora la última lista buena se queda como está —vieja pero cierta— y el
+ * error se avisa por `onError`. Quien consuma esto DEBE pasar `onError`: sin
+ * él la pantalla se queda congelada sin decir por qué.
+ *
+ * @param {(list: object[]) => void} callback  lista de deudores
+ * @param {number[]|null} branchIds  panaderías a pedir, o null para todas
+ * @param {(err: Error|null) => void} [onError]  se llama con el error, y con
+ *        null cuando la suscripción se recupera
+ */
+export function watchDebtors(callback, branchIds = null, onError = null) {
   // Si el usuario tiene panaderias asignadas, la consulta DEBE pedir solo
   // esas: las reglas validan documento por documento y rechazan la consulta
   // entera si pudiera devolver algo que no puede leer. Sin este filtro
   // recibiria permission-denied en vez de una lista recortada.
   //
-  // Los deudores historicos no traen `branchId`, asi que quedan fuera de esa
-  // consulta — que es lo correcto: son clientes de cuando el negocio era uno
-  // solo, y las reglas los tratan como de Panaderia Iglesia.
+  // OJO: los deudores historicos no traen `branchId`, y Firestore nunca
+  // devuelve un documento al que le falta el campo del `where`. Con un
+  // usuario restringido (o con "Ver como" puesto) desaparecen TODOS ellos,
+  // aunque las reglas si los dejen leer —ahi el ausente se lee como sede 1—.
+  // Mientras esos documentos no tengan sede grabada, esta consulta no los
+  // puede ver. No se arregla en el cliente.
   const q = Array.isArray(branchIds) && branchIds.length > 0
     ? query(debtorsCol(), where('branchId', 'in', branchIds))
     : query(debtorsCol())
   return onSnapshot(
     q,
-    snap => callback(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    snap => {
+      callback(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+      if (onError) onError(null)
+    },
     err => {
       console.error('[debtors] watchDebtors error:', err)
-      callback([])
+      if (onError) onError(err)
     }
   )
+}
+
+/**
+ * Traduce un error de Firestore a algo que le sirva a quien atiende el
+ * mostrador. Los códigos crudos ('resource-exhausted') no le dicen nada a
+ * nadie; lo que hay que responder es qué pasó y qué hacer.
+ */
+export function debtorsErrorMessage(err) {
+  switch (err?.code) {
+    case 'resource-exhausted':
+      return 'Se acabaron las consultas gratis del día. Los deudores están guardados, pero no se pueden leer hasta que el cupo se reinicie (2:00 a.m.).'
+    case 'permission-denied':
+      return 'Esta cuenta no tiene permiso para ver los deudores. Si estás usando "Ver como", vuelve a "Todas".'
+    case 'unavailable':
+      return 'Sin conexión con el servidor. Los deudores no se pudieron actualizar.'
+    default:
+      return 'No se pudieron cargar los deudores. Los datos están guardados; es la lectura la que falló.'
+  }
 }
 
 /**

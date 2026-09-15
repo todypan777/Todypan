@@ -8,7 +8,7 @@ import { watchAllSales, deleteSaleAsAdmin, editSaleItems } from '../sales'
 import { getData } from '../db'
 import { watchAllUsers } from '../users'
 import { useAuth } from '../context/AuthCtx'
-import { watchDebtors, normalizeName, adjustDebtorForSaleChange } from '../debtors'
+import { normalizeName, adjustDebtorForSaleChange } from '../debtors'
 import { mergeProductCatalogs, watchCashierProducts } from '../products'
 
 const METHODS = [

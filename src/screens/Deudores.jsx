@@ -5,7 +5,7 @@ import { Card } from '../components/Atoms'
 import { ScreenHeader } from '../components/Nav'
 import { useIsDesktop } from '../context/DesktopCtx'
 import { userBranchIds, parseBranchKey } from '../utils/branchScope'
-import { watchDebtors, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances, deleteDebtorHistoryEntry, editDebtorPaymentAmount, deleteDebtorSaleEntry } from '../debtors'
+import { watchDebtors, debtorsErrorMessage, registerDebtorPayment, mergeDebtors, computeDebtorOwed, recomputeAllDebtorBalances, deleteDebtorHistoryEntry, editDebtorPaymentAmount, deleteDebtorSaleEntry } from '../debtors'
 import { watchSalesByDebtor } from '../sales'
 import { compressAndUpload } from '../utils/imagebb'
 import { useAuth } from '../context/AuthCtx'
@@ -17,6 +17,9 @@ export default function Deudores({ onBack, userDoc }) {
   const { isAdmin } = useAuth()
   const [debtors, setDebtors] = useState([])
   const [loading, setLoading] = useState(true)
+  // Falla de lectura. Es distinto de "no hay deudores": si esto tiene texto,
+  // la lista que se ve es la última buena y puede estar desactualizada.
+  const [loadError, setLoadError] = useState(null)
   const [search, setSearch] = useState('')
   const [tab, setTab] = useState('active')
   const [selected, setSelected] = useState(null)
@@ -36,13 +39,27 @@ export default function Deudores({ onBack, userDoc }) {
   // usuario restringido recibiría permission-denied: las reglas rechazan la
   // consulta entera si pudiera devolver algo que no puede leer.
   const debtorBranchKey = (userBranchIds(userDoc) || []).join(',')
+  // `reintento` solo existe para volver a disparar el efecto: recrear la
+  // suscripción ES el reintento.
+  const [reintento, setReintento] = useState(0)
   useEffect(() => {
-    const unsub = watchDebtors(list => {
-      setDebtors(list)
-      setLoading(false)
-    }, parseBranchKey(debtorBranchKey))
+    const unsub = watchDebtors(
+      list => { setDebtors(list); setLoading(false) },
+      parseBranchKey(debtorBranchKey),
+      err => { setLoadError(err ? debtorsErrorMessage(err) : null); setLoading(false) },
+    )
     return unsub
-  }, [debtorBranchKey])
+  }, [debtorBranchKey, reintento])
+
+  // El spinner se enciende aquí y no dentro del efecto: al cambiar de
+  // panadería conviene dejar la lista anterior en pantalla hasta que llegue la
+  // nueva, en vez de parpadear. Al reintentar sí se muestra, porque el usuario
+  // acaba de pedirlo y necesita ver que algo pasó.
+  function reintentar() {
+    setLoadError(null)
+    setLoading(true)
+    setReintento(n => n + 1)
+  }
 
   // Deudores "vivos": excluimos los fusionados (mergedInto). Son tombstones
   // ocultos que solo existen para auditoría; no deben listarse, contarse ni
@@ -275,10 +292,43 @@ export default function Deudores({ onBack, userDoc }) {
 
       {/* Lista de deudores */}
       <div style={{ padding: '0 16px' }}>
+        {/* Falla de lectura con lista vieja en pantalla: la lista sirve, pero
+            hay que decir que puede estar desactualizada. Callar seria hacerla
+            pasar por al dia. */}
+        {loadError && debtors.length > 0 && (
+          <Card style={{ marginBottom: 12, background: '#FBF3E8', borderColor: T.warn }}>
+            <div style={{ padding: '12px 14px' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.warn, marginBottom: 4 }}>
+                Esta lista puede estar desactualizada
+              </div>
+              <div style={{ fontSize: 12, color: T.neutral[600], lineHeight: 1.45 }}>{loadError}</div>
+              <BotonReintentar onClick={reintentar} />
+            </div>
+          </Card>
+        )}
+
         {loading ? (
           <Card>
             <div style={{ padding: '24px 0', textAlign: 'center', color: T.neutral[500], fontSize: 13 }}>
               Cargando deudores...
+            </div>
+          </Card>
+        ) : loadError && debtors.length === 0 ? (
+          /* Nunca se logro leer. Antes aqui salia "Sin deudores activos" y el
+             dueño entendia que se le habian borrado los fiados. */
+          <Card>
+            <div style={{ padding: '36px 24px', textAlign: 'center' }}>
+              <div style={{ fontSize: 42, marginBottom: 8 }}>⚠️</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.neutral[700] }}>
+                No se pudieron cargar los deudores
+              </div>
+              <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 6, lineHeight: 1.5 }}>
+                {loadError}
+              </div>
+              <div style={{ fontSize: 12, color: T.neutral[500], marginTop: 10, fontWeight: 600 }}>
+                Esto no borro nada: las deudas siguen guardadas.
+              </div>
+              <BotonReintentar onClick={reintentar} />
             </div>
           </Card>
         ) : filtered.length === 0 ? (
@@ -376,6 +426,22 @@ export default function Deudores({ onBack, userDoc }) {
         />
       )}
     </div>
+  )
+}
+
+/** Reintenta la lectura volviendo a crear la suscripción. */
+function BotonReintentar({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        marginTop: 12, padding: '8px 18px', borderRadius: 8,
+        border: `1px solid ${T.neutral[300]}`, background: T.neutral[0],
+        color: T.neutral[700], fontSize: 13, fontWeight: 700, cursor: 'pointer',
+      }}
+    >
+      Reintentar
+    </button>
   )
 }
 

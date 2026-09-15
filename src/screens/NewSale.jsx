@@ -3371,10 +3371,20 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
   // nequi/daviplata. Si tipea algo válido, el split se activa.
   const [splitCashStr, setSplitCashStr] = useState('')
 
+  // Si la lista de deudores nunca cargo, NO se puede fiar: `addDebtSale` la usa
+  // para reconocer al cliente que ya existe, y con la lista vacia crearia un
+  // deudor duplicado con el mismo nombre, partiendo la deuda en dos. Mejor
+  // bloquear el fiado y decirlo, que dejar pasar la venta y descuadrar.
+  const [debtorsError, setDebtorsError] = useState(null)
   useEffect(() => {
-    const unsub = watchDebtors(setDebtors, parseBranchKey((userBranchIds(userDoc) || []).join(',')))
+    const unsub = watchDebtors(
+      setDebtors,
+      parseBranchKey((userBranchIds(userDoc) || []).join(',')),
+      setDebtorsError,
+    )
     return unsub
   }, [])
+  const fiadoBloqueado = !!debtorsError && debtors.length === 0
 
   // Reset del split cuando la cajera cambia de método primario — evitamos
   // estado fantasma de un flujo previo.
@@ -3410,7 +3420,8 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
 
   const canConfirm = (() => {
     if (!method) return false
-    if (method === 'deuda') return debtorName.trim().length >= 2 && !busy
+    // Sin lista de deudores no se fia: crearia un duplicado del cliente.
+    if (method === 'deuda') return debtorName.trim().length >= 2 && !busy && !fiadoBloqueado
     // Para efectivo o digital, con o sin split: el modal valida los montos
     // antes de habilitar (en split, ambas porciones deben sumar el total).
     if (method === 'efectivo') {
@@ -3731,12 +3742,27 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
 
         {method === 'deuda' && (
           <>
+            {fiadoBloqueado && (
+              <div style={{
+                marginBottom: 12, padding: '12px 14px', borderRadius: 10,
+                background: '#FBF3E8', border: `1px solid ${T.warn}`,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.warn, marginBottom: 4 }}>
+                  No se puede fiar en este momento
+                </div>
+                <div style={{ fontSize: 12, color: T.neutral[600], lineHeight: 1.45 }}>
+                  No se pudo cargar la lista de clientes que deben. Si fías ahora, este cliente
+                  quedaría repetido y su deuda partida en dos. Cobra de otra forma, o espera a
+                  que vuelva la conexión.
+                </div>
+              </div>
+            )}
             <ModalInput
               label="Nombre del deudor"
               value={debtorName}
               onChange={setDebtorName}
               placeholder="Ej. María Pérez"
-              disabled={busy}
+              disabled={busy || fiadoBloqueado}
               autoFocus
             />
             {debtorSuggestions.length > 0 && (

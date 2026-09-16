@@ -25,7 +25,8 @@ import { fmtCOP } from '../utils/format'
 import { getData, getBogotaDateStr } from '../db'
 import { watchCashierProducts, mergeProductCatalogs } from '../products'
 import {
-  createSupplierOrder, receiveSupplierOrder, markOrderNotArrived,
+  createSupplierOrder, updateSupplierOrder, cancelSupplierOrder,
+  receiveSupplierOrder, markOrderNotArrived,
   productosDeProveedor, proveedoresUsados, diasDeAtraso, comparar,
 } from '../supplierOrders'
 
@@ -205,15 +206,27 @@ function FilasProductos({ filas, setFilas, catalogo, permitirAgregar = true }) {
 
 // ── Tomar el pedido ──────────────────────────────────────────────────────────
 
-function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
-  const [proveedor, setProveedor] = useState('')
-  const [total, setTotal] = useState('')
-  const [fecha, setFecha] = useState(masDias(HOY(), 1))
-  const [filas, setFilas] = useState([])
+/**
+ * Sirve para tomar un pedido nuevo y para CORREGIR uno que aún no ha llegado.
+ * Es el mismo formulario a propósito: la cajera ya sabe usarlo, y dos
+ * pantallas casi iguales se desincronizan a la primera de cambio.
+ */
+function FormularioPedido({ session, catalogo, actor, pedido = null, onListo, onCancel }) {
+  const editando = !!pedido
+  const [proveedor, setProveedor] = useState(pedido?.supplierName || '')
+  const [total, setTotal] = useState(editando ? String(pedido.expectedTotal || '') : '')
+  const [fecha, setFecha] = useState(pedido?.expectedDate || masDias(HOY(), 1))
+  const [filas, setFilas] = useState(
+    (pedido?.items || []).map(i => ({ ...i, qty: String(i.qty) }))
+  )
   const [conocidos, setConocidos] = useState([])
   const [cargandoLista, setCargandoLista] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState(null)
+
+  // Corrigiendo un pedido atrasado, la fecha que ya tiene es anterior a hoy;
+  // si el mínimo fuera hoy, el calendario no dejaría ni conservarla.
+  const fechaMinima = editando && pedido.expectedDate < HOY() ? pedido.expectedDate : HOY()
 
   useEffect(() => {
     let vivo = true
@@ -228,6 +241,10 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
   // cantidades, sin buscar producto por producto con el vendedor esperando.
   async function usarProveedor(nombre) {
     setProveedor(nombre)
+    // Corrigiendo un pedido ya guardado, tocar un proveedor sugerido solo
+    // cambia el nombre. Si además recargara su lista habitual, borraría las
+    // cantidades que la cajera acaba de escribir.
+    if (editando) return
     setCargandoLista(true)
     try {
       const previos = await productosDeProveedor(session.branchId, nombre)
@@ -243,26 +260,55 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
     && conCantidad.length > 0
     && !guardando
 
-  function guardar() {
+  async function guardar() {
     if (!puedeGuardar) return
     setGuardando(true)
     setError(null)
+    const items = conCantidad.map(f => ({
+      productId: f.productId, productName: f.productName, qty: Number(f.qty) || 0,
+    }))
     try {
-      createSupplierOrder({
-        branchId: session.branchId,
-        supplierName: proveedor,
-        expectedTotal: Number(total) || 0,
-        expectedDate: fecha,
-        items: conCantidad.map(f => ({
-          productId: f.productId, productName: f.productName, qty: Number(f.qty) || 0,
-        })),
-        sessionId: session.id,
-        byUid: actor.uid,
-        byName: actor.name,
-      })
+      if (editando) {
+        await updateSupplierOrder(pedido.id, {
+          order: pedido,
+          supplierName: proveedor,
+          expectedTotal: Number(total) || 0,
+          expectedDate: fecha,
+          items,
+          byUid: actor.uid,
+          byName: actor.name,
+        })
+      } else {
+        createSupplierOrder({
+          branchId: session.branchId,
+          supplierName: proveedor,
+          expectedTotal: Number(total) || 0,
+          expectedDate: fecha,
+          items,
+          sessionId: session.id,
+          byUid: actor.uid,
+          byName: actor.name,
+        })
+      }
       onListo()
     } catch (err) {
       setError(err?.message || 'No se pudo guardar el pedido.')
+      setGuardando(false)
+    }
+  }
+
+  async function anular() {
+    if (!window.confirm(
+      `¿Anular el pedido de ${pedido.supplierName}?\n\n`
+      + 'Úsalo solo si el pedido quedó mal escrito. Si el proveedor sí lo tomó pero no lo trajo, '
+      + 'mejor usa "Este pedido no llegó" al recibirlo.'
+    )) return
+    setGuardando(true)
+    try {
+      await cancelSupplierOrder(pedido.id, { byUid: actor.uid, byName: actor.name })
+      onListo()
+    } catch (err) {
+      setError(err?.message || 'No se pudo anular el pedido.')
       setGuardando(false)
     }
   }
@@ -275,7 +321,11 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: T.neutral[50], display: 'flex', flexDirection: 'column' }}>
-      <Header titulo="Pedido a proveedor" subtitulo="Lo que acaba de pedir el vendedor" onBack={onCancel} />
+      <Header
+        titulo={editando ? 'Corregir el pedido' : 'Pedido a proveedor'}
+        subtitulo={editando ? 'Cambia lo que esté mal y guarda' : 'Lo que acaba de pedir el vendedor'}
+        onBack={onCancel}
+      />
       <div style={{ flex: 1, overflowY: 'auto', padding: '18px 16px 120px', maxWidth: 540, margin: '0 auto', width: '100%' }}>
 
         <Campo label="¿Qué proveedor es?">
@@ -314,7 +364,7 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
         </Campo>
 
         <Campo label="¿Qué día llega?">
-          <input type="date" value={fecha} min={HOY()} onChange={e => setFecha(e.target.value)} style={inputStyle} />
+          <input type="date" value={fecha} min={fechaMinima} onChange={e => setFecha(e.target.value)} style={inputStyle} />
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
             {[['Hoy', HOY()], ['Mañana', masDias(HOY(), 1)], ['Pasado', masDias(HOY(), 2)]].map(([t, f]) => (
               <button key={t} onClick={() => setFecha(f)} style={{
@@ -339,12 +389,23 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
             {error}
           </div>
         )}
+
+        {editando && (
+          <button onClick={anular} disabled={guardando} style={{
+            width: '100%', padding: '13px', borderRadius: 12, marginTop: 4,
+            border: `1.5px solid ${T.neutral[200]}`, background: '#fff',
+            color: T.bad, fontSize: 13, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            Anular este pedido (quedó mal escrito)
+          </button>
+        )}
       </div>
 
       <div style={{ padding: '12px 16px 22px', background: '#fff', borderTop: `1px solid ${T.neutral[100]}`, flexShrink: 0 }}>
         <div style={{ maxWidth: 540, margin: '0 auto' }}>
           <BotonGrande onClick={guardar} disabled={!puedeGuardar}>
-            {guardando ? 'Guardando...' : 'Guardar pedido'}
+            {guardando ? 'Guardando...' : (editando ? 'Guardar los cambios' : 'Guardar pedido')}
           </BotonGrande>
         </div>
       </div>
@@ -354,7 +415,7 @@ function FormularioPedido({ session, catalogo, actor, onListo, onCancel }) {
 
 // ── Recibir el pedido ────────────────────────────────────────────────────────
 
-function FormularioRecibir({ pedido, session, catalogo, actor, onListo, onCancel }) {
+function FormularioRecibir({ pedido, session, catalogo, actor, onListo, onCancel, onCorregir }) {
   // Arranca con lo que se pidió ya puesto: lo normal es que llegue completo,
   // así que el camino corto es confirmar sin tocar nada.
   const [filas, setFilas] = useState(
@@ -469,14 +530,24 @@ function FormularioRecibir({ pedido, session, catalogo, actor, onListo, onCancel
           </div>
         )}
 
-        <button onClick={noLlego} disabled={guardando} style={{
-          width: '100%', padding: '13px', borderRadius: 12, marginTop: 4,
-          border: `1.5px solid ${T.neutral[200]}`, background: '#fff',
-          color: T.neutral[600], fontSize: 13, fontWeight: 700,
-          cursor: 'pointer', fontFamily: 'inherit',
-        }}>
-          Este pedido no llegó
-        </button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 4 }}>
+          <button onClick={onCorregir} disabled={guardando} style={{
+            padding: '13px 10px', borderRadius: 12,
+            border: `1.5px solid ${T.neutral[200]}`, background: '#fff',
+            color: T.neutral[700], fontSize: 13, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            Corregir el pedido
+          </button>
+          <button onClick={noLlego} disabled={guardando} style={{
+            padding: '13px 10px', borderRadius: 12,
+            border: `1.5px solid ${T.neutral[200]}`, background: '#fff',
+            color: T.neutral[600], fontSize: 13, fontWeight: 700,
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            No llegó
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '12px 16px 22px', background: '#fff', borderTop: `1px solid ${T.neutral[100]}`, flexShrink: 0 }}>
@@ -493,7 +564,8 @@ function FormularioRecibir({ pedido, session, catalogo, actor, onListo, onCancel
 // ── Pantalla principal ───────────────────────────────────────────────────────
 
 export default function PedidosProveedor({ session, authUser, userDoc, pendientes = [], onCancel }) {
-  const [vista, setVista] = useState(null)   // null | 'nuevo' | { recibir: pedido }
+  // null | 'nuevo' | { modo: 'recibir'|'corregir', id }
+  const [vista, setVista] = useState(null)
   const [cashierProducts, setCashierProducts] = useState([])
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
@@ -512,6 +584,14 @@ export default function PedidosProveedor({ session, authUser, userDoc, pendiente
   const paraHoy = mios.filter(p => p.expectedDate <= HOY())
   const despues = mios.filter(p => p.expectedDate > HOY())
 
+  // El pedido se vuelve a buscar en la lista viva en vez de usar el que se
+  // guardó al abrir: si alguien lo corrige desde otro dispositivo, la pantalla
+  // no puede quedarse mostrando cantidades viejas.
+  // Si desapareció —lo recibieron o lo anularon desde otro lado— las dos
+  // ramas de abajo no entran y se cae sola a la lista. Sin tocar estado
+  // durante el render.
+  const abierto = vista?.id ? mios.find(p => p.id === vista.id) : null
+
   if (vista === 'nuevo') {
     return (
       <FormularioPedido
@@ -520,11 +600,21 @@ export default function PedidosProveedor({ session, authUser, userDoc, pendiente
       />
     )
   }
-  if (vista?.recibir) {
+  if (vista?.modo === 'corregir' && abierto) {
+    return (
+      <FormularioPedido
+        session={session} catalogo={catalogo} actor={actor} pedido={abierto}
+        onListo={() => setVista(null)}
+        onCancel={() => setVista({ modo: 'recibir', id: abierto.id })}
+      />
+    )
+  }
+  if (vista?.modo === 'recibir' && abierto) {
     return (
       <FormularioRecibir
-        pedido={vista.recibir} session={session} catalogo={catalogo} actor={actor}
+        pedido={abierto} session={session} catalogo={catalogo} actor={actor}
         onListo={() => setVista(null)} onCancel={() => setVista(null)}
+        onCorregir={() => setVista({ modo: 'corregir', id: abierto.id })}
       />
     )
   }
@@ -543,7 +633,7 @@ export default function PedidosProveedor({ session, authUser, userDoc, pendiente
             <div style={{ fontSize: 12, fontWeight: 800, color: T.copper[600], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 }}>
               Para recibir
             </div>
-            {paraHoy.map(p => <TarjetaPedido key={p.id} pedido={p} onClick={() => setVista({ recibir: p })} />)}
+            {paraHoy.map(p => <TarjetaPedido key={p.id} pedido={p} onClick={() => setVista({ modo: 'recibir', id: p.id })} />)}
             <div style={{ height: 18 }} />
           </>
         )}
@@ -553,7 +643,7 @@ export default function PedidosProveedor({ session, authUser, userDoc, pendiente
             <div style={{ fontSize: 12, fontWeight: 800, color: T.neutral[500], letterSpacing: 0.4, textTransform: 'uppercase', marginBottom: 8 }}>
               Más adelante
             </div>
-            {despues.map(p => <TarjetaPedido key={p.id} pedido={p} onClick={() => setVista({ recibir: p })} />)}
+            {despues.map(p => <TarjetaPedido key={p.id} pedido={p} onClick={() => setVista({ modo: 'recibir', id: p.id })} />)}
           </>
         )}
 

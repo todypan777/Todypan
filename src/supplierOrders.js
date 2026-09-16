@@ -46,9 +46,10 @@ const orderRef = (id) => doc(firestoreDb, 'supplierOrders', id)
 
 /** Estados de un pedido. */
 export const ESTADOS = {
-  pendiente: { label: 'Esperando', desc: 'Ya se pidió, todavía no llega' },
-  recibido:  { label: 'Recibido',  desc: 'Llegó y se registró en inventario' },
-  no_llego:  { label: 'No llegó',  desc: 'El proveedor no lo trajo' },
+  pendiente: { label: 'Esperando',  desc: 'Ya se pidió, todavía no llega' },
+  recibido:  { label: 'Recibido',   desc: 'Llegó y se registró en inventario' },
+  no_llego:  { label: 'No llegó',   desc: 'El proveedor no lo trajo' },
+  cancelado: { label: 'Anulado',    desc: 'Estaba mal escrito y se anuló' },
 }
 
 /** Normaliza el nombre de un proveedor para comparar sin tildes ni mayúsculas. */
@@ -311,6 +312,70 @@ export async function receiveSupplierOrder(orderId, {
   }
 
   return { cashExpenseId, faltantes: comparar(order.items, llegaron) }
+}
+
+/**
+ * Corrige un pedido que todavía no ha llegado: fecha, total, proveedor o
+ * productos. Se equivocaron al teclear, o el vendedor cambió algo después.
+ *
+ * Solo sobre `pendiente`. Uno ya recibido NO se toca por aquí: detrás tiene
+ * una entrada de inventario y un gasto de caja, y cambiarle los números
+ * dejaría a los dos sin respaldo. Eso se corrige con un ajuste de inventario.
+ *
+ * Queda constancia de que se corrigió (`editadoAt`), porque el pedido es lo
+ * que después se compara contra lo que llegó: si alguien lo "arregla" para
+ * que cuadre, el descuadre desaparece sin que nadie se entere.
+ */
+export async function updateSupplierOrder(orderId, {
+  order, supplierName, expectedTotal, expectedDate, items, byUid, byName,
+}) {
+  if (!orderId || !order) throw new Error('Pedido no encontrado.')
+  if (order.status !== 'pendiente') {
+    throw new Error('Este pedido ya se cerró. Solo se pueden corregir los que no han llegado.')
+  }
+  const nombre = (supplierName || '').trim()
+  if (!nombre) throw new Error('Falta el proveedor.')
+  if (!expectedDate) throw new Error('Falta la fecha en que llega el pedido.')
+
+  const limpios = (items || [])
+    .filter(i => i.productId && (Number(i.qty) || 0) > 0)
+    .map(i => ({
+      productId: i.productId,
+      productName: i.productName || '',
+      qty: Number(i.qty) || 0,
+    }))
+  if (limpios.length === 0) throw new Error('El pedido no puede quedar sin productos.')
+
+  await updateDoc(orderRef(orderId), {
+    supplierName: nombre,
+    supplierKey: normalizarProveedor(nombre),
+    expectedTotal: Number(expectedTotal) || 0,
+    expectedDate,
+    items: limpios,
+    editadoAt: serverTimestamp(),
+    editadoPorUid: byUid || null,
+    editadoPorNombre: byName || null,
+  })
+}
+
+/**
+ * El pedido estaba mal y se anula. Es DISTINTO de 'no_llego': aquel dice que
+ * el proveedor falló, y si se usara para tapar un error de tecleo el
+ * proveedor quedaría quedando mal en el historial sin deberlo.
+ *
+ * No se borra el documento —las reglas solo dejan borrar al admin, y a
+ * propósito—: queda con estado 'cancelado', fuera de las cuentas pero con su
+ * rastro.
+ */
+export async function cancelSupplierOrder(orderId, { byUid, byName, note } = {}) {
+  await updateDoc(orderRef(orderId), {
+    status: 'cancelado',
+    closedDate: getBogotaDateStr(),
+    closedAt: serverTimestamp(),
+    closedByUid: byUid || null,
+    closedByName: byName || null,
+    ...(note?.trim() ? { closeNote: note.trim() } : {}),
+  })
 }
 
 /** El proveedor no trajo el pedido. Se cierra sin tocar inventario ni caja. */

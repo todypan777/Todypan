@@ -15,6 +15,7 @@ import {
 import { getClientTimestamp } from './utils/network'
 import { addDocOffline } from './utils/firestoreOffline'
 import { digitalAmount } from './utils/payment'
+import { descontarVenta } from './inventory'
 
 // Tolerancia de valor para emparejar una transferencia con una venta (±pesos).
 export const TRANSFER_VALUE_TOLERANCE = 500
@@ -111,6 +112,12 @@ export async function createSale(payload) {
   // resuelve cuando haya red. Crítico para modo ahorro de datos donde
   // `await addDoc()` se cuelga indefinidamente.
   const ref = addDocOffline(salesCol(), data)
+
+  // Baja el inventario de lo vendido. Solo toca los productos que ya se
+  // siguen; el resto los ignora (ver descontarVenta). También es
+  // fire-and-forget: si falla, la venta ya quedó — nunca al revés.
+  descontarVenta({ branchId: data.branchId, items: data.items })
+
   return ref.id
 }
 
@@ -195,6 +202,12 @@ export async function deleteSaleAsAdmin(saleId, { byUid, reason } = {}) {
     deletedBy: byUid || null,
     deleteReason: reason || null,
   })
+
+  // La mercancía vuelve al inventario: si la venta no existió, el producto
+  // sigue en la tienda. Sin esto, borrar ventas iría dejando faltantes
+  // falsos que después nadie sabe de dónde salieron.
+  descontarVenta({ branchId: sale.branchId, items: sale.items, signo: +1 })
+
   return { sale }
 }
 
@@ -229,6 +242,14 @@ export async function editSaleItems(saleId, payload) {
     editedBy: payload.byUid || null,
     editHistory: arrayUnion(editEntry),
   })
+
+  // Se deshace lo que descontó la venta vieja y se aplica la nueva. Se hace
+  // en dos pasos en vez de calcular la diferencia producto por producto
+  // porque una edición puede quitar, agregar o cambiar líneas enteras, y la
+  // resta directa se equivoca justo en esos casos. Son incrementos atómicos:
+  // el orden entre los dos no importa.
+  descontarVenta({ branchId: sale.branchId, items: sale.items, signo: +1 })
+  descontarVenta({ branchId: sale.branchId, items: payload.items })
 
   return { oldTotal, newTotal, sale }
 }

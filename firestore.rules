@@ -9,7 +9,17 @@
 // Mantenido por la skill /Actualizar_Reglas_Firebase: cada vez que un cambio
 // de código requiera tocar reglas, se edita ESTE archivo y se despliega/entrega.
 //
-// Última actualización: 2026-09-03 (b) — el correo raíz pasa a ser una LISTA
+// Última actualización: 2026-09-14 — PEDIDOS A PROVEEDOR e INVENTARIO REAL.
+//   Nueva colección `supplierOrders` (el vendedor toma el pedido, la cajera lo
+//   recibe y corrige lo que llegó). `inventoryMoves` create pasa de isAdmin()
+//   a isApprovedAny(): la cajera recibe los pedidos sola y es quien vende, así
+//   que si no puede escribir, el saldo miente todos los días.
+//   `inventoryStock` separa create de update a propósito: una VENTA solo hace
+//   update, de modo que si el producto no tiene saldo la escritura falla sola
+//   y el catálogo entero no se va a negativo. Crear el saldo es lo que mete un
+//   producto al inventario, y eso solo pasa al registrar una ENTRADA.
+//   Requiere también los índices nuevos de supplierOrders.
+// Cambio anterior: 2026-09-03 (b) — el correo raíz pasa a ser una LISTA
 //   (todypan777 + sinfiniity), para poder probar sin usar la cuenta del
 //   negocio. Debe coincidir con ROOT_EMAILS en src/auth.js.
 // Cambio anterior: 2026-09-03 — CUENTAS por panadería: nueva colección
@@ -413,9 +423,10 @@ service cloud.firestore {
     // Dos colecciones: `inventoryMoves` es el LIBRO (entradas, salidas y
     // ajustes) e `inventoryStock` el SALDO derivado por producto y panaderia.
     //
-    // Hoy solo el admin registra movimientos — asi lo pidio el dueño. La
-    // lectura si queda abierta al equipo aprobado para que mañana la cajera
-    // pueda ver existencias desde el POS sin tocar reglas.
+    // La CAJERA tambien registra movimientos desde 2026-09-14: es ella quien
+    // recibe los pedidos del proveedor, sola, y quien vende. Si solo el admin
+    // pudiera escribir, ni la mercancia que llega entraria al inventario ni
+    // las ventas lo descontarian, y el saldo seria falso todos los dias.
     //
     // Un movimiento NO se edita: `update` esta negado para todos, incluido el
     // admin. Una correccion se hace con otro movimiento (un ajuste), de modo
@@ -424,18 +435,43 @@ service cloud.firestore {
     // registro claramente erroneo.
     match /inventoryMoves/{mid} {
       allow read:   if isApprovedAny() && branchOk();
-      allow create: if isAdmin() && newBranchOk()
+      allow create: if isApprovedAny() && newBranchOk()
                     && request.resource.data.delta is number
                     && request.resource.data.delta != 0;
       allow update: if false;
       allow delete: if isAdmin();
     }
 
-    // El saldo lo escribe la misma operacion que crea el movimiento, con
-    // increment() del lado del servidor.
+    // El saldo lo escribe la misma operacion que crea el movimiento, y tambien
+    // cada venta (con increment() negativo, del lado del servidor).
+    //
+    // `create` y `update` van separados a proposito. Una VENTA solo hace
+    // update: si el producto todavia no tiene saldo, la escritura falla sola y
+    // no pasa nada. Asi el inventario sigue unicamente los productos que ya se
+    // metieron, en vez de mandar el catalogo entero a numeros negativos el dia
+    // que esto se publique. Crear el saldo es lo que mete un producto al
+    // inventario, y eso solo ocurre al registrar una ENTRADA.
     match /inventoryStock/{sid} {
-      allow read:  if isApprovedAny() && branchOk();
-      allow write: if isAdmin() && newBranchOk();
+      allow read:   if isApprovedAny() && branchOk();
+      allow create: if isApprovedAny() && newBranchOk();
+      allow update: if isApprovedAny() && branchOk() && newBranchOk();
+      allow delete: if isAdmin();
+    }
+
+    // ── PEDIDOS A PROVEEDOR ───────────────────────────────────────────────
+    // La cajera los registra cuando el vendedor viene a tomar el pedido, y los
+    // cierra cuando llega la mercancia. Por eso crear y actualizar quedan
+    // abiertos al equipo aprobado, no solo al admin.
+    //
+    // No se borran: un pedido que no llego se cierra con status 'no_llego', y
+    // uno recibido es el respaldo de una entrada de inventario y de un gasto
+    // de caja. Borrarlo dejaria a los dos sin explicacion.
+    match /supplierOrders/{oid} {
+      allow read:   if isApprovedAny() && branchOk();
+      allow create: if isApprovedAny() && newBranchOk()
+                    && request.resource.data.status == 'pendiente';
+      allow update: if isApprovedAny() && branchOk() && newBranchOk();
+      allow delete: if isAdmin();
     }
 
     // ── CUENTAS (Nequi / Daviplata / Efectivo) ────────────────────────────

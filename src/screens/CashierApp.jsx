@@ -4,7 +4,7 @@ import { T } from '../tokens'
 import { Card, UserAvatar } from '../components/Atoms'
 import { fmtCOP } from '../utils/format'
 import { signOut } from '../auth'
-import { getData } from '../db'
+import { getData, getBogotaDateStr } from '../db'
 import { confirmOpeningAmount, reportOpeningDispute } from '../cashSessions'
 import RoleSwitcher from '../components/RoleSwitcher'
 import { watchSessionSales, flagSale } from '../sales'
@@ -28,7 +28,9 @@ import ConnectionChip from '../components/ConnectionChip'
 import { useOnlineStatus, useDataSaver, isDataSaverEnabled, applyDataSaverOnBoot, ensureNetworkForWaiting } from '../utils/network'
 import { requestPersistentStorage, useStorageHealth, onLocalWriteFailure } from '../utils/storage'
 import MyHistoricalSales from './MyHistoricalSales'
+import PedidosProveedor from './PedidosProveedor'
 import { getCustomerOrder } from '../customerOrders'
+import { watchPendingOrders } from '../supplierOrders'
 import { WEB_ORDER_BRANCH_NAME, customerCartToLunchCommanda } from '../utils/customerOrder'
 import {
   watchCashierProducts,
@@ -880,6 +882,8 @@ export function ActiveSession({
   const [editingTab, setEditingTab] = useState(null)  // tab abierto en NewSale
   const [expenseOpen, setExpenseOpen] = useState(false)
   const [incomeOpen, setIncomeOpen] = useState(false)
+  const [pedidosOpen, setPedidosOpen] = useState(false)
+  const [pedidosPendientes, setPedidosPendientes] = useState([])
   const [historyOpen, setHistoryOpen] = useState(false) // pantalla "Mis ventas" (Fase 9)
   const [boredomOpen, setBoredomOpen] = useState(false) // panel "¿estás aburrida?"
   const [cashierProducts, setCashierProducts] = useState([])
@@ -929,6 +933,16 @@ export function ActiveSession({
   }
 
   useEffect(() => watchCashierProducts(setCashierProducts), [])
+
+  // Pedidos a proveedor que todavía no llegan. Se piden sin filtrar por sede
+  // y se recortan en la pantalla: son pocos documentos y así no hace falta un
+  // índice compuesto más.
+  useEffect(() => watchPendingOrders(setPedidosPendientes), [])
+  const pedidosPorRecibir = useMemo(
+    () => pedidosPendientes.filter(p =>
+      String(p.branchId) === String(session.branchId) && p.expectedDate <= getBogotaDateStr()),
+    [pedidosPendientes, session.branchId]
+  )
 
   // Productos del catálogo SIN precio en la panadería actual (excluye venta libre)
   const missingPriceCount = useMemo(() => {
@@ -1100,6 +1114,30 @@ export function ActiveSession({
           Gasto de caja
         </button>
       </div>
+
+      {/* Pedidos a proveedor. Cuando hay alguno por recibir el botón se pinta,
+          porque recibirlo no es opcional: si no se registra, el inventario
+          queda mintiendo y la plata sale de la caja sin quedar anotada. */}
+      <button
+        onClick={() => setPedidosOpen(true)}
+        style={{
+          width: '100%', padding: '13px 12px', borderRadius: 14, marginBottom: 8,
+          background: pedidosPorRecibir.length > 0 ? '#FBF3E8' : '#fff',
+          color: pedidosPorRecibir.length > 0 ? T.warn : T.neutral[700],
+          border: `1.5px solid ${pedidosPorRecibir.length > 0 ? T.warn : T.neutral[200]}`,
+          cursor: 'pointer', fontFamily: 'inherit',
+          fontSize: 13, fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+          <path d="M3 6.5 L10 3 L17 6.5 V14 L10 17.5 L3 14 Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none"/>
+          <path d="M3 6.5 L10 10 L17 6.5 M10 10 V17.5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+        </svg>
+        {pedidosPorRecibir.length > 0
+          ? `Llegó un pedido (${pedidosPorRecibir.length})`
+          : 'Pedidos a proveedor'}
+      </button>
       <button
         onClick={() => setHistoryOpen(true)}
         style={{
@@ -1323,6 +1361,16 @@ export function ActiveSession({
           assistMode={assistMode}
           expenses={sessionExpenses}
           onCancel={() => setExpenseOpen(false)}
+        />
+      )}
+
+      {pedidosOpen && (
+        <PedidosProveedor
+          session={session}
+          authUser={authUser}
+          userDoc={userDoc}
+          pendientes={pedidosPendientes}
+          onCancel={() => setPedidosOpen(false)}
         />
       )}
 

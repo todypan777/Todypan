@@ -20,14 +20,32 @@
 // NO vive en /todypan/data (el documento unico) porque los movimientos crecen
 // sin techo y ese documento tiene un limite duro de 1 MB.
 //
-// El descuento por venta es MANUAL a proposito: el sistema no sabe cuanta
-// harina lleva un pan (eso serian recetas). Aqui se registra lo que entra y
-// lo que sale, y el saldo se lleva solo.
+// LAS VENTAS DESCUENTAN SOLAS (`descontarVenta`). Antes no lo hacian, y el
+// motivo escrito aqui era que el sistema no sabe cuanta harina lleva un pan.
+// Eso vale para el pan, no para una gaseosa: una gaseosa vendida es una
+// gaseosa menos, y esta panaderia es sobre todo reventa. Sin descontar, el
+// saldo mentia todos los dias y cualquier conteo daba un faltante falso.
+//
+// No hacen falta recetas: lo que el dueño hornea lo registra como ENTRADA,
+// igual que si se lo hubiera traido un proveedor. Todo entra por un lado y
+// sale por el otro, venga del horno o del camion.
+//
+// Un producto se empieza a seguir cuando se le registra su PRIMERA entrada.
+// Antes de eso las ventas no lo tocan (ver `descontarVenta`). Sin esa regla,
+// el dia que esto se publique los cientos de productos del catalogo se irian
+// a negativo de golpe — se han vendido siempre, pero nunca se registro que
+// entraran— y la pantalla quedaria inservible. Asi el inventario arranca
+// vacio y crece a medida que se van metiendo productos, sin configurar nada.
+//
+// Las ventas NO escriben en el libro de movimientos, solo bajan el saldo. Un
+// renglon por linea vendida serian cientos al dia: el libro quedaria
+// ilegible y ademas gasta cuota, que es el cuello de botella de este
+// proyecto. Lo vendido ya queda registrado en `sales`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { firestoreDb } from './firebase'
 import {
-  doc, collection, setDoc, increment, serverTimestamp,
+  doc, collection, setDoc, updateDoc, increment, serverTimestamp,
   query, where, onSnapshot, orderBy, limit as fsLimit,
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
@@ -96,6 +114,42 @@ export function addInventoryMove({
 
   const ref = addDocOffline(movesCol(), data)
   return ref.id
+}
+
+/**
+ * Baja del saldo lo que se acaba de vender. También sirve para devolverlo
+ * (`signo = +1`) cuando se elimina o se edita una venta.
+ *
+ * Usa `updateDoc` y NO `setDoc({merge:true})`, y esa diferencia ES la regla de
+ * negocio: `updateDoc` falla si el documento de saldo no existe, o sea si a
+ * ese producto nunca se le registro una entrada. Asi las ventas solo tocan los
+ * productos que el dueño ya metio al inventario, y el resto del catalogo
+ * queda quieto en vez de irse a numeros negativos.
+ *
+ * El fallo se traga a proposito: no es un error, es "este producto todavia no
+ * se sigue". Y no se consulta antes si existe porque eso seria una lectura por
+ * linea vendida — cientos al dia, justo lo que agota la cuota.
+ *
+ * Fire-and-forget, como el resto del punto de venta: la cajera no puede
+ * quedarse esperando a que responda el servidor con el cliente al frente.
+ */
+export function descontarVenta({ branchId, items, signo = -1 }) {
+  if (!branchId || !Array.isArray(items)) return
+  // Un mismo producto puede venir en varias lineas de la misma venta; se
+  // juntan para no hacer dos escrituras al mismo documento.
+  const porProducto = new Map()
+  for (const i of items) {
+    const id = i?.productId
+    const qty = Number(i?.qty) || 0
+    if (!id || qty <= 0) continue
+    porProducto.set(id, (porProducto.get(id) || 0) + qty)
+  }
+  for (const [productId, qty] of porProducto) {
+    updateDoc(stockRef(branchId, productId), {
+      qty: increment(signo * qty),
+      updatedAt: serverTimestamp(),
+    }).catch(() => { /* producto no seguido: correcto, no se toca */ })
+  }
 }
 
 /** Suscripción a los saldos de una panadería. */

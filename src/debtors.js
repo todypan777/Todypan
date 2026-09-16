@@ -15,6 +15,7 @@ import {
   runTransaction,
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
+import { deleteSaleAsAdmin } from './sales'
 
 const debtorsCol = () => collection(firestoreDb, 'debtors')
 const debtorRef = (id) => doc(firestoreDb, 'debtors', id)
@@ -570,13 +571,16 @@ export async function deleteDebtorSaleEntry(debtorId, targetEntry, { byUid } = {
 
   // Marcar la venta como eliminada en `sales` (para reportes/cierres). Si falla,
   // la deuda ya quedó corregida; solo avisamos por consola.
+  //
+  // Se delega en `deleteSaleAsAdmin` en vez de escribir el documento aquí:
+  // borrar una venta ya no es solo marcarla, también devuelve la mercancía al
+  // inventario. Con dos sitios haciéndolo por su cuenta, este se quedaría sin
+  // esa parte y la deuda cuadraría mientras el inventario queda faltando.
   if (targetEntry.saleId) {
     try {
-      await updateDoc(doc(firestoreDb, 'sales', targetEntry.saleId), {
-        status: 'deleted',
-        deletedAt: serverTimestamp(),
-        deletedBy: byUid || null,
-        deleteReason: 'eliminada desde el historial del deudor',
+      await deleteSaleAsAdmin(targetEntry.saleId, {
+        byUid,
+        reason: 'eliminada desde el historial del deudor',
       })
     } catch (err) {
       console.warn('[debtors] venta quitada del deudor, pero no se pudo marcar deleted en sales:', err?.message || err)

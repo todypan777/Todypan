@@ -12,6 +12,7 @@ import {
   resolveOpeningDispute,
 } from '../cashSessions'
 import { watchFlaggedSales } from '../sales'
+import { watchPendingOrders, plataParaProveedores, diasDeAtraso } from '../supplierOrders'
 import { patchCashierProduct, deleteCashierProduct } from '../products'
 import {
   watchPendingChangeRequests,
@@ -30,6 +31,7 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const [pendingSessions, setPendingSessions] = useState([])
   const [flaggedSales, setFlaggedSales] = useState([])
   const [changeRequests, setChangeRequests] = useState([])
+  const [pedidos, setPedidos] = useState([])
 
   // Mismas tres consultas que la campana, y por el mismo motivo hay que
   // acotarlas: descuadres de caja, ventas marcadas y peticiones de precio son
@@ -49,6 +51,10 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   )
   useEffect(
     () => watchPendingChangeRequests(setChangeRequests, parseBranchKey(branchKey)),
+    [branchKey]
+  )
+  useEffect(
+    () => watchPendingOrders(setPedidos, parseBranchKey(branchKey)),
     [branchKey]
   )
 
@@ -78,13 +84,19 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
   const openingDisputes = pendingSessions.filter(s =>
     s.openingDispute?.status === 'pending'
   )
+  // Plata que hay que tener en caja para los proveedores que llegan hoy. Los
+  // que ya debían llegar y siguen pendientes cuentan como de hoy: si el
+  // vendedor aparece tarde, igual hay que tener con qué pagarle.
+  const proveedores = useMemo(() => plataParaProveedores(pedidos), [pedidos])
+
   const totalCount =
     pendingUsers.length +
     openingDisputes.length +
     orphanShortages.length +
     flaggedSales.length +
     changeRequests.length +
-    overdueReminders.length
+    overdueReminders.length +
+    (proveedores.hoy.pedidos.length > 0 ? 1 : 0)
 
   return (
     <div style={{ paddingBottom: 110 }}>
@@ -103,6 +115,55 @@ export default function Pendientes({ onOpenUsers, onOpenProducts, onOpenReminder
             Cuando haya solicitudes de cuenta, gastos por aprobar o algo más por revisar, aparecerán aquí.
           </div>
         </div>
+      )}
+
+      {proveedores.hoy.pedidos.length > 0 && (
+        <Section
+          title="Plata para proveedores hoy"
+          count={proveedores.hoy.pedidos.length}
+          tone="warn"
+        >
+          <div style={{ padding: '14px', borderBottom: `0.5px solid ${T.neutral[100]}` }}>
+            <div style={{ fontSize: 11.5, color: T.neutral[500], fontWeight: 600 }}>
+              Deje en caja
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: T.neutral[900], letterSpacing: -0.6, fontVariantNumeric: 'tabular-nums' }}>
+              {fmtCOP(proveedores.hoy.total)}
+            </div>
+            <div style={{ fontSize: 11.5, color: T.neutral[500], marginTop: 2 }}>
+              Es lo que dijeron los vendedores. La factura llega con lo que realmente traigan.
+            </div>
+          </div>
+          {proveedores.hoy.pedidos.map((p, i) => {
+            const atraso = diasDeAtraso(p)
+            return (
+              <div key={p.id} style={{
+                padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 10,
+                borderBottom: i < proveedores.hoy.pedidos.length - 1 ? `0.5px solid ${T.neutral[100]}` : 'none',
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.neutral[900], whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {p.supplierName}
+                  </div>
+                  {atraso > 0 && (
+                    <div style={{ fontSize: 11.5, color: T.warn, fontWeight: 600, marginTop: 2 }}>
+                      Debía llegar hace {atraso} {atraso === 1 ? 'día' : 'días'}
+                    </div>
+                  )}
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: T.neutral[800], flexShrink: 0 }}>
+                  {fmtCOP(p.expectedTotal)}
+                </div>
+              </div>
+            )
+          })}
+          {proveedores.despues.total > 0 && (
+            <div style={{ padding: '10px 14px', fontSize: 11.5, color: T.neutral[500], textAlign: 'center' }}>
+              Más adelante vienen {fmtCOP(proveedores.despues.total)} en {proveedores.despues.pedidos.length}{' '}
+              {proveedores.despues.pedidos.length === 1 ? 'pedido' : 'pedidos'}
+            </div>
+          )}
+        </Section>
       )}
 
       {overdueReminders.length > 0 && (

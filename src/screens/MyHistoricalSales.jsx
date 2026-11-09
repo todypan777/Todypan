@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { T } from '../tokens'
 import { watchCashierSalesByDate } from '../sales'
+import { bogotaTodayStr } from '../utils/clock'
 
 // ──────────────────────────────────────────────────────────────
 // Pantalla: "Mis ventas" para cajera (Fase 9, alineada a D6 + D21)
@@ -27,7 +28,7 @@ const METHOD_INFO = {
 }
 
 function bogotaToday() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return bogotaTodayStr()
 }
 
 function bogotaTimeFromSale(sale) {

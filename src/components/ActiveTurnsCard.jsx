@@ -47,6 +47,7 @@ import { ActiveSession } from '../screens/CashierApp'
 import CookApp from '../screens/CookApp'
 import WaitressApp from '../screens/WaitressApp'
 import ErrorBoundary from './ErrorBoundary'
+import { bogotaTodayStr } from '../utils/clock'
 
 // Clave en localStorage para recordar a qué turno está asistiendo el admin.
 // Permite que, al recargar la página, el admin vuelva directo al modo asistir
@@ -908,7 +909,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         if (exp.status !== 'pending') continue
         const dec = expenseDecisions[exp.id]
         if (dec === 'approve') {
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          const today = bogotaTodayStr()
           const movementId = addMovement({
             type: 'expense',
             amount: exp.amount,
@@ -931,7 +932,7 @@ function CloseSessionModal({ session, adminUid, adminName, allUsers, onCancel, o
         if (inc.status !== 'pending') continue
         const dec = incomeDecisions[inc.id]
         if (dec === 'approve') {
-          const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+          const today = bogotaTodayStr()
           let movementId = null
           let debtorPaymentApplied = false
           if (inc.debtorId) {

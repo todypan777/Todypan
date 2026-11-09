@@ -2,6 +2,7 @@ import { firestoreDb } from './firebase'
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
 import { createMovement, removeMovement } from './movements'
 import { createAccount, patchAccount, removeAccount, pushAdjustment, pullAdjustment } from './accounts'
+import { bogotaTodayStr, nowMs } from './utils/clock'
 
 // ─── Refs ─────────────────────────────────────────────────────
 const LOCAL_KEY = 'todypan_v1'
@@ -333,10 +334,10 @@ function persist() {
 
 // ─── Tiempo Bogotá (UTC-5) ────────────────────────────────────
 export function getBogotaDate() {
-  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }))
+  return new Date(new Date(nowMs()).toLocaleString('en-US', { timeZone: 'America/Bogota' }))
 }
 export function getBogotaDateStr() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return bogotaTodayStr()
 }
 export function getBogotaHour() {
   return getBogotaDate().getHours()

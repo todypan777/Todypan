@@ -15,16 +15,14 @@ import {
   enableNetwork,
 } from 'firebase/firestore'
 import { firestoreDb } from '../firebase'
+import { nowMs } from './clock'
 
 /**
- * Timestamp local. Hoy retorna Date.now(); existe como helper porque a
- * futuro podemos corregir la deriva del reloj del celular si detectamos
- * que esta mal puesto. Por ahora confiamos en el reloj del dispositivo
- * para timestamps de UI inmediata; el server siempre tiene el ultimo
- * canto via serverTimestamp() para auditoria.
+ * Timestamp local, corregido con la hora del servidor (ver utils/clock.js):
+ * un equipo con el reloj mal puesto ya no sella las ventas en otro dia.
  */
 export function getClientTimestamp() {
-  return Date.now()
+  return nowMs()
 }
 
 /**

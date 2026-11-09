@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore'
 import { addDocOffline } from './utils/firestoreOffline'
 import { deleteSaleAsAdmin } from './sales'
+import { bogotaTodayStr } from './utils/clock'
 
 const debtorsCol = () => collection(firestoreDb, 'debtors')
 const debtorRef = (id) => doc(firestoreDb, 'debtors', id)
@@ -213,7 +214,7 @@ export async function registerDebtorPayment(debtorId, payload) {
     type: 'payment',
     amount,
     method: payload.method || 'efectivo',
-    date: payload.date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }),
+    date: payload.date || bogotaTodayStr(),
     registeredBy: payload.registeredBy || null,
     createdAt: Date.now(),
   }
@@ -256,7 +257,7 @@ export async function adjustDebtorForSaleChange(debtorId, { saleId, oldAmount, n
     newAmount: Number(newAmount) || 0,
     reason: reason || (newAmount === 0 ? 'venta eliminada' : 'venta editada'),
     registeredBy: byUid || null,
-    date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }),
+    date: bogotaTodayStr(),
     createdAt: Date.now(),
   }
 

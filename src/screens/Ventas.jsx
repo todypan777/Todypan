@@ -10,6 +10,7 @@ import { watchAllUsers } from '../users'
 import { useAuth } from '../context/AuthCtx'
 import { normalizeName, adjustDebtorForSaleChange } from '../debtors'
 import { mergeProductCatalogs, watchCashierProducts } from '../products'
+import { bogotaTodayStr } from '../utils/clock'
 
 const METHODS = [
   { id: 'efectivo',  label: 'Efectivo',  icon: '💵' },
@@ -32,7 +33,7 @@ export default function Ventas({ onBack }) {
   const [detail, setDetail] = useState(null)
 
   // Filtros
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  const today = bogotaTodayStr()
   const monthStart = today.slice(0, 8) + '01'
   const [from, setFrom] = useState(monthStart)
   const [to, setTo] = useState(today)

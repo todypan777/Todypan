@@ -13,6 +13,8 @@ import { DesktopCtx } from './context/DesktopCtx'
 import { AuthProvider, useAuth, hasCachedFirebaseSession, readUserDocCache } from './context/AuthCtx'
 import { isRootEmail } from './auth'
 import { useOnlineStatus } from './utils/network'
+import { startClockSync, clockIsWrong, onClockChange } from './utils/clock'
+import { fmtDate } from './utils/format'
 import Dashboard from './screens/Dashboard'
 import Movements from './screens/Movements'
 import AddMovement from './screens/AddMovement'
@@ -201,8 +203,32 @@ function ApprovedAppLoader({ children }) {
     [branchKey]
   )
 
+  // La fecha de cada venta se corrige con la hora del servidor (utils/clock).
+  useEffect(() => startClockSync(), [])
+
   if (!dbLoaded) return <LoadingScreen label="Cargando datos..." />
-  return children
+  return <><ClockWarning />{children}</>
+}
+
+/**
+ * Aviso cuando el reloj del equipo esta mal puesto. La app ya usa la hora del
+ * servidor, pero conviene arreglar el equipo: sin red no hay como corregirlo.
+ */
+function ClockWarning() {
+  const [wrong, setWrong] = useState(clockIsWrong())
+  useEffect(() => onClockChange(() => setWrong(clockIsWrong())), [])
+  if (!wrong) return null
+  const equipo = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return (
+    <div style={{
+      position: 'sticky', top: 0, zIndex: 50,
+      padding: '8px 14px', background: '#B4412F', color: '#fff',
+      fontSize: 12.5, fontWeight: 600, lineHeight: 1.4, textAlign: 'center',
+    }}>
+      ⏰ La fecha de este equipo está mal (marca {fmtDate(equipo)}). Las ventas se guardan
+      con la fecha real, pero pon la hora del equipo en automático.
+    </div>
+  )
 }
 
 function AppShell() {

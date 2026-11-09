@@ -16,6 +16,7 @@ import { getClientTimestamp } from './utils/network'
 import { addDocOffline } from './utils/firestoreOffline'
 import { digitalAmount } from './utils/payment'
 import { descontarVenta } from './inventory'
+import { bogotaTodayStr } from './utils/clock'
 
 // Tolerancia de valor para emparejar una transferencia con una venta (±pesos).
 export const TRANSFER_VALUE_TOLERANCE = 500
@@ -57,7 +58,7 @@ function timeOf(doc) {
  *        (cashierUid de ella) pero se marca quién la registró.
  */
 export async function createSale(payload) {
-  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  const today = bogotaTodayStr()
   const data = {
     date: today,
     createdAt: serverTimestamp(),

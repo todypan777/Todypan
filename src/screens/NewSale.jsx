@@ -35,6 +35,7 @@ import { userBranchIds, parseBranchKey } from '../utils/branchScope'
 import PublicAddonsModal from '../components/PublicAddonsModal'
 import { buildLunchCommanda, formatAddonLine } from '../utils/lunchFormat'
 import { watchBreakfastConfig, getBreakfastState } from '../breakfast'
+import { bogotaTodayStr } from '../utils/clock'
 
 /**
  * Pantalla "Nueva venta" para cajera.
@@ -3479,7 +3480,7 @@ function PaymentModal({ session, authUser, userDoc, catalog, assistMode, cart, t
       const cashierName = isAssist
         ? (session.cashierName || 'Cajera')
         : (`${userDoc?.nombre || ''} ${userDoc?.apellido || ''}`.trim() || authUser.email)
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+      const today = bogotaTodayStr()
 
       // Si hay split, la venta se guarda como 'mixto' con paymentSplit. Para
       // los downstream que no conocen split (filtros antiguos, etc.), el

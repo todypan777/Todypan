@@ -14,6 +14,7 @@ import {
   deleteScheduledShift,
 } from '../scheduledShifts'
 import { fmtDate } from '../utils/format'
+import { bogotaTodayStr } from '../utils/clock'
 
 // ──────────────────────────────────────────────────────────────
 // Vista principal: Turnos del día (con navegador de fecha).
@@ -49,7 +50,7 @@ export default function Team({ employees, onRefresh, initialEmpId, onClearEmpId,
 // VISTA DE TURNOS (default al entrar a Equipo)
 // ──────────────────────────────────────────────────────────────
 function todayStr() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return bogotaTodayStr()
 }
 
 function addDaysStr(dateStr, delta) {

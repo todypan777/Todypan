@@ -1,3 +1,4 @@
+import { bogotaTodayStr } from './clock'
 export function fmtCOP(n, { sign = false, compact = false } = {}) {
   const abs = Math.abs(Math.round(n || 0))
   let str
@@ -34,7 +35,7 @@ export function fmtMonthLabel(ym) {
 // el corte de mes en los reportes. Las ventas siempre se guardaron con hora de
 // Bogotá, así que aquel desfase también las descuadraba contra los gastos.
 export function todayStr() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return bogotaTodayStr()
 }
 
 /** Mes actual (YYYY-MM) en zona Bogotá. Mismo motivo que `todayStr`. */
